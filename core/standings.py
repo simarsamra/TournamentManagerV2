@@ -230,6 +230,7 @@ def check_group_stage_complete(tournament):
                 ])
 
             bye_matches = []
+            confirmed_matches = []
             for idx, match in enumerate(first_round):
                 slot1 = idx * 2
                 slot2 = slot1 + 1
@@ -258,6 +259,16 @@ def check_group_stage_complete(tournament):
 
             for bye_match in bye_matches:
                 advance_winner(bye_match)
+
+            # Propagate winners for any first-round matches that are already confirmed
+            # (handles the case where results were entered before knockout was seeded)
+            for match in first_round:
+                match.refresh_from_db()
+                if match.status in ("confirmed", "forfeited") and match.winner:
+                    confirmed_matches.append(match)
+            for confirmed_match in confirmed_matches:
+                advance_winner(confirmed_match)
+
             return True
 
         max_match = tournament.matches.aggregate(m=Max("match_number"))["m"] or 0
