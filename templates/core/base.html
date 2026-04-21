@@ -1,0 +1,128 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Tournament Manager{% endblock %}</title>
+    <script>!function(){var t=localStorage.getItem('tm-theme');if(t)document.documentElement.setAttribute('data-theme',t);}();</script>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}?v={% now 'YmdHis' %}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="app-layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/></svg>
+            Tournament Manager
+        </div>
+        <nav class="sidebar-nav">
+            <div class="sidebar-section">Main</div>
+            <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">📊 Dashboard</a>
+            <a href="{% url 'fixtures' %}" class="{% if request.resolver_match.url_name == 'fixtures' %}active{% endif %}">📋 Fixtures</a>
+            <a href="{% url 'teams' %}" class="{% if request.resolver_match.url_name == 'teams' or request.resolver_match.url_name == 'team_detail' %}active{% endif %}">👥 Teams</a>
+            <a href="{% url 'standings' %}" class="{% if request.resolver_match.url_name == 'standings' %}active{% endif %}">🏆 Standings</a>
+            <a href="{% url 'analytics' %}" class="{% if request.resolver_match.url_name == 'analytics' %}active{% endif %}">📈 Analytics</a>
+            <div class="sidebar-section">Actions</div>
+            <a href="{% url 'rescheduling' %}" class="{% if request.resolver_match.url_name == 'rescheduling' %}active{% endif %}">🔄 Rescheduling</a>
+            <a href="{% url 'open_slots' %}" class="{% if request.resolver_match.url_name == 'open_slots' %}active{% endif %}">📅 Open Slots</a>
+            {% if team %}
+            <div class="sidebar-section">My Team</div>
+            <a href="{% url 'team_detail' pk=team.pk %}" class="{% if request.resolver_match.url_name == 'team_detail' %}active{% endif %}">🏅 {{ team.name }}</a>
+            {% if joinable_tournaments %}
+            <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}" style="margin-top:0.5rem;">➕ Join New Tournament
+                <span style="font-size:0.7rem;background:var(--primary);color:#fff;border-radius:10px;padding:1px 7px;margin-left:0.3rem;vertical-align:middle;">{{ joinable_tournaments|length }}</span>
+            </a>
+            {% endif %}
+            {% else %}
+            <div class="sidebar-section">Tournaments</div>
+            <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}">🎯 Join a Tournament</a>
+            {% endif %}
+            {% if user.is_staff %}
+            <div class="sidebar-section">Admin</div>
+            <a href="{% url 'tournament_setup' %}" class="{% if request.resolver_match.url_name == 'tournament_setup' %}active{% endif %}">⚙️ New Tournament</a>
+            <a href="{% url 'backup' %}" class="{% if request.resolver_match.url_name == 'backup' %}active{% endif %}">💾 Backup</a>
+            <a href="{% url 'audit_log' %}" class="{% if request.resolver_match.url_name == 'audit_log' %}active{% endif %}">📝 Audit Log</a>
+            <a href="{% url 'settings' %}" class="{% if request.resolver_match.url_name == 'settings' %}active{% endif %}">🔧 Settings</a>
+            {% endif %}
+        </nav>
+    </aside>
+    <div class="main-content">
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="menu-toggle">☰</button>
+                <span>{% block page_header %}{% endblock %}</span>
+            </div>
+            <div class="topbar-right">
+                {% if user.is_staff and available_tournaments %}
+                <form method="post" action="{% url 'select_tournament' %}" style="display:flex;align-items:center;gap:0.5rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <label for="tournament-switch" class="text-muted" style="font-size:0.85rem;">Tournament</label>
+                    <select id="tournament-switch" name="tournament_id" class="form-select" onchange="this.form.submit()" style="min-width:220px;">
+                        {% for t in available_tournaments %}
+                        <option value="{{ t.pk }}" {% if selected_tournament and t.pk == selected_tournament.pk %}selected{% endif %}>
+                            {{ t.name }} • {{ t.get_status_display }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </form>
+                {% elif user_tournaments %}
+                <form method="post" action="{% url 'select_tournament' %}" style="display:flex;align-items:center;gap:0.5rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <label for="user-tournament-switch" class="text-muted" style="font-size:0.85rem;">Tournament</label>
+                    <select id="user-tournament-switch" name="tournament_id" class="form-select" onchange="this.form.submit()" style="min-width:200px;">
+                        {% for t in user_tournaments %}
+                        <option value="{{ t.pk }}" {% if selected_tournament and t.pk == selected_tournament.pk %}selected{% endif %}>
+                            {{ t.name }} • {{ t.get_status_display }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </form>
+                {% endif %}
+                {% if team %}
+                <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline btn-sm">&#9881;&#65039; {{ team.name }}</a>
+                {% elif user.is_staff %}
+                <span class="text-muted">Organizer: <strong>{{ user.username }}</strong></span>
+                {% endif %}
+                <form method="post" action="{% url 'logout' %}" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm">Logout</button>
+                </form>
+                <div class="theme-picker">
+                    <label for="themeSelect" style="font-size:1.1rem;cursor:default;" title="Theme">🎨</label>
+                    <select id="themeSelect" class="form-select" style="width:auto;padding:0.3rem 0.55rem;font-size:0.85rem;">
+                        <option value="default">Default</option>
+                        <option value="dark">Dark</option>
+                        <option value="emerald">Emerald</option>
+                        <option value="purple">Purple</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+        <div class="content">
+            {% if messages %}
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+            {% endif %}
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="content" style="max-width: 500px; margin: 4rem auto; padding: 2rem;">
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+    {% block public_content %}{% endblock %}
+</div>
+{% endif %}
+<script src="{% static 'js/app.js' %}?v={% now 'YmdHis' %}"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

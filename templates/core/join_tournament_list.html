@@ -1,0 +1,38 @@
+{% extends "core/base.html" %}
+{% block title %}Join a Tournament - Tournament Manager{% endblock %}
+{% block page_header %}Join a Tournament{% endblock %}
+{% block content %}
+<h1 class="page-title">Join a Tournament</h1>
+
+{% if tournament_list %}
+<div class="card-grid" style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));">
+    {% for item in tournament_list %}
+    <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>{{ item.tournament.name }}</strong>
+            <span class="badge badge-info">{{ item.tournament.get_sport_type_display }}</span>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-1">{{ item.tournament.get_format_display }}</p>
+            <p class="mb-1">
+                <strong>{{ item.team_count }}</strong> team{{ item.team_count|pluralize }} registered
+                {% if item.tournament.expected_teams_count %}
+                    / {{ item.tournament.expected_teams_count }} expected
+                {% endif %}
+            </p>
+            {% if item.tournament.start_date %}
+            <p class="text-muted mb-2" style="font-size:0.85rem;">Starts {{ item.tournament.start_date }}</p>
+            {% endif %}
+            {% if item.already_joined %}
+            <span class="badge badge-success" style="padding:0.5rem 1rem;">✓ You have a team in this tournament</span>
+            {% else %}
+            <a href="{% url 'join_tournament' pk=item.tournament.pk %}" class="btn btn-primary btn-sm">Browse Teams &amp; Join</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-warning">No tournaments are currently open for registration.</div>
+{% endif %}
+{% endblock %}

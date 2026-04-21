@@ -1,0 +1,37 @@
+{% extends "core/base.html" %}
+{% block title %}Settings{% endblock %}
+{% block page_header %}Settings{% endblock %}
+{% block content %}
+<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Tournament Settings</h1>
+{% if tournament %}
+<div class="card" style="max-width:700px;">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+            <div class="form-group">
+                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {{ field }}
+                {% if field.help_text %}<small class="text-muted">{{ field.help_text }}</small>{% endif %}
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </form>
+    </div>
+</div>
+
+<div class="card" style="max-width:700px; margin-top:1rem; border:1px solid #ef4444;">
+    <div class="card-body">
+        <h3 style="margin-top:0; color:#b91c1c;">Danger Zone</h3>
+        <p class="text-muted">Delete this tournament and its related teams, matches, courts, and time slots.</p>
+        <form method="post" action="{% url 'delete_tournament' pk=tournament.pk %}" onsubmit="return confirm('Delete this tournament permanently?');">
+            {% csrf_token %}
+            <input type="hidden" name="confirm_delete" value="DELETE">
+            <button type="submit" class="btn btn-danger">Delete Tournament</button>
+        </form>
+    </div>
+</div>
+{% else %}
+<p class="text-muted">No tournament configured.</p>
+{% endif %}
+{% endblock %}

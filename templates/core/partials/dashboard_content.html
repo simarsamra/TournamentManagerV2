@@ -1,0 +1,635 @@
+{% if not tournament %}
+<div class="card">
+    <div class="card-body">
+        <p>No tournament has been set up yet.</p>
+        {% if is_organizer %}
+        <a href="{% url 'tournament_setup' %}" class="btn btn-primary mt-1">Create Tournament</a>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+
+{% if is_organizer %}
+<div class="card mb-2">
+    <div class="card-header">Tournament Overview</div>
+    <div class="card-body">
+        <div class="grid grid-4 mb-2">
+            <div class="stat-card">
+                <div style="font-size:1.5rem;margin-bottom:0.25rem;">🏆</div>
+                <div class="stat-value">{{ all_tournaments|length }}</div>
+                <div class="stat-label">All Tournaments</div>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:1.5rem;margin-bottom:0.25rem;">🟢</div>
+                <div class="stat-value" style="color:var(--success)">{{ active_tournaments_count|default:"0" }}</div>
+                <div class="stat-label">Active</div>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:1.5rem;margin-bottom:0.25rem;">⏳</div>
+                <div class="stat-value" style="color:var(--warning)">{{ setup_tournaments_count|default:"0" }}</div>
+                <div class="stat-label">Pre-Live</div>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:1.5rem;margin-bottom:0.25rem;">✅</div>
+                <div class="stat-value" style="color:var(--text-muted)">{{ completed_tournaments_count|default:"0" }}</div>
+                <div class="stat-label">Completed</div>
+            </div>
+        </div>
+
+        {% if all_tournaments %}
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr><th>Name</th><th>Status</th><th>Format</th><th>Teams</th><th>Matches</th><th>Champion</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for t in all_tournaments %}
+                    <tr{% if tournament and t.pk == tournament.pk %} class="row-selected"{% endif %}>
+                        <td>
+                            <strong>{{ t.name }}</strong>
+                            {% if tournament and t.pk == tournament.pk %}
+                            <div class="text-muted" style="font-size:0.8rem;">Currently selected</div>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span></td>
+                        <td>{{ t.get_format_display }}</td>
+                        <td>{{ t.team_count }}</td>
+                        <td>{{ t.match_count }}</td>
+                        <td>
+                            {% if t.status == 'completed' and t.champion %}
+                            <span style="font-size:0.9rem;">🏆 {{ t.champion.name }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="post" action="{% url 'select_tournament' %}" style="display:inline-block;">
+                                {% csrf_token %}
+                                <input type="hidden" name="tournament_id" value="{{ t.pk }}">
+                                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <button type="submit" class="btn btn-outline btn-sm">Open</button>
+                            </form>
+                            <a href="{% url 'tournament_config' pk=t.pk %}" class="btn btn-primary btn-sm">Configure</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if tournament %}
+<div class="grid grid-4 mb-2">
+    <div class="stat-card">
+        <div style="font-size:1.5rem;margin-bottom:0.25rem;">👥</div>
+        <div class="stat-value">{{ total_teams|default:"0" }}</div>
+        <div class="stat-label">Teams</div>
+    </div>
+    <div class="stat-card">
+        <div style="font-size:1.5rem;margin-bottom:0.25rem;">📋</div>
+        <div class="stat-value">{{ total_matches|default:"0" }}</div>
+        <div class="stat-label">Matches</div>
+    </div>
+    <div class="stat-card">
+        <div style="font-size:1.5rem;margin-bottom:0.25rem;">✅</div>
+        <div class="stat-value" style="color:var(--success)">{{ confirmed_matches|default:"0" }}</div>
+        <div class="stat-label">Done</div>
+    </div>
+    <div class="stat-card">
+        <div style="font-size:1.5rem;margin-bottom:0.25rem;">⚠️</div>
+        <div class="stat-value" style="color:var(--danger)">{{ disputed_matches|default:"0" }}</div>
+        <div class="stat-label">Disputed</div>
+    </div>
+</div>
+{% if tournament.status != 'active' and tournament.status != 'completed' %}
+<div class="card">
+    <div class="card-body">
+        <p>Tournament <strong>{{ tournament.name }}</strong> is currently <strong>{{ tournament.get_status_display }}</strong>.</p>
+        <a href="{% url 'tournament_config' pk=tournament.pk %}" class="btn btn-primary">Open Workflow</a>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endif %}
+
+{% if team %}
+
+{% if tournament.status == 'active' or tournament.status == 'completed' %}
+
+{# --- Performance Summary Bar --- #}
+<div class="card mb-2">
+    <div class="card-body" style="padding:1.25rem 1.5rem;">
+        <div class="perf-bar-outer" style="display:flex;align-items:stretch;gap:0;flex-wrap:wrap;">
+
+            {# Team name + tournament #}
+            <div style="min-width:160px;padding-right:1.5rem;margin-right:1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
+                <div style="font-size:1.15rem;font-weight:700;color:var(--text);line-height:1.2;">{{ team.name }}</div>
+                <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem;">{{ tournament.name }}</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">{{ tournament.get_format_display }}</div>
+            </div>
+
+            {# Stats row #}
+            <div class="perf-stats" style="display:flex;gap:0;flex-wrap:wrap;align-items:stretch;flex:1;">
+
+                {% if team_standing %}
+                <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:2rem;font-weight:800;color:var(--primary);line-height:1;">#{{ team_standing.rank }}</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Rank</div>
+                </div>
+                <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:2rem;font-weight:800;color:var(--primary);line-height:1;">{{ team_standing.points }}</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Points</div>
+                </div>
+                {% endif %}
+
+                {% if team_record.played %}
+                <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:1.3rem;font-weight:700;line-height:1;">
+                        <span style="color:var(--success);">{{ team_record.wins }}W</span>
+                        <span style="color:var(--text-muted);margin:0 3px;font-weight:400;">/</span>
+                        <span style="color:var(--danger);">{{ team_record.losses }}L</span>
+                        {% if team_record.draws %}
+                        <span style="color:var(--text-muted);margin:0 3px;font-weight:400;">/</span>
+                        <span style="color:var(--text-muted);">{{ team_record.draws }}D</span>
+                        {% endif %}
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">W / L{% if team_record.draws %} / D{% endif %}</div>
+                </div>
+
+                {% if team_standing %}
+                <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:2rem;font-weight:800;line-height:1;{% if team_standing.game_diff > 0 %}color:var(--success){% elif team_standing.game_diff < 0 %}color:var(--danger){% else %}color:var(--text){% endif %};">
+                        {% if team_standing.game_diff > 0 %}+{% endif %}{{ team_standing.game_diff }}
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Game Diff</div>
+                </div>
+                {% endif %}
+
+                <div style="text-align:center;padding:0 1.5rem;{% if form_strip %}border-right:1px solid var(--border);{% endif %}display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:2rem;font-weight:800;color:var(--text);line-height:1;">{{ team_record.win_rate }}%</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Win Rate</div>
+                </div>
+                {% endif %}
+
+                {% if form_strip %}
+                <div style="padding:0 1.5rem;display:flex;flex-direction:column;justify-content:center;">
+                    <div style="display:flex;gap:5px;margin-bottom:0.3rem;">
+                        {% for r in form_strip %}
+                        <span style="width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;{% if r == 'W' %}background:#d1fae5;color:#065f46;{% elif r == 'L' %}background:#fecaca;color:#991b1b;{% else %}background:#e2e8f0;color:#475569;{% endif %}">{{ r }}</span>
+                        {% endfor %}
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;text-align:center;">Form</div>
+                </div>
+                {% endif %}
+
+            </div>
+        </div>
+    </div>
+</div>
+
+{# --- Row 1: Next Match Intelligence + Pending Actions --- #}
+<div class="grid grid-2">
+
+<div class="card {% if tournament.status == 'completed' %}card-success{% endif %}">
+    {% if tournament.status == 'completed' %}
+    <div class="card-header">🏆 Tournament Complete</div>
+    <div class="card-body">
+        {% if tournament.champion %}
+            {% if tournament.champion == team %}
+            <div style="text-align:center;padding:1rem 0;">
+                <div style="font-size:2.5rem;">🥇</div>
+                <div style="font-size:1.3rem;font-weight:700;color:var(--success);margin:0.5rem 0;">You are the Champion!</div>
+                <div style="font-size:0.9rem;color:var(--text-muted);">Congratulations, <strong>{{ team.name }}</strong>!</div>
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:1rem 0;">
+                <div style="font-size:2rem;">🏅</div>
+                <div style="font-size:1.1rem;font-weight:700;margin:0.5rem 0;">Champion: {{ tournament.champion.name }}</div>
+                <div style="font-size:0.9rem;color:var(--text-muted);">Tournament has concluded. Thanks for participating!</div>
+            </div>
+            {% endif %}
+        {% else %}
+        <div style="text-align:center;padding:1rem 0;">
+            <div style="font-size:2rem;">✅</div>
+            <div style="font-size:1.1rem;font-weight:600;margin:0.5rem 0;">Tournament has concluded.</div>
+        </div>
+        {% endif %}
+        <div style="text-align:center;margin-top:0.5rem;">
+            <a href="{% url 'standings' %}" class="btn btn-primary btn-sm">View Final Standings</a>
+        </div>
+    </div>
+    {% else %}
+    <div class="card-header">Next Match</div>
+    <div class="card-body">
+        {% if next_match %}
+        <div style="margin-bottom:0.75rem;">
+            <div style="font-size:1rem;font-weight:600;">vs {{ next_opponent.name|default:"TBD" }}</div>
+            <div style="font-size:0.85rem;color:var(--text-muted);">
+                {{ next_match.scheduled_time|date:"l, M d \a\t H:i"|default:"Time TBD" }}{% if next_match.court %} &middot; {{ next_match.court.name }}{% endif %}
+            </div>
+        </div>
+        {% if next_opponent %}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:0.75rem;">
+            <div class="info-panel">
+                <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);letter-spacing:.04em;margin-bottom:0.3rem;">Their Form</div>
+                {% if next_opponent_standing %}
+                <div style="font-size:0.85rem;">Rank <strong>#{{ next_opponent_standing.rank }}</strong> &middot; <strong>{{ next_opponent_standing.points }} pts</strong></div>
+                <div style="font-size:0.82rem;color:var(--text-muted);">{{ next_opponent_standing.wins }}W {{ next_opponent_standing.losses }}L{% if next_opponent_standing.draws %} {{ next_opponent_standing.draws }}D{% endif %}</div>
+                {% else %}
+                <div style="font-size:0.85rem;color:var(--text-muted);">No standing data yet</div>
+                {% endif %}
+            </div>
+            <div class="info-panel">
+                <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);letter-spacing:.04em;margin-bottom:0.3rem;">Head to Head</div>
+                {% if h2h.wins or h2h.losses or h2h.draws %}
+                <div style="font-size:0.85rem;"><span style="color:var(--success);font-weight:600;">{{ h2h.wins }}W</span> &middot; <span style="color:var(--danger);font-weight:600;">{{ h2h.losses }}L</span>{% if h2h.draws %} &middot; <span>{{ h2h.draws }}D</span>{% endif %}</div>
+                <div style="font-size:0.8rem;color:var(--text-muted);">in this tournament</div>
+                {% else %}
+                <div style="font-size:0.85rem;color:var(--text-muted);">First meeting</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        <a href="{% url 'match_detail' pk=next_match.pk %}" class="btn btn-primary btn-sm">View Match</a>
+        {% else %}
+        <p class="text-muted">No upcoming matches scheduled.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="card card-warning">
+    <div class="card-header">&#9888;&#65039; Pending Actions</div>
+    <div class="card-body">
+        {% if pending_matches %}
+        <h4 class="mb-1">Scores to Confirm</h4>
+        {% for m in pending_matches %}
+        <div class="alert alert-warning d-flex justify-between align-center mb-1">
+            <span>Match #{{ m.match_number }}: {{ m.score_team1 }} - {{ m.score_team2 }}</span>
+            <a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-warning btn-sm">Review</a>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        {% if pending_reschedules %}
+        <h4 class="mb-1 mt-1">Reschedule Requests</h4>
+        {% for rr in pending_reschedules %}
+        <div class="alert alert-info d-flex justify-between align-center mb-1">
+            <span>Match #{{ rr.match.match_number }} &rarr; {{ rr.new_time|date:"M d, H:i" }}</span>
+            <a href="{% url 'match_detail' pk=rr.match.pk %}" class="btn btn-primary btn-sm">Review</a>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        {% if pending_no_show_reports %}
+        <h4 class="mb-1 mt-1">No-show notice</h4>
+        {% for report in pending_no_show_reports %}
+        <div class="alert alert-error d-flex justify-between align-center mb-1" style="gap:0.5rem;">
+            <span>
+                {% if report.absent_team == team %}
+                    Your team was reported absent for Match #{{ report.match.match_number }}. Request a reschedule before {{ report.deadline_at|date:"M d, H:i" }}.
+                {% else %}
+                    You reported a no-show for Match #{{ report.match.match_number }}. Auto-forfeit happens after {{ report.deadline_at|date:"M d, H:i" }} if there is no reschedule.
+                {% endif %}
+            </span>
+            <a href="{% url 'match_detail' pk=report.match.pk %}" class="btn btn-danger btn-sm">Open</a>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        {% if not pending_matches and not pending_reschedules and not pending_no_show_reports %}
+        <p class="text-muted">No pending actions.</p>
+        {% endif %}
+    </div>
+</div>
+
+</div>{# end grid-2 #}
+
+{# --- Row 2: Full Schedule + Standings Snippet --- #}
+<div class="grid grid-2">
+
+<div class="card">
+    <div class="card-header">
+        Upcoming Schedule
+        {% if remaining_matches_count %}<span class="badge badge-upcoming" style="margin-left:0.5rem;">{{ remaining_matches_count }}</span>{% endif %}
+    </div>
+    <div class="card-body">
+        {% if upcoming_matches %}
+        <div class="table-container">
+        <table>
+            <tr><th>#</th><th>Opponent</th><th>Time</th><th>Court</th><th></th></tr>
+            {% for m in upcoming_matches %}
+            <tr>
+                <td>{{ m.match_number }}</td>
+                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
+                <td>{{ m.court.name|default:"-" }}</td>
+                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+        {% if remaining_upcoming %}
+        <details style="margin-top:0.5rem;">
+            <summary style="cursor:pointer;font-size:0.85rem;color:var(--primary);padding:0.25rem 0;user-select:none;">Show {{ remaining_upcoming|length }} more match{{ remaining_upcoming|length|pluralize }}</summary>
+            <div class="table-container" style="margin-top:0.4rem;">
+            <table>
+                <tr><th>#</th><th>Opponent</th><th>Time</th><th>Court</th><th></th></tr>
+                {% for m in remaining_upcoming %}
+                <tr>
+                    <td>{{ m.match_number }}</td>
+                    <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                    <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
+                    <td>{{ m.court.name|default:"-" }}</td>
+                    <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+                </tr>
+                {% endfor %}
+            </table>
+            </div>
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">No upcoming matches.</p>
+        {% endif %}
+
+        {% if team_standing and points_gap_to_first is not None %}
+        <div style="margin-top:0.75rem;padding:0.6rem 0.75rem;font-size:0.85rem;" class="{% if can_reach_first %}info-success{% else %}info-warning{% endif %}">
+            {% if team_standing.rank == 1 %}
+            &#127947; You&rsquo;re in <strong>1st place</strong> with {{ team_standing.points }} pts.
+            {% elif can_reach_first %}
+            {{ remaining_matches_count }} match{{ remaining_matches_count|pluralize }} left &middot; <strong>{{ points_gap_to_first }} pts</strong> behind 1st &middot; max reachable: <strong>{{ max_possible_points }} pts</strong>
+            {% else %}
+            Cannot mathematically reach 1st &mdash; {{ points_gap_to_first }} pts gap, {{ remaining_matches_count }} match{{ remaining_matches_count|pluralize }} left.
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if standings_nearby %}
+<div class="card">
+    <div class="card-header">
+        Standings Position
+        <a href="{% url 'standings' %}" class="btn btn-outline btn-sm" style="margin-left:auto;">Full Table</a>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-container">
+        <table>
+            <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr>
+            {% for row, is_me in standings_nearby %}
+            <tr {% if is_me %}class="row-me"{% endif %}>
+                <td>{{ row.rank }}</td>
+                <td>{{ row.team.name }}{% if is_me %} <span style="font-size:0.75rem;color:var(--primary);">(you)</span>{% endif %}</td>
+                <td>{{ row.played }}</td>
+                <td style="color:var(--success);">{{ row.wins }}</td>
+                <td style="color:var(--danger);">{{ row.losses }}</td>
+                <td>{% if row.game_diff > 0 %}+{% endif %}{{ row.game_diff }}</td>
+                <td><strong>{{ row.points }}</strong></td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </div>
+</div>
+{% elif recent_matches %}
+<div class="card">
+    <div class="card-header">Recent Results</div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-container">
+        <table>
+            <tr><th>#</th><th>Opponent</th><th>Score</th><th>Result</th><th></th></tr>
+            {% for m in recent_matches %}
+            <tr>
+                <td>{{ m.match_number }}</td>
+                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.team1 == team %}{{ m.score_team1|default:"-" }}&ndash;{{ m.score_team2|default:"-" }}{% else %}{{ m.score_team2|default:"-" }}&ndash;{{ m.score_team1|default:"-" }}{% endif %}</td>
+                <td>{% if m.winner == team %}<strong style="color:var(--success);">Won</strong>{% elif m.winner %}<strong style="color:var(--danger);">Lost</strong>{% else %}&ndash;{% endif %}</td>
+                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+</div>{# end grid-2 #}
+
+{# --- Row 3: Points Trajectory + Recent Results (shown alongside for RR formats) --- #}
+{% if points_trajectory %}
+<div class="grid grid-2">
+
+<div class="card">
+    <div class="card-header">Points Trajectory</div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-container">
+        <table>
+            <tr><th>#</th><th>Opponent</th><th>Score</th><th>Result</th><th>+Pts</th><th>Total</th></tr>
+            {% for row in points_trajectory %}
+            <tr>
+                <td>{{ row.match_number }}</td>
+                <td>{{ row.opponent }}</td>
+                <td>{{ row.score }}</td>
+                <td>
+                    {% if row.result == 'W' %}<span style="color:var(--success);font-weight:600;">W</span>
+                    {% elif row.result == 'L' %}<span style="color:var(--danger);font-weight:600;">L</span>
+                    {% else %}<span style="color:var(--text-muted);">D</span>{% endif %}
+                </td>
+                <td style="color:var(--text-muted);">+{{ row.pts_earned }}</td>
+                <td><strong>{{ row.cumulative_points }}</strong></td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </div>
+</div>
+
+{% if standings_nearby and recent_matches %}
+<div class="card">
+    <div class="card-header">Recent Results</div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-container">
+        <table>
+            <tr><th>#</th><th>Opponent</th><th>Score</th><th>Result</th><th></th></tr>
+            {% for m in recent_matches %}
+            <tr>
+                <td>{{ m.match_number }}</td>
+                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.team1 == team %}{{ m.score_team1|default:"-" }}&ndash;{{ m.score_team2|default:"-" }}{% else %}{{ m.score_team2|default:"-" }}&ndash;{{ m.score_team1|default:"-" }}{% endif %}</td>
+                <td>{% if m.winner == team %}<strong style="color:var(--success);">Won</strong>{% elif m.winner %}<strong style="color:var(--danger);">Lost</strong>{% else %}&ndash;{% endif %}</td>
+                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+</div>{# end grid-2 #}
+{% endif %}
+
+{# --- Court Preferences --- #}
+{% if court_pref_total %}
+<div class="card">
+    <div class="card-header">Court Preferences</div>
+    <div class="card-body">
+        <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
+            <div>
+                <span style="font-size:1.4rem;font-weight:700;{% if court_pref_rate >= 70 %}color:var(--success){% elif court_pref_rate >= 40 %}color:var(--warning){% else %}color:var(--danger){% endif %};">{{ court_pref_rate }}%</span>
+                <span style="font-size:0.85rem;color:var(--text-muted);margin-left:0.4rem;">of scheduled matches on preferred courts</span>
+            </div>
+            <div style="font-size:0.85rem;color:var(--text-muted);">
+                {{ court_pref_matched }}/{{ court_pref_total }} matches matched &mdash;
+                {% for c in team.preferred_courts.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+            </div>
+            <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline btn-sm">Update Preferences</a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}{# --- pre-tournament registration phase --- #}
+
+{# Status banner #}
+<div class="alert alert-info mb-2" style="display:flex;align-items:center;gap:0.75rem;font-size:0.95rem;">
+    <span style="font-size:1.4rem;">📋</span>
+    <div>
+        <strong>{{ tournament.name }}</strong> is currently
+        <span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span>
+        — the tournament has not started yet. Your dashboard will update once the tournament goes live.
+    </div>
+</div>
+
+<div class="grid grid-2 mb-2">
+
+{# --- Team card --- #}
+<div class="card">
+    <div class="card-header">
+        Your Team
+        {% if is_captain %}<span style="font-size:0.8rem;font-weight:400;margin-left:0.5rem;color:var(--text-muted);">👑 Captain</span>{% endif %}
+    </div>
+    <div class="card-body">
+        <div style="font-size:1.25rem;font-weight:700;margin-bottom:0.2rem;">{{ team.name }}</div>
+        {% if team.department %}
+        <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.75rem;">{{ team.department }}</div>
+        {% endif %}
+
+        {# Member progress bar #}
+        <div style="margin:0.75rem 0 1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+                <span style="font-size:0.85rem;color:var(--text-muted);">Players enrolled</span>
+                <span style="font-size:0.95rem;font-weight:700;{% if is_team_full %}color:var(--success);{% else %}color:var(--primary);{% endif %}">
+                    {{ team_member_count }} / {{ tournament.players_per_team }}
+                </span>
+            </div>
+            <div style="height:10px;background:var(--border);border-radius:5px;overflow:hidden;">
+                <div style="height:100%;border-radius:5px;width:{% widthratio team_member_count tournament.players_per_team 100 %}%;background:{% if is_team_full %}var(--success){% else %}var(--primary){% endif %};transition:width 0.3s;"></div>
+            </div>
+        </div>
+
+        {% if is_team_full %}
+        <div class="alert alert-success" style="margin-bottom:1rem;">✅ Team roster is complete!</div>
+        {% else %}
+        <div class="alert alert-warning" style="margin-bottom:1rem;">
+            ⏳ Waiting for <strong>{{ players_needed }}</strong> more player{{ players_needed|pluralize }} to join.
+        </div>
+        {% endif %}
+
+        {# Members list #}
+        {% if team_members %}
+        <div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.4rem;">Members</div>
+        <div style="display:flex;flex-direction:column;gap:0.35rem;">
+            {% for m in team_members %}
+            <div style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--primary-light,#e0e7ff);color:var(--primary);display:inline-flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;">
+                    {{ m.user.get_full_name|default:m.user.username|slice:":1"|upper }}
+                </span>
+                <span>{{ m.user.get_full_name|default:m.user.username }}</span>
+                {% if m.role == 'captain' %}
+                <span style="font-size:0.7rem;background:var(--primary-light,#e0e7ff);color:var(--primary);padding:1px 6px;border-radius:10px;">captain</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if is_captain %}
+        <div style="margin-top:1rem;">
+            <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline btn-sm">Court Preferences</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# --- Tournament info card --- #}
+<div class="card">
+    <div class="card-header">Tournament Details</div>
+    <div class="card-body">
+        <dl style="display:grid;grid-template-columns:auto 1fr;gap:0.45rem 1rem;font-size:0.9rem;margin:0;">
+            <dt style="color:var(--text-muted);white-space:nowrap;">Name</dt>
+            <dd style="font-weight:600;margin:0;">{{ tournament.name }}</dd>
+
+            <dt style="color:var(--text-muted);">Sport</dt>
+            <dd style="margin:0;">{{ tournament.get_sport_type_display }}</dd>
+
+            <dt style="color:var(--text-muted);">Format</dt>
+            <dd style="margin:0;">{{ tournament.get_format_display }}</dd>
+
+            <dt style="color:var(--text-muted);">Team size</dt>
+            <dd style="margin:0;">{{ tournament.players_per_team }} player{{ tournament.players_per_team|pluralize }}</dd>
+
+            <dt style="color:var(--text-muted);">Status</dt>
+            <dd style="margin:0;"><span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span></dd>
+
+            {% if tournament.start_date %}
+            <dt style="color:var(--text-muted);">Start date</dt>
+            <dd style="margin:0;">{{ tournament.start_date|date:"N j, Y" }}</dd>
+            {% endif %}
+        </dl>
+    </div>
+</div>
+
+</div>{# end grid-2 #}
+
+{# --- Registration progress --- #}
+<div class="card">
+    <div class="card-header">Registration Progress</div>
+    <div class="card-body">
+        <div style="display:flex;align-items:center;gap:2rem;flex-wrap:wrap;">
+            <div style="text-align:center;">
+                <div style="font-size:2rem;font-weight:800;color:var(--primary);">{{ registered_teams_count }}</div>
+                <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Teams Registered</div>
+            </div>
+            {% if tournament.expected_teams_count %}
+            <div style="flex:1;min-width:160px;">
+                <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-muted);margin-bottom:0.35rem;">
+                    <span>{{ registered_teams_count }} / {{ tournament.expected_teams_count }} expected</span>
+                    <span>{% widthratio registered_teams_count tournament.expected_teams_count 100 %}%</span>
+                </div>
+                <div style="height:10px;background:var(--border);border-radius:5px;overflow:hidden;">
+                    <div style="height:100%;border-radius:5px;width:{% widthratio registered_teams_count tournament.expected_teams_count 100 %}%;background:var(--primary);"></div>
+                </div>
+            </div>
+            {% endif %}
+            <div style="font-size:0.85rem;color:var(--text-muted);">
+                {% if tournament.status == 'registration_open' %}
+                    Registration is open. Share the tournament link so more teams can join.
+                {% elif tournament.status == 'ready' %}
+                    Registration closed. Waiting for the organizer to generate the schedule.
+                {% elif tournament.status == 'scheduled' %}
+                    Schedule is drafted. The tournament will start soon.
+                {% else %}
+                    Tournament is being configured by the organizer.
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endif %}{# end active/completed check #}
+
+{% endif %}{# end if team #}
+{% endif %}

@@ -1,0 +1,44 @@
+{% extends "core/base.html" %}
+{% block title %}Create Team - {{ tournament.name }}{% endblock %}
+{% block page_header %}Create Team{% endblock %}
+{% block content %}
+<div style="max-width:520px;margin:0 auto;">
+    <h1 class="page-title">Create a Team</h1>
+    <p class="text-muted mb-2">Tournament: <strong>{{ tournament.name }}</strong> ({{ tournament.get_sport_type_display }})</p>
+    {% if tournament.players_per_team > 1 %}
+    <p class="text-muted mb-2">This tournament needs <strong>{{ tournament.players_per_team }}</strong> players per team. After creating your team, others can join from the tournament page.</p>
+    {% endif %}
+    <div class="card">
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="{{ form.team_name.id_for_label }}">Team Name</label>
+                    {{ form.team_name }}
+                    {% if form.team_name.errors %}<small class="text-danger">{{ form.team_name.errors.0 }}</small>{% endif %}
+                </div>
+                <div class="form-group">
+                    <label for="{{ form.department.id_for_label }}">Department <span class="text-muted">(optional)</span></label>
+                    {{ form.department }}
+                    {% if form.department.errors %}<small class="text-danger">{{ form.department.errors.0 }}</small>{% endif %}
+                </div>
+                {% if form.preferred_courts.field.queryset.exists %}
+                <div class="form-group">
+                    <label>Preferred Courts</label>
+                    {{ form.preferred_courts }}
+                    <small class="text-muted">{{ form.preferred_courts.help_text }}</small>
+                    {% if form.preferred_courts.errors %}<small class="text-danger">{{ form.preferred_courts.errors.0 }}</small>{% endif %}
+                </div>
+                {% endif %}
+                {% if form.non_field_errors %}
+                <div class="alert alert-error">{{ form.non_field_errors.0 }}</div>
+                {% endif %}
+                <div style="display:flex;gap:0.75rem;margin-top:1rem;">
+                    <button type="submit" class="btn btn-primary">Create Team</button>
+                    <a href="{% url 'join_tournament' pk=tournament.pk %}" class="btn btn-outline">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,247 @@
+{% extends "core/base.html" %}
+{% block title %}Configure: {{ tournament.name }}{% endblock %}
+{% block page_header %}Configure Tournament{% endblock %}
+{% block content %}
+
+{% if tournament.status == 'completed' %}
+<div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;font-size:1.05rem;margin-bottom:1.25rem;">
+    <span style="font-size:1.6rem;">🏆</span>
+    <div>
+        <strong>Tournament Complete!</strong>
+        {% if tournament.champion %}
+            Champion: <strong>{{ tournament.champion.name }}</strong>
+        {% else %}
+            No champion recorded.
+        {% endif %}
+        {% if tournament.completed_at %}<span class="text-muted" style="font-size:0.85rem;margin-left:0.5rem;">Completed {{ tournament.completed_at|date:"M d, Y H:i" }}</span>{% endif %}
+    </div>
+</div>
+{% endif %}
+
+<h1 class="page-title">{{ tournament.name }} <span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span></h1>
+<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Format: {{ tournament.get_format_display }} | Players/Team: {{ tournament.players_per_team }} | Expected Teams: {{ tournament.expected_teams_count|default:"-" }} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
+
+<div class="grid grid-3">
+    <!-- Courts -->
+    <div class="card">
+        <div class="card-header">Courts ({{ courts.count }})</div>
+        <div class="card-body">
+            {% for court in courts %}
+            <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
+                <div class="d-flex justify-between align-center">
+                    <span>{{ court.name }}</span>
+                    <span class="badge {% if court.is_available %}badge-active{% else %}badge-withdrawn{% endif %}">
+                        {% if court.is_available %}Available{% else %}Unavailable{% endif %}
+                    </span>
+                </div>
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    {% with avails=court.availabilities.all %}
+                        {% if avails %}
+                            {% for avail in avails %}
+                                <div>{{ avail.get_weekday_display }} • {{ avail.start_time|time:"H:i" }} - {{ avail.end_time|time:"H:i" }}{% if avail.start_date or avail.end_date %} • {{ avail.start_date|default:"Any" }} to {{ avail.end_date|default:"Open" }}{% endif %}</div>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">No recurring availability set yet.</span>
+                        {% endif %}
+                    {% endwith %}
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted">No courts added yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <form method="post" action="{% url 'add_court' pk=tournament.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="availability_present" value="1">
+                <div class="form-group">
+                    <label>Court Name</label>
+                    {{ court_form.name }}
+                </div>
+                <div class="form-group">
+                    <label class="d-flex align-center" style="gap:0.5rem;">
+                        {{ court_form.is_available }}
+                        <span>Available for scheduling</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Add Court</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Availability -->
+    <div class="card">
+        <div class="card-header">Court Availability</div>
+        <div class="card-body">
+            {% for ca in court_availabilities %}
+            <div class="mb-1" style="font-size:0.85rem;">
+                <strong>{{ ca.court.name }}</strong> — {{ ca.get_weekday_display }} {{ ca.start_time|time:"H:i" }} - {{ ca.end_time|time:"H:i" }}{% if ca.start_date or ca.end_date %} ({{ ca.start_date|default:"Any" }} to {{ ca.end_date|default:"Open" }}){% endif %}
+            </div>
+            {% empty %}
+            <p class="text-muted">No recurring availability added yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <p class="text-muted" style="font-size:0.85rem;">Select multiple courts and weekdays once, then apply the same hours in a single step. Existing duplicates are skipped automatically.</p>
+            <form method="post" action="{% url 'add_court_availability' pk=tournament.pk %}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <div class="d-flex justify-between align-center" style="gap:0.5rem;flex-wrap:wrap;">
+                        <label>Courts</label>
+                        <div class="d-flex" style="gap:0.35rem;flex-wrap:wrap;">
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="courts" data-check-mode="all">All Courts</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="courts" data-check-mode="none">Clear</button>
+                        </div>
+                    </div>
+                    <div data-check-group="courts" style="padding:0.75rem;border:1px solid #e0e0e0;border-radius:6px;max-height:150px;overflow:auto;background:#fafafa;">
+                        {{ court_availability_form.courts }}
+                    </div>
+                    <small class="text-muted">Apply one recurring schedule to any number of courts.</small>
+                </div>
+                <div class="form-group">
+                    <div class="d-flex justify-between align-center" style="gap:0.5rem;flex-wrap:wrap;">
+                        <label>Weekdays</label>
+                        <div class="d-flex" style="gap:0.35rem;flex-wrap:wrap;">
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="weekdays">Weekdays</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="weekend">Weekend</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="all">Every Day</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="none">Clear</button>
+                        </div>
+                    </div>
+                    <div data-check-group="weekdays" style="padding:0.75rem;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;">
+                        {{ court_availability_form.weekdays }}
+                    </div>
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group"><label>Start</label>{{ court_availability_form.start_time }}</div>
+                    <div class="form-group"><label>End</label>{{ court_availability_form.end_time }}</div>
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group"><label>Start Date</label>{{ court_availability_form.start_date }}</div>
+                    <div class="form-group"><label>End Date</label>{{ court_availability_form.end_date }}</div>
+                </div>
+                <div class="form-group">
+                    <label class="d-flex align-center" style="gap:0.5rem;">
+                        {{ court_availability_form.is_active }}
+                        <span>Availability is active immediately</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Apply Availability</button>
+            </form>
+            <hr style="margin:1rem 0;">
+            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Manual Extra Slot</h4>
+            {% for ts in time_slots %}
+            <div class="mb-1" style="font-size:0.85rem;">
+                {{ ts.start_time|date:"M d" }}: {{ ts.start_time|date:"H:i" }} - {{ ts.end_time|date:"H:i" }}{% if ts.court %} • {{ ts.court.name }}{% endif %}
+            </div>
+            {% endfor %}
+            <form method="post" action="{% url 'add_timeslot' pk=tournament.pk %}">
+                {% csrf_token %}
+                <div class="form-group"><label>Court</label>{{ timeslot_form.court }}</div>
+                <div class="form-group"><label>Date</label>{{ timeslot_form.date }}</div>
+                <div class="grid grid-2">
+                    <div class="form-group"><label>Start</label>{{ timeslot_form.start_time }}</div>
+                    <div class="form-group"><label>End</label>{{ timeslot_form.end_time }}</div>
+                </div>
+                <button type="submit" class="btn btn-outline btn-sm">Add Slot</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Teams -->
+    <div class="card">
+        <div class="card-header">Teams ({{ teams.count }})</div>
+        <div class="card-body">
+            {% for t in teams %}
+            <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
+                <div class="d-flex justify-between align-center">
+                    <strong>{{ t.name }}</strong>
+                    <span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span>
+                </div>
+                {% if t.department %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Department: {{ t.department }}
+                </div>
+                {% endif %}
+                {% if t.players.all %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Players: {% for p in t.players.all %}{{ p.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                </div>
+                {% endif %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Preferred courts:
+                    {% for c in t.preferred_courts.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="text-danger">Not set</span>{% endfor %}
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted">No teams registered yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Add Teams via Text</h4>
+            <form method="post" action="{% url 'add_teams_bulk' pk=tournament.pk %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="form-group">
+                    {{ bulk_team_form.teams_text }}
+                    <small class="text-muted">{{ bulk_team_form.teams_text.help_text }}</small>
+                </div>
+                <h4 style="font-size:0.9rem;margin:0.75rem 0 0.5rem;">Or Upload CSV/Text File</h4>
+                <div class="form-group">
+                    {{ bulk_team_file_form.file }}
+                    <small class="text-muted">{{ bulk_team_file_form.file.help_text }}</small>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Add Teams</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-2">
+    <div class="card-body">
+        <div class="d-flex justify-between align-center" style="gap:1rem; flex-wrap:wrap;">
+            <div>
+                <strong>Workflow</strong><br>
+                <span class="text-muted">Status: {{ tournament.get_status_display }} • {{ teams.count }} teams • {{ courts.count }} courts</span>
+            </div>
+            <div class="d-flex" style="gap:0.5rem; flex-wrap:wrap;">
+                {% if tournament.status == 'setup' or tournament.status == 'ready' %}
+                <form method="post" action="{% url 'open_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm">Open Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'registration_open' %}
+                <form method="post" action="{% url 'close_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning btn-sm">Close Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'ready' or tournament.status == 'registration_open' or tournament.status == 'setup' %}
+                <form method="post" action="{% url 'generate_schedule' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm">Generate Schedule Draft</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'scheduled' %}
+                <form method="post" action="{% url 'start_tournament' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Publish this reviewed schedule and start the tournament?')">Publish & Start</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'active' %}
+                <form method="post" action="{% url 'complete_tournament' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Mark this tournament as completed? This will determine the champion from current results.')">Mark as Completed</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="mt-2" style="font-size:0.9rem;">
+            <strong>Registration link:</strong>
+            <a href="{% url 'tournament_register' pk=tournament.pk %}">{% url 'tournament_register' pk=tournament.pk %}</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

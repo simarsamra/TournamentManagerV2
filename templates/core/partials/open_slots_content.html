@@ -1,0 +1,25 @@
+{% if tournament %}
+<div class="card">
+    <div class="table-container">
+    <table>
+        <thead><tr><th>Court</th><th>Date</th><th>Start</th><th>End</th><th>Reason</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for slot in slots %}
+        <tr>
+            <td>{{ slot.court.name }}</td>
+            <td>{{ slot.start_time|date:"M d, Y" }}</td>
+            <td>{{ slot.start_time|date:"H:i" }}</td>
+            <td>{{ slot.end_time|date:"H:i" }}</td>
+            <td>{{ slot.reason }}</td>
+            <td>{{ slot.created_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted">No open slots available.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="text-muted">No tournament active.</p>
+{% endif %}

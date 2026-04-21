@@ -1,0 +1,70 @@
+{% extends "core/base.html" %}
+{% block title %}Backup & Restore{% endblock %}
+{% block page_header %}Backup & Restore{% endblock %}
+{% block content %}
+<h1 class="page-title">Backup & Restore</h1>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">Create Backup</div>
+        <div class="card-body">
+            <form method="post" action="{% url 'create_backup' %}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label>Notes (optional)</label>
+                    <input type="text" name="notes" class="form-control" placeholder="Backup description...">
+                </div>
+                <button type="submit" class="btn btn-primary">💾 Create Backup</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Backup History</div>
+        <div class="card-body">
+            {% for r in records %}
+            <div class="d-flex justify-between align-center mb-1" style="padding:0.4rem;border-bottom:1px solid var(--border);">
+                <div>
+                    <strong style="font-size:0.85rem;">{{ r.filename }}</strong><br>
+                    <small class="text-muted">{{ r.created_at|date:"M d, H:i" }} · {{ r.size_bytes|filesizeformat }} {% if r.is_auto %}· Auto{% endif %}</small>
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted">No backups created yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% if backups %}
+<div class="card mt-2">
+    <div class="card-header">Available Backup Files</div>
+    <div class="table-container">
+    <table>
+        <thead><tr><th>Filename</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for b in backups %}
+        <tr>
+            <td>{{ b.filename }}</td>
+            <td>{{ b.size|filesizeformat }}</td>
+            <td>{{ b.modified|date:"M d, Y H:i" }}</td>
+            <td>
+                <form method="post" action="{% url 'restore_backup' %}" style="display:inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="filename" value="{{ b.filename }}">
+                    <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Restore from this backup? Current data will be backed up first.')">Restore</button>
+                </form>
+                <form method="post" action="{% url 'delete_backup' %}" style="display:inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="filename" value="{{ b.filename }}">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this backup?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

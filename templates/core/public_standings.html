@@ -1,0 +1,106 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if tournament %}{{ tournament.name }} — {% endif %}Standings</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+<div class="content" style="max-width:900px;margin:2rem auto;">
+    <div class="d-flex justify-between align-center mb-2">
+        <h1>{% if tournament %}{{ tournament.name }}{% endif %} — Standings</h1>
+        <div>
+            <a href="{% url 'public_fixtures' %}" class="btn btn-outline">Fixtures</a>
+            <a href="{% url 'login' %}" class="btn btn-primary">Login</a>
+        </div>
+    </div>
+
+    {% if tournament and tournament.status == 'completed' %}
+    <div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;font-size:1.05rem;margin-bottom:1rem;">
+        <span style="font-size:1.6rem;">🏆</span>
+        <div>
+            <strong>Tournament Complete!</strong>
+            {% if tournament.champion %}
+                Champion: <strong>{{ tournament.champion.name }}</strong>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if standings %}
+    <div class="card">
+        <div class="table-container">
+        <table>
+            <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>D</th><th>GD</th><th>Pts</th></tr></thead>
+            <tbody>
+            {% for s in standings %}
+            <tr>
+                <td><strong>{{ s.rank }}</strong></td>
+                <td>{{ s.team.name }}</td>
+                <td>{{ s.played }}</td>
+                <td>{{ s.wins }}</td>
+                <td>{{ s.losses }}</td>
+                <td>{{ s.draws }}</td>
+                <td>{{ s.game_diff }}</td>
+                <td><strong>{{ s.points }}</strong></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if group_standings %}
+    {% for g, st in group_standings.items %}
+    <div class="card">
+        <div class="card-header">Group {{ g }}</div>
+        <div class="table-container">
+        <table>
+            <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
+            <tbody>
+            {% for s in st %}
+            <tr><td>{{ s.rank }}</td><td>{{ s.team.name }}</td><td>{{ s.played }}</td><td>{{ s.wins }}</td><td>{{ s.losses }}</td><td>{{ s.game_diff }}</td><td><strong>{{ s.points }}</strong></td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if bracket %}
+    <div class="card">
+        <div class="card-header">Bracket</div>
+        <div class="card-body">
+            <div class="bracket-container" style="display:flex;">
+                {% for round_num, matches in bracket.items %}
+                <div class="bracket-round">
+                    <div class="bracket-round-title">Round {{ round_num }}</div>
+                    {% for m in matches %}
+                    <div class="bracket-match">
+                        <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
+                            <span>{{ m.team1.name|default:"TBD" }}</span>
+                            <span>{{ m.score_team1|default:"" }}</span>
+                        </div>
+                        <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
+                            <span>{{ m.team2.name|default:"TBD" }}</span>
+                            <span>{{ m.score_team2|default:"" }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not standings and not group_standings and not bracket %}
+    <p class="text-muted text-center">No standings data yet.</p>
+    {% endif %}
+</div>
+</body>
+</html>

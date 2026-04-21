@@ -1,0 +1,188 @@
+{% extends "core/base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block page_header %}Analytics{% endblock %}
+{% block content %}
+<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Analytics Dashboard</h1>
+
+{% if tournament %}
+<div class="grid grid-4 mb-2">
+    <div class="stat-card">
+        <div class="stat-value">{{ match_stats.total }}</div>
+        <div class="stat-label">Total Matches</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--success)">{{ match_stats.confirmed }}</div>
+        <div class="stat-label">Confirmed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--warning)">{{ match_stats.pending }}</div>
+        <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--danger)">{{ match_stats.disputed }}</div>
+        <div class="stat-label">Disputed</div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <!-- Match Status Breakdown -->
+    <div class="card">
+        <div class="card-header">Match Status Breakdown</div>
+        <div class="card-body">
+            <table>
+                <tr><td>Upcoming</td><td><strong>{{ match_stats.upcoming }}</strong></td></tr>
+                <tr><td>In Progress</td><td><strong>{{ match_stats.in_progress }}</strong></td></tr>
+                <tr><td>Pending Confirmation</td><td><strong>{{ match_stats.pending }}</strong></td></tr>
+                <tr><td>Confirmed</td><td><strong>{{ match_stats.confirmed }}</strong></td></tr>
+                <tr><td>Disputed</td><td><strong>{{ match_stats.disputed }}</strong></td></tr>
+                <tr><td>Forfeited</td><td><strong>{{ match_stats.forfeited }}</strong></td></tr>
+                <tr><td>Cancelled</td><td><strong>{{ match_stats.cancelled }}</strong></td></tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- Court Utilization -->
+    <div class="card">
+        <div class="card-header">Court Utilization</div>
+        <div class="card-body">
+            <table>
+                <thead><tr><th>Court</th><th>Total</th><th>Confirmed</th><th>Utilization</th></tr></thead>
+                <tbody>
+                {% for cs in court_stats %}
+                <tr>
+                    <td>{{ cs.court.name }}</td>
+                    <td>{{ cs.total_matches }}</td>
+                    <td>{{ cs.confirmed_matches }}</td>
+                    <td>
+                        <div style="background:#e2e8f0;border-radius:4px;height:20px;width:100%;position:relative;">
+                            <div style="background:var(--primary);border-radius:4px;height:20px;width:{{ cs.utilization }}%;"></div>
+                        </div>
+                        {{ cs.utilization }}%
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Team Performance -->
+<div class="card mt-2">
+    <div class="card-header">Team Performance</div>
+    <div class="table-container">
+    <table>
+        <thead><tr><th>Team</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Performance</th></tr></thead>
+        <tbody>
+        {% for ts in team_stats %}
+        <tr>
+            <td><a href="{% url 'team_detail' pk=ts.team.pk %}">{{ ts.team.name }}</a></td>
+            <td>{{ ts.played }}</td>
+            <td>{{ ts.wins }}</td>
+            <td>{{ ts.losses }}</td>
+            <td>{{ ts.win_rate }}%</td>
+            <td>
+                <div style="background:#e2e8f0;border-radius:4px;height:16px;width:120px;display:inline-block;position:relative;">
+                    <div style="background:var(--success);border-radius:4px;height:16px;width:{{ ts.win_rate }}%;"></div>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% if standings %}
+<!-- Points Chart -->
+<div class="card mt-2">
+    <div class="card-header">Points Overview</div>
+    <div class="card-body">
+        {% for s in standings %}
+        <div class="d-flex align-center gap-1 mb-1">
+            <span style="width:120px;font-size:0.85rem;">{{ s.team.name }}</span>
+            <div style="flex:1;background:#e2e8f0;border-radius:4px;height:24px;position:relative;">
+                {% widthratio s.points standings.0.points 100 as pct %}
+                <div style="background:var(--primary);border-radius:4px;height:24px;width:{% widthratio s.points standings.0.points 100 %}%;display:flex;align-items:center;padding-left:0.5rem;">
+                    <span style="color:white;font-size:0.75rem;font-weight:600;">{{ s.points }} pts</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Schedule Density -->
+<div class="card mt-2">
+    <div class="card-header">Schedule Density (Matches per Day)</div>
+    <div class="card-body" id="schedule-density"></div>
+</div>
+
+{% if withdrawal_info %}
+<div class="card mt-2">
+    <div class="card-header">Withdrawal Impact</div>
+    <div class="table-container">
+    <table>
+        <thead><tr><th>Team</th><th>Withdrawn At</th><th>Affected Matches</th></tr></thead>
+        <tbody>
+        {% for wi in withdrawal_info %}
+        <tr>
+            <td>{{ wi.team.name }}</td>
+            <td>{{ wi.withdrawn_at|date:"M d, H:i" }}</td>
+            <td>{{ wi.affected_matches }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recent Audit Log -->
+<div class="card mt-2">
+    <div class="card-header">Recent Activity</div>
+    <div class="table-container">
+    <table>
+        <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead>
+        <tbody>
+        {% for log in recent_logs %}
+        <tr>
+            <td style="white-space:nowrap;">{{ log.timestamp|date:"M d, H:i" }}</td>
+            <td>{{ log.user.username|default:"-" }}</td>
+            <td><span class="badge badge-upcoming">{{ log.action }}</span></td>
+            <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;">{{ log.details|truncatechars:80 }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% else %}
+<p class="text-muted">No tournament data available.</p>
+{% endif %}
+
+{% block extra_js %}
+<script>
+// Simple bar chart for schedule density
+var data = {{ schedule_density|safe }};
+var container = document.getElementById('schedule-density');
+if (data && Object.keys(data).length > 0) {
+    var maxVal = Math.max(...Object.values(data));
+    var html = '';
+    for (var date in data) {
+        var pct = (data[date] / maxVal * 100);
+        html += '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:4px;">';
+        html += '<span style="width:90px;font-size:0.8rem;text-align:right;">' + date + '</span>';
+        html += '<div style="flex:1;background:#e2e8f0;border-radius:3px;height:18px;">';
+        html += '<div style="background:var(--info);border-radius:3px;height:18px;width:' + pct + '%;display:flex;align-items:center;padding-left:6px;">';
+        html += '<span style="color:white;font-size:0.7rem;">' + data[date] + '</span></div></div></div>';
+    }
+    container.innerHTML = html;
+} else {
+    container.innerHTML = '<p class="text-muted">No scheduled matches.</p>';
+}
+</script>
+{% endblock %}
+{% endblock %}

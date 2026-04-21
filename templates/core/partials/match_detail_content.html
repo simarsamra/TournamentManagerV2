@@ -1,0 +1,251 @@
+{% if reschedule_requests %}
+<div class="card mb-2 card-warning">
+    <div class="card-header">🔄 Reschedule Requests</div>
+    <div class="card-body">
+        <div class="table-container">
+        <table>
+            <tr><th>Requested By</th><th>New Time</th><th>Court</th><th>Reason</th><th>Status</th><th></th></tr>
+            {% for rr in reschedule_requests %}
+            <tr>
+                <td>{{ rr.requested_by.name }}</td>
+                <td>{{ rr.new_time|date:"M d, H:i" }}</td>
+                <td>{{ rr.new_court.name|default:"-" }}</td>
+                <td>{{ rr.reason|default:"-" }}</td>
+                <td><span class="badge badge-{{ rr.status }}">{{ rr.get_status_display }}</span></td>
+                <td>
+                    {% if rr.status == "pending" and is_participant and rr.requested_by != team %}
+                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="approve">
+                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
+                    </form>
+                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="reject">
+                        <button type="submit" class="btn btn-danger btn-sm">Reject</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">Match Info</div>
+        <div class="card-body">
+            <table style="width:100%">
+                <tr><td class="text-muted" style="width:35%">Teams</td><td><strong>{{ match.team1.name|default:"TBD" }}</strong> vs <strong>{{ match.team2.name|default:"TBD" }}</strong></td></tr>
+                <tr><td class="text-muted">Scheduled</td><td>{{ match.scheduled_time|date:"M d, Y H:i"|default:"Not scheduled" }}</td></tr>
+                <tr><td class="text-muted">Court</td><td>{{ match.court.name|default:"Not assigned" }}</td></tr>
+                <tr><td class="text-muted">Status</td><td><span class="badge badge-{{ match.status }}">{{ match.get_status_display }}</span></td></tr>
+                <tr><td class="text-muted">Score</td><td>{% if match.score_team1 is not None %}<strong>{{ match.score_team1 }} - {{ match.score_team2 }}</strong>{% else %}Not recorded{% endif %}</td></tr>
+                {% if match.winner %}<tr><td class="text-muted">Winner</td><td class="text-success"><strong>{{ match.winner.name }}</strong></td></tr>{% endif %}
+                {% if match.submitted_by %}<tr><td class="text-muted">Submitted by</td><td>{{ match.submitted_by.name }}</td></tr>{% endif %}
+                {% if match.confirmed_by %}<tr><td class="text-muted">Confirmed by</td><td>{{ match.confirmed_by.name }}</td></tr>{% endif %}
+                {% if match.group %}<tr><td class="text-muted">Group</td><td>{{ match.group }}</td></tr>{% endif %}
+                {% if match.round_number %}<tr><td class="text-muted">Round</td><td>{{ match.round_number }}</td></tr>{% endif %}
+                {% if match.notes %}<tr><td class="text-muted">Notes</td><td>{{ match.notes }}</td></tr>{% endif %}
+            </table>
+        </div>
+    </div>
+
+    <div>
+        {% if match.tournament.status == 'completed' %}
+        <div class="alert alert-success" style="display:flex;align-items:center;gap:0.5rem;">
+            <span>✅</span>
+            <span>This tournament has been completed. Score entry is now closed.</span>
+        </div>
+        {% else %}
+        {% if can_submit %}
+        <div class="card">
+            <div class="card-header">Submit Score</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'submit_score' pk=match.pk %}">
+                    {% csrf_token %}
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>{{ match.team1.name }} Score</label>
+                            {{ score_form.score_team1 }}
+                        </div>
+                        <div class="form-group">
+                            <label>{{ match.team2.name }} Score</label>
+                            {{ score_form.score_team2 }}
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        {{ score_form.notes }}
+                    </div>
+                    <button type="submit" class="btn btn-primary">Submit Score</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if can_confirm %}
+        <div class="card">
+            <div class="card-header">⚠️ Confirm Score</div>
+            <div class="card-body">
+                <p class="mb-1">{{ match.submitted_by.name }} reported: <strong>{{ match.score_team1 }} - {{ match.score_team2 }}</strong></p>
+                <div class="d-flex gap-1">
+                    <form method="post" action="{% url 'confirm_score' pk=match.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success">✓ Confirm</button>
+                    </form>
+                    <form method="post" action="{% url 'dispute_score' pk=match.pk %}">
+                        {% csrf_token %}
+                        <input type="text" name="dispute_notes" class="form-control" placeholder="Reason (optional)" style="display:inline;width:200px;">
+                        <button type="submit" class="btn btn-danger">✗ Dispute</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if match.status == "disputed" and is_organizer %}
+        <div class="card">
+            <div class="card-header">🔧 Resolve Dispute</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'resolve_dispute' pk=match.pk %}">
+                    {% csrf_token %}
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>{{ match.team1.name }} Final Score</label>
+                            <input type="number" name="final_score_team1" value="{{ match.score_team1 }}" class="form-control" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ match.team2.name }} Final Score</label>
+                            <input type="number" name="final_score_team2" value="{{ match.score_team2 }}" class="form-control" min="0" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-warning">Resolve & Confirm</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if pending_no_show_report and is_participant %}
+        <div class="card">
+            <div class="card-header">No-Show Notice</div>
+            <div class="card-body">
+                {% if pending_no_show_report.absent_team == team %}
+                <p class="mb-1">Your opponent reported that your team did not show up. Request a reschedule within 24 hours to avoid an automatic forfeit.</p>
+                <p class="text-muted">Deadline: {{ pending_no_show_report.deadline_at|date:"M d, Y H:i" }}</p>
+                {% else %}
+                <p class="mb-1">You reported {{ pending_no_show_report.absent_team.name }} as a no-show. The match will be forfeited automatically if no reschedule is requested before {{ pending_no_show_report.deadline_at|date:"M d, Y H:i" }}.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}{# end tournament not completed #}
+
+        {% if can_report_no_show %}
+        <div class="card">
+            <div class="card-header">Report Opponent No-Show</div>
+            <div class="card-body">
+                <p class="mb-1">If the other team did not arrive, report it here. They will have 24 hours to request a reschedule before the result becomes a forfeit automatically.</p>
+                <form method="post" action="{% url 'report_no_show' pk=match.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="no_show_team" value="{% if match.team1 == team %}{{ match.team2.pk }}{% else %}{{ match.team1.pk }}{% endif %}">
+                    <button type="submit" class="btn btn-warning" onclick="return confirm('Report the opponent as a no-show?')">Report Opponent No-Show</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if can_mark_no_show %}
+        <div class="card">
+            <div class="card-header">No-Show</div>
+            <div class="card-body">
+                <p class="mb-1">Mark a team as no-show. Opponent will win by forfeit.</p>
+                <div class="d-flex gap-1">
+                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="no_show_team" value="{{ match.team1.pk }}">
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ match.team1.name }} as no-show?')">{{ match.team1.name }} No-Show</button>
+                    </form>
+                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="no_show_team" value="{{ match.team2.pk }}">
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ match.team2.name }} as no-show?')">{{ match.team2.name }} No-Show</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if is_participant and match.status == "upcoming" %}
+        <div class="card">
+            <div class="card-header">Request Reschedule</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'request_reschedule' pk=match.pk %}">
+                    {% csrf_token %}
+                    <div class="form-group">
+                        <label>Choose Open Slot</label>
+                        {% if open_slot_choices %}
+                        <div class="slot-picker">
+                            {% for option in open_slot_choices %}
+                            <label class="slot-option" for="open-slot-{{ option.slot.pk }}">
+                                <input
+                                    class="slot-option-radio"
+                                    type="radio"
+                                    name="{{ reschedule_form.open_slot.html_name }}"
+                                    value="{{ option.slot.pk }}"
+                                    id="open-slot-{{ option.slot.pk }}"
+                                >
+                                <div class="slot-option-body">
+                                    <div class="slot-option-content">{{ option.slot.start_time|date:"D, M d, Y · H:i" }} - {{ option.slot.end_time|date:"H:i" }} · {{ option.slot.court.name }}</div>
+                                    <div class="slot-option-hint">Select this slot to review both teams' other matches on that day.</div>
+                                    <div class="slot-team-context">
+                                        <div class="slot-context-title">Same-day team schedules</div>
+                                        {% for team_schedule in option.team_schedules %}
+                                        <div class="slot-team-schedule">
+                                            <strong>{{ team_schedule.team_name }}</strong>
+                                            {% if team_schedule.matches %}
+                                            <ul class="slot-match-list">
+                                                {% for same_day_match in team_schedule.matches %}
+                                                <li>Match #{{ same_day_match.match_number }} · {{ same_day_match.time_label }} · {{ same_day_match.court_name }} vs {{ same_day_match.opponent_name }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% else %}
+                                            <span class="slot-context-empty">No other scheduled matches that day.</span>
+                                            {% endif %}
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    <button type="submit" class="btn btn-primary btn-sm slot-submit-inline">&#10003; Request Reschedule with this Slot</button>
+                                </div>
+                            </label>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="empty-state">No open slots are available right now. Use the manual date, time, and court fields below.</div>
+                        {% endif %}
+                        <small class="text-muted">Pick a free slot directly, or leave this blank and enter a manual date/time below.</small>
+                    </div>
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>New Date</label>{{ reschedule_form.new_date }}
+                        </div>
+                        <div class="form-group">
+                            <label>New Time</label>{{ reschedule_form.new_time }}
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Court</label>{{ reschedule_form.new_court }}
+                    </div>
+                    <div class="form-group">
+                        <label>Reason</label>{{ reschedule_form.reason }}
+                    </div>
+                    <button type="submit" class="btn btn-outline">Request Reschedule (manual)</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>

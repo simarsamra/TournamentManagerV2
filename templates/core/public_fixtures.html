@@ -1,0 +1,44 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if tournament %}{{ tournament.name }} — {% endif %}Fixtures</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+<div class="content" style="max-width:900px;margin:2rem auto;">
+    <div class="d-flex justify-between align-center mb-2">
+        <h1>{% if tournament %}{{ tournament.name }}{% endif %} — Fixtures</h1>
+        <div>
+            <a href="{% url 'public_standings' %}" class="btn btn-outline">Standings</a>
+            <a href="{% url 'login' %}" class="btn btn-primary">Login</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="table-container">
+        <table>
+            <thead><tr><th>#</th><th>Team 1</th><th>Team 2</th><th>Time</th><th>Court</th><th>Score</th><th>Status</th></tr></thead>
+            <tbody>
+            {% for m in matches %}
+            <tr>
+                <td>{{ m.match_number }}</td>
+                <td>{% if m.winner == m.team1 %}<strong>{{ m.team1.name|default:"TBD" }}</strong>{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.winner == m.team2 %}<strong>{{ m.team2.name|default:"TBD" }}</strong>{% else %}{{ m.team2.name|default:"TBD" }}{% endif %}</td>
+                <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
+                <td>{{ m.court.name|default:"-" }}</td>
+                <td>{% if m.score_team1 is not None %}{{ m.score_team1 }}-{{ m.score_team2 }}{% else %}-{% endif %}</td>
+                <td><span class="badge badge-{{ m.status }}">{{ m.get_status_display }}</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="7" class="text-center text-muted">No matches.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>

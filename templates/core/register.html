@@ -1,0 +1,40 @@
+{% extends "core/base.html" %}
+{% block title %}Create Account - Tournament Manager{% endblock %}
+{% block public_content %}
+<div class="card">
+    <div class="card-header"><h2>Create Account</h2></div>
+    <div class="card-body">
+        <p class="text-muted mb-2">Create your account, then join or create a team once you log in.</p>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="{{ form.full_name.id_for_label }}">Full Name</label>
+                {{ form.full_name }}
+                {% if form.full_name.errors %}<small class="text-danger">{{ form.full_name.errors.0 }}</small>{% endif %}
+            </div>
+            <div class="form-group">
+                <label for="{{ form.username.id_for_label }}">Username</label>
+                {{ form.username }}
+                <small class="text-muted">{{ form.username.help_text }}</small>
+                {% if form.username.errors %}<small class="text-danger">{{ form.username.errors.0 }}</small>{% endif %}
+            </div>
+            <div class="form-group">
+                <label for="{{ form.password.id_for_label }}">Password</label>
+                {{ form.password }}
+                {% if form.password.errors %}<small class="text-danger">{{ form.password.errors.0 }}</small>{% endif %}
+            </div>
+            <div class="form-group">
+                <label for="{{ form.password_confirm.id_for_label }}">Confirm Password</label>
+                {{ form.password_confirm }}
+                {% if form.password_confirm.errors %}<small class="text-danger">{{ form.password_confirm.errors.0 }}</small>{% endif %}
+            </div>
+            {% if form.non_field_errors %}
+            <div class="alert alert-error">{{ form.non_field_errors.0 }}</div>
+            {% endif %}
+            <button type="submit" class="btn btn-primary btn-lg" style="width:100%">Create Account</button>
+        </form>
+        <p class="text-muted mt-2 text-center"><a href="{% url 'login' %}">Already have an account? Log in</a></p>
+    </div>
+</div>
+{% endblock %}
+

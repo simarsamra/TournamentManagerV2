@@ -1,0 +1,70 @@
+{% extends "core/base.html" %}
+{% block title %}Fixtures{% endblock %}
+{% block page_header %}Fixtures{% endblock %}
+{% block content %}
+<div class="d-flex justify-between align-center mb-2">
+    <h1 class="page-title" style="margin-bottom:0">{% if tournament %}{{ tournament.name }} — {% endif %}Fixtures</h1>
+</div>
+
+{% if tournament %}
+<form method="get" class="filters">
+    <div class="form-group" style="margin-bottom:0">
+        <label>Status</label>
+        <select name="status">
+            <option value="">All</option>
+            <option value="upcoming" {% if status_filter == "upcoming" %}selected{% endif %}>Upcoming</option>
+            <option value="in_progress" {% if status_filter == "in_progress" %}selected{% endif %}>In Progress</option>
+            <option value="pending_confirmation" {% if status_filter == "pending_confirmation" %}selected{% endif %}>Pending</option>
+            <option value="confirmed" {% if status_filter == "confirmed" %}selected{% endif %}>Done</option>
+            <option value="disputed" {% if status_filter == "disputed" %}selected{% endif %}>Disputed</option>
+            <option value="forfeited" {% if status_filter == "forfeited" %}selected{% endif %}>Forfeited</option>
+            <option value="cancelled" {% if status_filter == "cancelled" %}selected{% endif %}>Cancelled</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>Team</label>
+        <select name="team">
+            <option value="">All</option>
+            {% for t in teams %}
+            <option value="{{ t.pk }}" {% if team_filter == t.pk|stringformat:"d" %}selected{% endif %}>{{ t.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>Court</label>
+        <select name="court">
+            <option value="">All</option>
+            {% for c in courts %}
+            <option value="{{ c.pk }}" {% if court_filter == c.pk|stringformat:"d" %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% if groups %}
+    <div class="form-group" style="margin-bottom:0">
+        <label>Group</label>
+        <select name="group">
+            <option value="">All</option>
+            {% for g in groups %}
+            <option value="{{ g }}" {% if group_filter == g %}selected{% endif %}>Group {{ g }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% endif %}
+    <div class="form-group" style="margin-bottom:0">
+        <label>Sort</label>
+        <select name="sort">
+            <option value="match_number" {% if sort == "match_number" %}selected{% endif %}>Match #</option>
+            <option value="time" {% if sort == "time" %}selected{% endif %}>Time</option>
+            <option value="status" {% if sort == "status" %}selected{% endif %}>Status</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0;align-self:flex-end;">
+        <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+    </div>
+</form>
+{% endif %}
+
+<div id="fixtures-live-region" data-auto-refresh="true" data-refresh-interval="10000">
+    {% include "core/partials/fixtures_content.html" %}
+</div>
+{% endblock %}

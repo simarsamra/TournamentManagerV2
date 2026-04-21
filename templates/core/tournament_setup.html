@@ -1,0 +1,73 @@
+{% extends "core/base.html" %}
+{% block title %}Tournament Setup{% endblock %}
+{% block page_header %}New Tournament{% endblock %}
+{% block content %}
+<h1 class="page-title">Create Tournament</h1>
+<div class="card" style="max-width: 700px;">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="id_name">Tournament Name</label>
+                {{ form.name }}
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="id_sport_type">Sport Type</label>
+                    {{ form.sport_type }}
+                </div>
+                <div class="form-group">
+                    <label for="id_format">Format</label>
+                    {{ form.format }}
+                    <small class="text-muted">This determines how matches are generated and how standings work.</small>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="id_players_per_team">Players per Team</label>
+                {{ form.players_per_team }}
+                <small class="text-muted">Number of players required in each team (e.g., 2 for doubles, 5 for basketball).</small>
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="id_start_date">Tournament Start Date</label>
+                    {{ form.start_date }}
+                    <small class="text-muted">Automatic scheduling starts from this date.</small>
+                </div>
+                <div class="form-group">
+                    <label for="id_expected_teams_count">Expected Number of Teams</label>
+                    {{ form.expected_teams_count }}
+                    <small class="text-muted">Starting is blocked until registrations match this count.</small>
+                </div>
+            </div>
+            <div class="grid grid-3">
+                <div class="form-group">
+                    <label>Points per Win</label>{{ form.points_per_win }}
+                </div>
+                <div class="form-group">
+                    <label>Points per Loss</label>{{ form.points_per_loss }}
+                </div>
+                <div class="form-group">
+                    <label>Points per Draw</label>{{ form.points_per_draw }}
+                </div>
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label>Number of Groups (hybrid)</label>{{ form.num_groups }}
+                </div>
+                <div class="form-group">
+                    <label>Teams Advancing per Group</label>{{ form.teams_per_group_advance }}
+                </div>
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label>Withdrawal Policy</label>{{ form.withdrawal_policy }}
+                </div>
+                <div class="form-group">
+                    <label>Match Duration (min)</label>{{ form.default_match_duration }}
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-lg">Create Tournament</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% if tournament %}
+{% if tournament.status == 'completed' %}
+<div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;">
+    <span style="font-size:1.4rem;">✅</span>
+    <div>
+        <strong>Tournament Complete</strong>
+        {% if tournament.champion %} — Champion: <strong>{{ tournament.champion.name }}</strong>{% endif %}
+    </div>
+</div>
+{% endif %}
+<div class="card">
+    <div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                {% if groups %}<th>Group</th>{% endif %}
+                <th>Team 1</th>
+                <th>Team 2</th>
+                <th>Time</th>
+                <th>Court</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in matches %}
+            <tr>
+                <td>{{ m.match_number }}</td>
+                {% if groups %}<td>{% if m.group %}{{ m.group }}{% else %}-{% endif %}</td>{% endif %}
+                <td>{% if m.winner == m.team1 %}<strong>{{ m.team1.name|default:"TBD" }}</strong>{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.winner == m.team2 %}<strong>{{ m.team2.name|default:"TBD" }}</strong>{% else %}{{ m.team2.name|default:"TBD" }}{% endif %}</td>
+                <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
+                <td>{{ m.court.name|default:"-" }}</td>
+                <td>{% if m.score_team1 is not None %}{{ m.score_team1 }} - {{ m.score_team2 }}{% else %}-{% endif %}</td>
+                <td><span class="badge badge-{{ m.status }}">{{ m.get_status_display }}</span></td>
+                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="9" class="text-center text-muted">No matches found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}<a href="?page={{ page|add:"-1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&sort={{ sort }}">&laquo;</a>{% endif %}
+    {% for p in page_range %}
+    {% if p == page %}
+    <span class="active">{{ p }}</span>
+    {% else %}
+    <a href="?page={{ p }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&sort={{ sort }}">{{ p }}</a>
+    {% endif %}
+    {% endfor %}
+    {% if page < total_pages %}<a href="?page={{ page|add:"1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&sort={{ sort }}">&raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% else %}
+<p class="text-muted">No tournament active.</p>
+{% endif %}

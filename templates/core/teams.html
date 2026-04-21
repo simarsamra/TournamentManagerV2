@@ -1,0 +1,44 @@
+{% extends "core/base.html" %}
+{% block title %}Teams{% endblock %}
+{% block page_header %}Teams{% endblock %}
+{% block content %}
+<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Teams</h1>
+{% if tournament %}
+<div class="card">
+    <div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Department</th>
+                <th>Players</th>
+                {% if tournament.format == "hybrid" %}<th>Group</th>{% endif %}
+                <th>Status</th>
+                <th>Captain</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in teams %}
+            <tr>
+                <td><strong>{{ t.name }}</strong></td>
+                <td class="text-muted">{{ t.department|default:"-" }}</td>
+                <td style="font-size:0.85rem;color:#666;">
+                    {% for p in t.players.all %}{{ p.name }}{% if not forloop.last %}, {% endif %}{% empty %}-{% endfor %}
+                </td>
+                {% if tournament.format == "hybrid" %}<td>{{ t.group|default:"-" }}</td>{% endif %}
+                <td><span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span></td>
+                <td class="text-muted">{{ t.user.username }}</td>
+                <td><a href="{% url 'team_detail' pk=t.pk %}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="{% if tournament.format == "hybrid" %}8{% else %}7{% endif %}" class="text-center text-muted">No teams registered.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="text-muted">No tournament active.</p>
+{% endif %}
+{% endblock %}
