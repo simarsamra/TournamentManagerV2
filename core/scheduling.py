@@ -199,7 +199,7 @@ def generate_knockout(tournament, teams=None, start_match=1, bracket_type="winne
 
 
 def generate_knockout_placeholders(
-    tournament, num_teams, start_match=1, bracket_type="winners", round_offset=0, group=""
+    tournament, num_teams, start_match=1, bracket_type="winners", round_offset=0, group="", schedule=True
 ):
     """Generate a single-elimination bracket skeleton with TBD teams."""
     if num_teams < 2:
@@ -256,7 +256,8 @@ def generate_knockout_placeholders(
             prev_matches[i].save(update_fields=["next_match"])
             prev_matches[i + 1].save(update_fields=["next_match"])
 
-    _assign_schedule_to_matches(tournament, all_matches)
+    if schedule:
+        _assign_schedule_to_matches(tournament, all_matches)
     return all_matches
 
 
@@ -332,9 +333,13 @@ def generate_hybrid(tournament):
             num_teams=advancing_slots,
             start_match=match_num,
             round_offset=max_group_round,
+            schedule=False,
         )
 
-    _assign_schedule_to_existing(tournament)
+    # Schedule group stage normally (multiple matches per day as courts allow)
+    _assign_schedule_to_group_stage(tournament)
+    # Schedule knockout placeholders: one match per day, final with 1-day rest gap
+    _assign_hybrid_knockout_schedule(tournament)
 
 
 def generate_double_elimination(tournament):
@@ -633,6 +638,125 @@ def _assign_schedule_to_matches(tournament, matches):
             used_slots.add((start_t, court.id))
             match.save(update_fields=["scheduled_time", "scheduled_end_time", "court"])
         scheduled_matches.append(match)
+
+
+def _assign_schedule_to_group_stage(tournament):
+    """Schedule only the group-stage (group != '') matches for a hybrid tournament.
+
+    Intentionally excludes knockout placeholder matches so they are not given
+    slots from the group-stage pool.
+    """
+    matches = list(
+        tournament.matches
+        .filter(status="upcoming")
+        .exclude(group="")
+        .select_related("team1", "team2")
+        .order_by("group", "round_number", "match_number")
+    )
+    courts = list(tournament.courts.filter(is_available=True))
+    if not courts or not matches:
+        return
+
+    slots = _build_slots(tournament, courts)
+    used_slots = set()
+    scheduled_matches = []
+
+    for match in matches:
+        result = _find_preferred_slot(match.team1, match.team2, slots, used_slots, scheduled_matches)
+        if result:
+            start_t, end_t, court = result
+            match.scheduled_time = start_t
+            match.scheduled_end_time = end_t
+            match.court = court
+            used_slots.add((start_t, court.id))
+            match.save(update_fields=["scheduled_time", "scheduled_end_time", "court"])
+        scheduled_matches.append(match)
+
+
+def _assign_hybrid_knockout_schedule(tournament):
+    """Schedule knockout placeholder matches for a hybrid tournament.
+
+    Rules:
+    - Each knockout match is scheduled on its own separate day (one game per day).
+    - The final round gets a 1-day rest gap from the previous knockout round.
+    - Scheduling starts the day after the last group-stage match.
+    """
+    courts = list(tournament.courts.filter(is_available=True))
+    if not courts:
+        return
+
+    ko_matches = list(
+        tournament.matches
+        .filter(group="", bracket_type="winners", status="upcoming")
+        .order_by("round_number", "match_number")
+    )
+    if not ko_matches:
+        return
+
+    # Determine the day after the last scheduled group-stage match
+    last_group = (
+        tournament.matches
+        .filter(scheduled_time__isnull=False)
+        .exclude(group="")
+        .order_by("-scheduled_time")
+        .first()
+    )
+    if last_group and last_group.scheduled_time:
+        last_group_date = (
+            timezone.localtime(last_group.scheduled_time).date()
+            if timezone.is_aware(last_group.scheduled_time)
+            else last_group.scheduled_time.date()
+        )
+    else:
+        last_group_date = tournament.start_date or timezone.localdate()
+
+    # Build a dict of date -> first available slot on that date
+    slots = _build_slots(tournament, courts)
+    slots_by_date = {}
+    for start_t, end_t, court in slots:
+        d = timezone.localtime(start_t).date() if timezone.is_aware(start_t) else start_t.date()
+        if d not in slots_by_date:
+            slots_by_date[d] = (start_t, end_t, court)
+
+    # Identify the final round (highest round number in knockout)
+    final_round = max(m.round_number for m in ko_matches)
+
+    # Group matches by round
+    rounds = {}
+    for m in ko_matches:
+        rounds.setdefault(m.round_number, []).append(m)
+
+    prev_round_last_date = last_group_date
+
+    for round_num in sorted(rounds.keys()):
+        round_matches = rounds[round_num]
+        is_final_round = (round_num == final_round) and len(rounds) > 1
+
+        # 1-day rest gap before the final; 1-day advance for all other rounds
+        gap = 2 if is_final_round else 1
+        current_date = prev_round_last_date + timedelta(days=gap)
+
+        for match in round_matches:
+            # Find the first available court slot on or after current_date
+            target_date = current_date
+            slot = None
+            for _ in range(90):  # Search up to 90 days ahead
+                if target_date in slots_by_date:
+                    slot = slots_by_date[target_date]
+                    break
+                target_date += timedelta(days=1)
+
+            if slot:
+                start_t, end_t, court = slot
+                match.scheduled_time = start_t
+                match.scheduled_end_time = end_t
+                match.court = court
+                match.save(update_fields=["scheduled_time", "scheduled_end_time", "court"])
+                current_date = target_date + timedelta(days=1)
+            else:
+                current_date += timedelta(days=1)
+
+        prev_round_last_date = current_date - timedelta(days=1)
 
 
 def _assign_schedule_to_existing(tournament):
