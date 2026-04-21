@@ -2153,6 +2153,9 @@ class TournamentCompletionTests(TestCase):
 			team.save(update_fields=["group"])
 
 		generate_fixtures(t)
+		self.assertTrue(
+			t.matches.filter(group="", bracket_type="winners", team1__isnull=True, team2__isnull=True).exists()
+		)
 
 		from .standings import check_group_stage_complete
 
@@ -2161,10 +2164,13 @@ class TournamentCompletionTests(TestCase):
 			self._confirm_match(m, 3, 1)
 
 		check_group_stage_complete(t)
+		_check_and_finalize_tournament(t)
+		t.refresh_from_db()
+		self.assertEqual(t.status, "active")
 
 		# KO matches generated; confirm the final
 		ko_final = (
-			t.matches.filter(bracket_type="winners", next_match__isnull=True,
+			t.matches.filter(bracket_type="winners", group="", next_match__isnull=True,
 							 team1__isnull=False, team2__isnull=False)
 			.order_by("-round_number")
 			.first()

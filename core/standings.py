@@ -1,5 +1,6 @@
 """Standings calculation and bracket progression logic."""
 from collections import defaultdict
+from django.db import models
 from django.db.models import Max
 from .models import Match, Team
 
@@ -131,11 +132,19 @@ def advance_winner(match):
 
 def get_bracket_data(tournament):
     """Build bracket structure for display."""
-    matches = tournament.matches.filter(bracket_type="winners").order_by("round_number", "bracket_position")
+    matches = tournament.matches.filter(bracket_type="winners", group="").order_by("round_number", "bracket_position")
     rounds = defaultdict(list)
     for m in matches:
         rounds[m.round_number].append(m)
     return dict(sorted(rounds.items()))
+
+
+def _seed_order(size):
+    """Return standard bracket seed positions for a power-of-two size."""
+    if size == 1:
+        return [1]
+    half = _seed_order(size // 2)
+    return [item for seed in half for item in (seed, size + 1 - seed)]
 
 
 def check_group_stage_complete(tournament):
@@ -151,7 +160,9 @@ def check_group_stage_complete(tournament):
         return False
 
     # Group stage complete – generate knockout from top teams
-    groups = set(tournament.teams.filter(status="active").values_list("group", flat=True))
+    groups = set(
+        tournament.teams.filter(status="active").exclude(group="").values_list("group", flat=True)
+    )
     advancing = []
     for group_name in sorted(groups):
         standings = calculate_standings(tournament, group=group_name)
@@ -160,6 +171,74 @@ def check_group_stage_complete(tournament):
             advancing.append(s["team"])
 
     if len(advancing) >= 2:
+        ko_matches = tournament.matches.filter(group="", bracket_type="winners")
+        if ko_matches.exists():
+            # If slots are already filled, bracket has already been initialized.
+            if ko_matches.filter(
+                models.Q(team1__isnull=False) | models.Q(team2__isnull=False)
+            ).exists():
+                return False
+
+            first_round_number = ko_matches.order_by("round_number").values_list("round_number", flat=True).first()
+            first_round = list(
+                ko_matches.filter(round_number=first_round_number).order_by("bracket_position", "match_number")
+            )
+            if not first_round:
+                return False
+
+            bracket_size = len(first_round) * 2
+            seed_order = _seed_order(bracket_size)
+            seeded = [None] * bracket_size
+            for pos, seed_num in enumerate(seed_order):
+                if seed_num <= len(advancing):
+                    seeded[pos] = advancing[seed_num - 1]
+
+            non_first_round = ko_matches.exclude(round_number=first_round_number)
+            for match in non_first_round:
+                match.team1 = None
+                match.team2 = None
+                match.winner = None
+                match.score_team1 = None
+                match.score_team2 = None
+                match.submitted_by = None
+                match.confirmed_by = None
+                match.status = "upcoming"
+                match.save(update_fields=[
+                    "team1", "team2", "winner", "score_team1", "score_team2",
+                    "submitted_by", "confirmed_by", "status",
+                ])
+
+            bye_matches = []
+            for idx, match in enumerate(first_round):
+                slot1 = idx * 2
+                slot2 = slot1 + 1
+                t1 = seeded[slot1] if slot1 < len(seeded) else None
+                t2 = seeded[slot2] if slot2 < len(seeded) else None
+                is_bye = t1 is None or t2 is None
+                match.team1 = t1
+                match.team2 = t2
+                match.winner = None
+                if is_bye:
+                    if t1:
+                        match.winner = t1
+                    elif t2:
+                        match.winner = t2
+                match.score_team1 = None
+                match.score_team2 = None
+                match.submitted_by = None
+                match.confirmed_by = None
+                match.status = "bye" if is_bye else "upcoming"
+                match.save(update_fields=[
+                    "team1", "team2", "winner", "score_team1", "score_team2",
+                    "submitted_by", "confirmed_by", "status",
+                ])
+                if match.status == "bye" and match.winner:
+                    bye_matches.append(match)
+
+            for bye_match in bye_matches:
+                advance_winner(bye_match)
+            return True
+
         max_match = tournament.matches.aggregate(m=Max("match_number"))["m"] or 0
         max_round = tournament.matches.aggregate(m=Max("round_number"))["m"] or 0
         generate_knockout(
@@ -187,6 +266,7 @@ def _determine_champion(tournament):
     final = (
         tournament.matches
         .filter(bracket_type="winners", next_match__isnull=True,
+                group="",
                 team1__isnull=False, team2__isnull=False,
                 status="confirmed")
         .order_by("-round_number")
@@ -199,6 +279,7 @@ def _determine_champion(tournament):
     final = (
         tournament.matches
         .filter(next_match__isnull=True, team1__isnull=False,
+                group="",
                 team2__isnull=False, status="confirmed")
         .order_by("-round_number")
         .first()

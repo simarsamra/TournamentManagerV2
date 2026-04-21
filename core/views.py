@@ -223,6 +223,7 @@ def _check_and_finalize_tournament(tournament):
         final = (
             tournament.matches
             .filter(bracket_type="winners", next_match__isnull=True,
+                    group="",
                     team1__isnull=False, team2__isnull=False)
             .order_by("-round_number")
             .first()

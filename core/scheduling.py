@@ -198,6 +198,68 @@ def generate_knockout(tournament, teams=None, start_match=1, bracket_type="winne
     return all_matches
 
 
+def generate_knockout_placeholders(
+    tournament, num_teams, start_match=1, bracket_type="winners", round_offset=0, group=""
+):
+    """Generate a single-elimination bracket skeleton with TBD teams."""
+    if num_teams < 2:
+        return []
+
+    bracket_size = 1
+    while bracket_size < num_teams:
+        bracket_size *= 2
+
+    num_rounds = int(math.log2(bracket_size))
+    all_matches = []
+    match_num = start_match
+    current_round_matches = []
+
+    for i in range(0, bracket_size, 2):
+        m = Match(
+            tournament=tournament,
+            match_number=match_num,
+            round_number=1 + round_offset,
+            bracket_position=i // 2,
+            bracket_type=bracket_type,
+            status="upcoming",
+            group=group,
+        )
+        current_round_matches.append(m)
+        all_matches.append(m)
+        match_num += 1
+
+    Match.objects.bulk_create(current_round_matches)
+
+    for round_num in range(2, num_rounds + 1):
+        prev_matches = current_round_matches
+        current_round_matches = []
+        for i in range(0, len(prev_matches), 2):
+            m = Match(
+                tournament=tournament,
+                match_number=match_num,
+                round_number=round_num + round_offset,
+                bracket_position=i // 2,
+                bracket_type=bracket_type,
+                status="upcoming",
+                group=group,
+            )
+            current_round_matches.append(m)
+            all_matches.append(m)
+            match_num += 1
+
+        Match.objects.bulk_create(current_round_matches)
+
+        for i in range(0, len(prev_matches), 2):
+            next_match = current_round_matches[i // 2]
+            prev_matches[i].next_match = next_match
+            prev_matches[i + 1].next_match = next_match
+            prev_matches[i].save(update_fields=["next_match"])
+            prev_matches[i + 1].save(update_fields=["next_match"])
+
+    _assign_schedule_to_matches(tournament, all_matches)
+    return all_matches
+
+
 def generate_hybrid(tournament):
     """Generate group stage (round robin) then knockout brackets."""
     teams = list(tournament.teams.filter(status="active").order_by("seed", "id"))
@@ -254,7 +316,24 @@ def generate_hybrid(tournament):
                 )
                 match_num += 1
 
-    # Knockout matches will be generated after group stage completes
+    # Pre-create knockout placeholders (TBD) so schedule is visible from start.
+    advance_count = max(0, tournament.teams_per_group_advance or 0)
+    advancing_slots = sum(
+        min(len(group_teams), advance_count) for group_teams in groups.values()
+    )
+    if advancing_slots >= 2:
+        # Use the furthest group-stage round as the knockout round-number offset.
+        max_group_round = max(
+            (len(group_teams) - 1 for group_teams in groups.values() if len(group_teams) >= 2),
+            default=0,
+        )
+        generate_knockout_placeholders(
+            tournament,
+            num_teams=advancing_slots,
+            start_match=match_num,
+            round_offset=max_group_round,
+        )
+
     _assign_schedule_to_existing(tournament)
 
 
