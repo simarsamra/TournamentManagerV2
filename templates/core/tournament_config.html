@@ -235,6 +235,13 @@
                     <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Mark this tournament as completed? This will determine the champion from current results.')">Mark as Completed</button>
                 </form>
                 {% endif %}
+
+                {% if show_proceed_knockout %}
+                <form method="post" action="{% url 'proceed_to_knockout' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Seed the top teams from group standings into the knockout bracket? This action cannot be undone.')">Proceed to Knockout Phase →</button>
+                </form>
+                {% endif %}
             </div>
         </div>
 

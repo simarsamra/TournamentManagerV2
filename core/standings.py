@@ -152,6 +152,27 @@ def check_group_stage_complete(tournament):
     from .scheduling import generate_knockout
 
     group_matches = tournament.matches.filter(group__gt="").exclude(group="")
+
+    # Fallback for hybrid tournaments where schedule was generated without group labels
+    if not group_matches.exists() and tournament.format == "hybrid":
+        # Only proceed if there are knockout placeholder matches (team1=None, team2=None)
+        has_ko_placeholders = tournament.matches.filter(
+            team1__isnull=True, team2__isnull=True, group=""
+        ).exists()
+        if not has_ko_placeholders:
+            return False
+        # Group stage = all matches with both teams assigned
+        rr_qs = tournament.matches.filter(team1__isnull=False, team2__isnull=False)
+        if not rr_qs.exists():
+            return False
+        # Only proceed if all such matches are terminal
+        if rr_qs.exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"]).exists():
+            return False
+        # Assign group "A" to these matches and to all active teams so existing logic can proceed
+        rr_qs.update(group="A")
+        tournament.teams.filter(status="active").update(group="A")
+        group_matches = tournament.matches.filter(group="A")
+
     if not group_matches.exists():
         return False
 

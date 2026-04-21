@@ -32,6 +32,7 @@ urlpatterns = [
     path("tournament/<int:pk>/generate-schedule/", views.generate_schedule, name="generate_schedule"),
     path("tournament/<int:pk>/start/", views.start_tournament, name="start_tournament"),
     path("tournament/<int:pk>/complete/", views.complete_tournament, name="complete_tournament"),
+    path("tournament/<int:pk>/proceed-to-knockout/", views.proceed_to_knockout_view, name="proceed_to_knockout"),
     path("tournament/select/", views.select_tournament, name="select_tournament"),
     path("tournament/<int:pk>/delete/", views.delete_tournament, name="delete_tournament"),
 

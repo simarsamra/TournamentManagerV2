@@ -906,6 +906,18 @@ def tournament_config(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     request.session["selected_tournament_id"] = tournament.pk
     teams = tournament.teams.prefetch_related("players", "preferred_courts").all()
+
+    # Determine whether to show the "Proceed to Knockout Phase" button
+    show_proceed_knockout = False
+    if tournament.format == "hybrid" and tournament.status == "active":
+        group_qs = tournament.matches.filter(group__gt="")
+        if not group_qs.exists():
+            # Fallback: treat all matches with teams as group stage
+            group_qs = tournament.matches.filter(team1__isnull=False, team2__isnull=False)
+        pending = group_qs.exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"])
+        ko_tbd = tournament.matches.filter(team1__isnull=True, team2__isnull=True, group="").exists()
+        show_proceed_knockout = group_qs.exists() and not pending.exists() and ko_tbd
+
     return render(request, "core/tournament_config.html", {
         "tournament": tournament,
         "courts": tournament.courts.all(),
@@ -917,8 +929,29 @@ def tournament_config(request, pk):
         "court_availability_form": CourtAvailabilityForm(tournament=tournament),
         "bulk_team_form": BulkTeamForm(),
         "bulk_team_file_form": BulkTeamFileForm(),
+        "show_proceed_knockout": show_proceed_knockout,
         **_tournament_context(request, tournament),
     })
+
+
+@login_required
+@require_POST
+def proceed_to_knockout_view(request, pk):
+    """Admin action: seed advancing teams into the knockout bracket."""
+    if not _is_organizer(request.user):
+        return redirect("dashboard")
+    tournament = get_object_or_404(Tournament, pk=pk)
+    if tournament.format != "hybrid" or tournament.status != "active":
+        messages.error(request, "Knockout phase can only be triggered for an active hybrid tournament.")
+        return redirect("tournament_config", pk=pk)
+
+    result = check_group_stage_complete(tournament)
+    if result:
+        messages.success(request, "Knockout phase started! Teams have been seeded into the bracket based on group standings.")
+        log_action(request, "knockout_phase_started", "Admin triggered knockout phase progression", tournament=tournament)
+    else:
+        messages.error(request, "Cannot proceed: group stage is not yet complete, or the knockout bracket is already populated.")
+    return redirect("tournament_config", pk=pk)
 
 
 @login_required
