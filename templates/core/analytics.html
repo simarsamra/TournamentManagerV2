@@ -93,6 +93,207 @@
     </div>
 </div>
 
+<!-- Advanced Team Analytics -->
+<div class="grid grid-2 mt-2">
+    <div class="card">
+        <div class="card-header">Head-to-Head Matchup Card</div>
+        <div class="card-body">
+            {% if analytics_teams|length > 1 %}
+            <form method="get" class="d-flex gap-1 mb-1" style="flex-wrap:wrap;">
+                <select name="h2h_team1" class="form-control" style="max-width:220px;">
+                    {% for t in analytics_teams %}
+                    <option value="{{ t.pk }}" {% if h2h_team1 and h2h_team1.pk == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <span style="display:flex;align-items:center;">vs</span>
+                <select name="h2h_team2" class="form-control" style="max-width:220px;">
+                    {% for t in analytics_teams %}
+                    <option value="{{ t.pk }}" {% if h2h_team2 and h2h_team2.pk == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-outline btn-sm">Compare</button>
+            </form>
+            {% if h2h_card %}
+            <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:0.6rem;align-items:center;">
+                <div class="info-panel">
+                    <div style="font-size:0.8rem;color:var(--text-muted);">{{ h2h_team1.name }}</div>
+                    <div style="font-size:1.2rem;font-weight:700;color:var(--success);">{{ h2h_card.team1_wins }} wins</div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);">Avg score: {% if h2h_card.team1_avg_score != None %}{{ h2h_card.team1_avg_score }}{% else %}–{% endif %}</div>
+                </div>
+                <div style="font-weight:700;color:var(--text-muted);">—</div>
+                <div class="info-panel">
+                    <div style="font-size:0.8rem;color:var(--text-muted);">{{ h2h_team2.name }}</div>
+                    <div style="font-size:1.2rem;font-weight:700;color:var(--danger);">{{ h2h_card.team2_wins }} wins</div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);">Avg score: {% if h2h_card.team2_avg_score != None %}{{ h2h_card.team2_avg_score }}{% else %}–{% endif %}</div>
+                </div>
+            </div>
+            <div style="margin-top:0.6rem;font-size:0.85rem;color:var(--text-muted);">
+                {{ h2h_card.total_matches }} meetings{% if h2h_card.draws %} &middot; {{ h2h_card.draws }} draws{% endif %}
+                {% if h2h_card.last_match %}&middot; Last: Match #{{ h2h_card.last_match.match_number }}{% endif %}
+            </div>
+            {% elif h2h_team1 == h2h_team2 %}
+            <p class="text-muted">Choose two different teams to compare.</p>
+            {% else %}
+            <p class="text-muted">No head-to-head matches yet.</p>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">Need at least two active teams.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Rolling Form Trend</div>
+        <div class="card-body">
+            {% if analytics_teams %}
+            <form method="get" class="d-flex gap-1 mb-1" style="flex-wrap:wrap;">
+                <select name="form_team" class="form-control" style="max-width:220px;">
+                    {% for t in analytics_teams %}
+                    <option value="{{ t.pk }}" {% if form_team and form_team.pk == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <select name="form_window" class="form-control" style="max-width:120px;">
+                    <option value="3" {% if form_window == 3 %}selected{% endif %}>Last 3</option>
+                    <option value="5" {% if form_window == 5 %}selected{% endif %}>Last 5</option>
+                    <option value="8" {% if form_window == 8 %}selected{% endif %}>Last 8</option>
+                    <option value="10" {% if form_window == 10 %}selected{% endif %}>Last 10</option>
+                    <option value="15" {% if form_window == 15 %}selected{% endif %}>Last 15</option>
+                </select>
+                <button type="submit" class="btn btn-outline btn-sm">Update</button>
+            </form>
+            {% if rolling_form_rows %}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.65rem;">
+                {% for row in rolling_form_rows %}
+                <span title="Match #{{ row.match_number }} vs {{ row.opponent }}" style="width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;{% if row.result == 'W' %}background:#d1fae5;color:#065f46;{% elif row.result == 'L' %}background:#fecaca;color:#991b1b;{% else %}background:#e2e8f0;color:#475569;{% endif %}">{{ row.result }}</span>
+                {% endfor %}
+            </div>
+            <table>
+                <thead><tr><th>#</th><th>Opponent</th><th>Result</th><th>Rolling Win %</th></tr></thead>
+                <tbody>
+                    {% for row in rolling_form_rows %}
+                    <tr>
+                        <td>{{ row.match_number }}</td>
+                        <td>{{ row.opponent }}</td>
+                        <td>{{ row.result }}</td>
+                        <td>{{ row.win_rate }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted">No completed matches for trend data.</p>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">No active teams available.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2 mt-2">
+    <div class="card">
+        <div class="card-header">Next-Opponent Prep Sheet</div>
+        <div class="card-body">
+            {% if analytics_teams %}
+            <form method="get" class="d-flex gap-1 mb-1" style="flex-wrap:wrap;">
+                <select name="prep_team" class="form-control" style="max-width:220px;">
+                    {% for t in analytics_teams %}
+                    <option value="{{ t.pk }}" {% if prep_team and prep_team.pk == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-outline btn-sm">Load</button>
+            </form>
+            {% if next_opponent_prep and next_opponent_prep.opponent %}
+            <div class="info-panel mb-1">
+                <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);letter-spacing:.04em;">Upcoming</div>
+                <div style="font-size:1rem;font-weight:700;">{{ next_opponent_prep.team.name }} vs {{ next_opponent_prep.opponent.name }}</div>
+                <div style="font-size:0.85rem;color:var(--text-muted);">{{ next_opponent_prep.match.scheduled_time|date:"M d, H:i"|default:"Time TBD" }}</div>
+            </div>
+            <div class="grid grid-2" style="gap:0.6rem;">
+                <div class="info-panel">
+                    <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.2rem;">Opponent Form</div>
+                    <div style="font-size:0.88rem;">{{ next_opponent_prep.opponent_record.wins }}W · {{ next_opponent_prep.opponent_record.losses }}L{% if next_opponent_prep.opponent_record.draws %} · {{ next_opponent_prep.opponent_record.draws }}D{% endif %}</div>
+                </div>
+                <div class="info-panel">
+                    <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.2rem;">Head to Head</div>
+                    <div style="font-size:0.88rem;">{{ next_opponent_prep.h2h.wins }}W · {{ next_opponent_prep.h2h.losses }}L{% if next_opponent_prep.h2h.draws %} · {{ next_opponent_prep.h2h.draws }}D{% endif %}</div>
+                </div>
+            </div>
+            {% if next_opponent_prep.opponent_key_players %}
+            <div style="margin-top:0.7rem;font-size:0.85rem;">
+                <strong>Key players:</strong> {{ next_opponent_prep.opponent_key_players|join:", " }}
+            </div>
+            {% endif %}
+            {% if next_opponent_prep.opponent_recent %}
+            <table class="mt-1">
+                <thead><tr><th>Match</th><th>Opponent</th><th>Result</th></tr></thead>
+                <tbody>
+                    {% for row in next_opponent_prep.opponent_recent %}
+                    <tr><td>#{{ row.match_number }}</td><td>{{ row.opponent }}</td><td>{{ row.result }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">No upcoming opponent found for this team.</p>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">What-If Standings Simulator</div>
+        <div class="card-body">
+            {% if simulator_enabled %}
+            {% if simulator_matches %}
+            <form method="get">
+                <div class="table-container">
+                <table>
+                    <thead><tr><th>Match</th><th>Pick winner</th></tr></thead>
+                    <tbody>
+                        {% for m in simulator_matches %}
+                        <tr>
+                            <td>#{{ m.match_number }} — {{ m.team1.name }} vs {{ m.team2.name }}</td>
+                            <td>
+                                <select name="sim_{{ m.pk }}" class="form-control" style="max-width:220px;">
+                                    <option value="">No change</option>
+                                    <option value="team1" {% if m.selected_outcome == "team1" %}selected{% endif %}>{{ m.team1.name }} wins</option>
+                                    <option value="team2" {% if m.selected_outcome == "team2" %}selected{% endif %}>{{ m.team2.name }} wins</option>
+                                    <option value="draw" {% if m.selected_outcome == "draw" %}selected{% endif %}>Draw</option>
+                                </select>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm mt-1">Simulate</button>
+            </form>
+            {% if simulated_standings %}
+            <table class="mt-1">
+                <thead><tr><th>Rank</th><th>Team</th><th>Points</th><th>Δ</th></tr></thead>
+                <tbody>
+                    {% for row in simulated_standings %}
+                    <tr>
+                        <td>{{ row.rank }}</td>
+                        <td>{{ row.team.name }}</td>
+                        <td>{{ row.points }}</td>
+                        <td>{% if row.point_change > 0 %}<span style="color:var(--success);">+{{ row.point_change }}</span>{% elif row.point_change < 0 %}<span style="color:var(--danger);">{{ row.point_change }}</span>{% else %}0{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">No upcoming matches to simulate.</p>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">What-if simulation is available for round-robin style formats.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
 {% if standings %}
 <!-- Points Chart -->
 <div class="card mt-2">

@@ -2418,6 +2418,234 @@ def analytics_view(request):
     }
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
         context["standings"] = calculate_standings(tournament)
+
+    active_teams = list(teams.filter(status="active").order_by("name"))
+
+    # --- Head-to-head matchup card ---
+    h2h_team1 = None
+    h2h_team2 = None
+    h2h_card = None
+    h2h_team1_id = request.GET.get("h2h_team1")
+    h2h_team2_id = request.GET.get("h2h_team2")
+    if h2h_team1_id:
+        h2h_team1 = next((t for t in active_teams if str(t.pk) == str(h2h_team1_id)), None)
+    if h2h_team2_id:
+        h2h_team2 = next((t for t in active_teams if str(t.pk) == str(h2h_team2_id)), None)
+    if not h2h_team1 and active_teams:
+        h2h_team1 = active_teams[0]
+    if not h2h_team2 and len(active_teams) > 1:
+        h2h_team2 = active_teams[1]
+    if h2h_team1 and h2h_team2 and h2h_team1 != h2h_team2:
+        h2h_matches = list(
+            matches.filter(
+                (
+                    Q(team1=h2h_team1) & Q(team2=h2h_team2)
+                ) | (
+                    Q(team1=h2h_team2) & Q(team2=h2h_team1)
+                ),
+                status__in=["confirmed", "forfeited"],
+            ).select_related("winner", "team1", "team2").order_by("-match_number")
+        )
+        h2h_t1_wins = 0
+        h2h_t2_wins = 0
+        h2h_draws = 0
+        h2h_t1_score_total = 0
+        h2h_t2_score_total = 0
+        h2h_scored_matches = 0
+        for m in h2h_matches:
+            if m.winner_id == h2h_team1.pk:
+                h2h_t1_wins += 1
+            elif m.winner_id == h2h_team2.pk:
+                h2h_t2_wins += 1
+            else:
+                h2h_draws += 1
+            if m.score_team1 is not None and m.score_team2 is not None:
+                if m.team1_id == h2h_team1.pk:
+                    h2h_t1_score_total += m.score_team1
+                    h2h_t2_score_total += m.score_team2
+                else:
+                    h2h_t1_score_total += m.score_team2
+                    h2h_t2_score_total += m.score_team1
+                h2h_scored_matches += 1
+        h2h_card = {
+            "total_matches": len(h2h_matches),
+            "team1_wins": h2h_t1_wins,
+            "team2_wins": h2h_t2_wins,
+            "draws": h2h_draws,
+            "team1_avg_score": round(h2h_t1_score_total / h2h_scored_matches, 1) if h2h_scored_matches > 0 else None,
+            "team2_avg_score": round(h2h_t2_score_total / h2h_scored_matches, 1) if h2h_scored_matches > 0 else None,
+            "last_match": h2h_matches[0] if h2h_matches else None,
+        }
+
+    # --- Rolling form trend ---
+    form_team = None
+    form_team_id = request.GET.get("form_team")
+    if form_team_id:
+        form_team = next((t for t in active_teams if str(t.pk) == str(form_team_id)), None)
+    if not form_team and active_teams:
+        form_team = active_teams[0]
+    try:
+        form_window = int(request.GET.get("form_window", 5))
+    except (TypeError, ValueError):
+        form_window = 5
+    form_window = max(3, min(form_window, 15))
+    rolling_form_rows = []
+    if form_team:
+        recent_form_matches = list(
+            matches.filter(
+                Q(team1=form_team) | Q(team2=form_team),
+                status__in=["confirmed", "forfeited"],
+            ).select_related("team1", "team2", "winner").order_by("-match_number")[:form_window]
+        )[::-1]
+        wins = 0
+        for idx, m in enumerate(recent_form_matches, start=1):
+            opponent = m.get_opponent(form_team)
+            if m.winner_id == form_team.pk:
+                result = "W"
+                wins += 1
+            elif m.winner_id:
+                result = "L"
+            else:
+                result = "D"
+            rolling_form_rows.append({
+                "match_number": m.match_number,
+                "opponent": opponent.name if opponent else "TBD",
+                "result": result,
+                "sequence": idx,
+                "win_rate": round(wins / idx * 100, 1),
+            })
+
+    # --- Next-opponent prep sheet ---
+    prep_team = None
+    prep_team_id = request.GET.get("prep_team")
+    if prep_team_id:
+        prep_team = next((t for t in active_teams if str(t.pk) == str(prep_team_id)), None)
+    if not prep_team:
+        prep_team = form_team
+    next_opponent_prep = None
+    if prep_team:
+        prep_match = matches.filter(
+            Q(team1=prep_team) | Q(team2=prep_team),
+            status__in=["upcoming", "in_progress"],
+        ).select_related("team1", "team2", "court").order_by("scheduled_time", "match_number").first()
+        if prep_match:
+            opponent = prep_match.get_opponent(prep_team)
+            opponent_recent = []
+            opponent_record = {"wins": 0, "losses": 0, "draws": 0}
+            h2h_record = {"wins": 0, "losses": 0, "draws": 0}
+            if opponent:
+                recent_opp_matches = list(
+                    matches.filter(
+                        Q(team1=opponent) | Q(team2=opponent),
+                        status__in=["confirmed", "forfeited"],
+                    ).select_related("team1", "team2", "winner").order_by("-match_number")[:5]
+                )
+                for m in recent_opp_matches:
+                    opp_match_opp = m.get_opponent(opponent)
+                    if m.winner_id == opponent.pk:
+                        opp_result = "W"
+                        opponent_record["wins"] += 1
+                    elif m.winner_id:
+                        opp_result = "L"
+                        opponent_record["losses"] += 1
+                    else:
+                        opp_result = "D"
+                        opponent_record["draws"] += 1
+                    opponent_recent.append({
+                        "match_number": m.match_number,
+                        "opponent": opp_match_opp.name if opp_match_opp else "TBD",
+                        "result": opp_result,
+                    })
+
+                for m in matches.filter(
+                    (
+                        Q(team1=prep_team) & Q(team2=opponent)
+                    ) | (
+                        Q(team1=opponent) & Q(team2=prep_team)
+                    ),
+                    status__in=["confirmed", "forfeited"],
+                ):
+                    if m.winner_id == prep_team.pk:
+                        h2h_record["wins"] += 1
+                    elif m.winner_id == opponent.pk:
+                        h2h_record["losses"] += 1
+                    else:
+                        h2h_record["draws"] += 1
+            next_opponent_prep = {
+                "team": prep_team,
+                "match": prep_match,
+                "opponent": opponent,
+                "opponent_recent": opponent_recent,
+                "opponent_record": opponent_record,
+                "h2h": h2h_record,
+                "opponent_key_players": list(opponent.players.values_list("name", flat=True)[:3]) if opponent else [],
+            }
+
+    # --- What-if standings simulator ---
+    simulator_matches = []
+    simulator_enabled = tournament.format in ("round_robin", "double_round_robin", "hybrid")
+    simulated_standings = None
+    simulator_has_choices = False
+    if simulator_enabled:
+        simulator_matches = list(
+            matches.filter(
+                status="upcoming",
+                team1__isnull=False,
+                team2__isnull=False,
+            ).select_related("team1", "team2").order_by("scheduled_time", "match_number")[:8]
+        )
+        if simulator_matches:
+            base_rows = calculate_standings(tournament)
+            by_team_id = {}
+            for row in base_rows:
+                row_copy = dict(row)
+                row_copy["point_change"] = 0
+                by_team_id[row["team"].pk] = row_copy
+
+            for m in simulator_matches:
+                outcome = request.GET.get(f"sim_{m.pk}")
+                m.selected_outcome = outcome or ""
+                if outcome not in ("team1", "team2", "draw"):
+                    continue
+                simulator_has_choices = True
+                if m.team1_id not in by_team_id or m.team2_id not in by_team_id:
+                    continue
+                if outcome == "team1":
+                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_win
+                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_loss
+                elif outcome == "team2":
+                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_win
+                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_loss
+                else:
+                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_draw
+                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_draw
+
+            simulated_standings = list(by_team_id.values())
+            for row in simulated_standings:
+                row["points"] += row["point_change"]
+            # Sort by projected points, then use standing metrics for deterministic tie-breaking.
+            simulated_standings.sort(
+                key=lambda s: (s["points"], s.get("game_diff", 0), s.get("games_won", 0), s.get("wins", 0)),
+                reverse=True,
+            )
+            for idx, row in enumerate(simulated_standings, start=1):
+                row["rank"] = idx
+
+    context.update({
+        "analytics_teams": active_teams,
+        "h2h_team1": h2h_team1,
+        "h2h_team2": h2h_team2,
+        "h2h_card": h2h_card,
+        "form_team": form_team,
+        "form_window": form_window,
+        "rolling_form_rows": rolling_form_rows,
+        "prep_team": prep_team,
+        "next_opponent_prep": next_opponent_prep,
+        "simulator_enabled": simulator_enabled,
+        "simulator_matches": simulator_matches,
+        "simulated_standings": simulated_standings,
+        "simulator_has_choices": simulator_has_choices,
+    })
     context.update(_tournament_context(request, tournament))
     return render(request, "core/analytics.html", context)
 
