@@ -82,6 +82,15 @@
                     </select>
                 </form>
                 {% endif %}
+                {% if has_dual_roles %}
+                <a href="{% url 'toggle_view_preference' %}" class="btn btn-outline btn-sm" title="Switch view mode">
+                    {% if view_mode == 'organizer' %}
+                    👤 Team View
+                    {% else %}
+                    ⚙️ Organizer View
+                    {% endif %}
+                </a>
+                {% endif %}
                 {% if team %}
                 <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline btn-sm">&#9881;&#65039; {{ team.name }}</a>
                 {% elif user.is_staff %}

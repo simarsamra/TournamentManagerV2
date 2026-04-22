@@ -118,16 +118,27 @@ def _get_tournament(request=None):
 def _tournament_context(request, tournament=None):
     if not request.user.is_authenticated:
         return {}
+    
+    # Check for dual-role users
+    has_dual_roles = _has_dual_roles(request.user)
+    view_mode = request.session.get("view_mode", "team") if has_dual_roles else None
+    
+    ctx = {
+        "has_dual_roles": has_dual_roles,
+        "view_mode": view_mode,
+    }
+    
     if _is_organizer(request.user):
-        return {
+        ctx.update({
             "available_tournaments": _get_available_tournaments(),
             "selected_tournament": tournament,
-        }
+        })
+        return ctx
+    
     # Non-organiser: supply switcher data when enrolled in multiple tournaments
     user_tournament_ids = list(
         request.user.memberships.values_list("team__tournament_id", flat=True).distinct()
     )
-    ctx = {}
     if len(user_tournament_ids) > 1:
         user_tournaments = list(
             Tournament.objects.filter(pk__in=user_tournament_ids).order_by("-created_at")
@@ -170,6 +181,14 @@ def _is_captain(user, team):
 
 def _is_organizer(user):
     return user.is_staff or user.is_superuser
+
+
+def _has_dual_roles(user):
+    """Check if user is both organizer and team member."""
+    if not _is_organizer(user):
+        return False
+    # Check if user has any team memberships
+    return user.memberships.exists()
 
 
 def _organizer_count(exclude_user_id=None):
@@ -502,6 +521,23 @@ def logout_view(request):
     return redirect("login")
 
 
+@login_required
+def toggle_view_preference(request):
+    """Toggle between organizer and team view for dual-role users."""
+    if not _has_dual_roles(request.user):
+        messages.error(request, "This action is only available for users with dual roles.")
+        return redirect("dashboard")
+    
+    # Get current preference (default to 'team' if organizer just got a team)
+    current_mode = request.session.get("view_mode", "team")
+    new_mode = "organizer" if current_mode == "team" else "team"
+    
+    request.session["view_mode"] = new_mode
+    log_action(request, "view_mode_toggled", f"View mode switched to '{new_mode}'")
+    
+    return redirect("dashboard")
+
+
 def account_register_view(request):
     """Create a user account only — no team created here."""
     if request.user.is_authenticated:
@@ -532,6 +568,15 @@ def register_view(request, pk=None):
 @login_required
 def join_tournament_list_view(request):
     """Show all open tournaments the user can join."""
+    # Organizers cannot join tournaments directly — they must use a separate team account
+    if _is_organizer(request.user):
+        messages.info(
+            request,
+            "As an organizer, you cannot join tournaments with this account. "
+            "If you want to participate, please create a separate team account."
+        )
+        return redirect("dashboard")
+    
     open_tournaments = Tournament.objects.filter(
         status="registration_open"
     ).order_by("start_date", "created_at")
@@ -557,6 +602,15 @@ def join_tournament_list_view(request):
 @login_required
 def join_tournament_view(request, pk):
     """Browse teams in a tournament — join an existing one or create a new one."""
+    # Organizers cannot join tournaments directly — they must use a separate team account
+    if _is_organizer(request.user):
+        messages.info(
+            request,
+            "As an organizer, you cannot join tournaments with this account. "
+            "If you want to participate, please create a separate team account."
+        )
+        return redirect("dashboard")
+    
     tournament = get_object_or_404(Tournament, pk=pk)
 
     if tournament.status != "registration_open":
@@ -603,6 +657,15 @@ def join_tournament_view(request, pk):
 @require_POST
 def join_team_view(request, tournament_pk, team_pk):
     """Join an existing team in a tournament."""
+    # Organizers cannot join tournaments directly — they must use a separate team account
+    if _is_organizer(request.user):
+        messages.info(
+            request,
+            "As an organizer, you cannot join tournaments with this account. "
+            "If you want to participate, please create a separate team account."
+        )
+        return redirect("dashboard")
+    
     tournament = get_object_or_404(Tournament, pk=tournament_pk)
     team = get_object_or_404(Team, pk=team_pk, tournament=tournament)
 
@@ -634,6 +697,15 @@ def join_team_view(request, tournament_pk, team_pk):
 @login_required
 def create_team_view(request, pk):
     """Create a brand-new team in an open tournament."""
+    # Organizers cannot join tournaments directly — they must use a separate team account
+    if _is_organizer(request.user):
+        messages.info(
+            request,
+            "As an organizer, you cannot create teams with this account. "
+            "If you want to participate, please create a separate team account."
+        )
+        return redirect("dashboard")
+    
     tournament = get_object_or_404(Tournament, pk=pk)
 
     if tournament.status != "registration_open":
@@ -688,6 +760,15 @@ def dashboard_view(request):
         _expire_no_show_reports(tournament)
     team = _get_team(request.user, tournament=tournament)
     is_organizer = _is_organizer(request.user)
+    
+    # For dual-role users, check view preference
+    # Default: if organizer + team, show team view first; can toggle to organizer view
+    has_dual_roles = _has_dual_roles(request.user)
+    view_mode = request.session.get("view_mode", "team") if has_dual_roles else None
+    
+    # If dual-role user prefers organizer view, redirect to tournament setup
+    if has_dual_roles and view_mode == "organizer":
+        return redirect("tournament_setup")
 
     # Non-organiser with no team yet → send to join list
     if not team and not is_organizer:
@@ -700,6 +781,8 @@ def dashboard_view(request):
         "team": team,
         "is_organizer": is_organizer,
         "is_captain": _is_captain(request.user, team),
+        "has_dual_roles": has_dual_roles,
+        "view_mode": view_mode,
     }
     if tournament and team:
         team_matches_qs = Match.objects.filter(
