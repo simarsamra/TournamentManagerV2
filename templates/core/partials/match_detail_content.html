@@ -65,6 +65,9 @@
         <div class="card">
             <div class="card-header">Submit Score</div>
             <div class="card-body">
+                {% if is_organizer %}
+                <p class="text-muted mb-1">Organizer entries are confirmed instantly (no opponent approval needed).</p>
+                {% endif %}
                 <form method="post" action="{% url 'submit_score' pk=match.pk %}">
                     {% csrf_token %}
                     <div class="grid grid-2">

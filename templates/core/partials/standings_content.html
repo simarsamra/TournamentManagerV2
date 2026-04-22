@@ -12,6 +12,33 @@
 </div>
 {% endif %}
 
+{% if bracket and tournament and tournament.format == 'hybrid' and hybrid_group_complete %}
+<div class="card mt-2">
+    <div class="card-header">Knockout Bracket</div>
+    <div class="card-body">
+        <div class="bracket-container" style="display:flex; align-items:flex-start;">
+            {% for round_num, round_matches in bracket.items %}
+            <div class="bracket-round">
+                <div class="bracket-round-title">Round {{ round_num }}</div>
+                {% for m in round_matches %}
+                <div class="bracket-match">
+                    <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
+                        <span>{{ m.team1.name|default:"TBD" }}</span>
+                        <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
+                    </div>
+                    <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
+                        <span>{{ m.team2.name|default:"TBD" }}</span>
+                        <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if standings %}
 <div class="card">
     <div class="card-header">League Table</div>
@@ -76,6 +103,8 @@
 {% endif %}
 
 {% if bracket %}
+{% if tournament and tournament.format == 'hybrid' and hybrid_group_complete %}
+{% else %}
 <div class="card mt-2">
     <div class="card-header">Knockout Bracket</div>
     <div class="card-body">
@@ -100,6 +129,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endif %}
 
 {% if not standings and not group_standings and not bracket %}

@@ -1525,18 +1525,22 @@ def match_detail(request, pk):
     match.refresh_from_db()
     _sync_open_slots_for_tournament(match.tournament)
     team = _get_team(request.user, match.tournament)
+    is_organizer = _is_organizer(request.user)
     is_participant = team and (match.team1 == team or match.team2 == team)
-    can_submit = is_participant and match.status in ("upcoming", "in_progress")
+    can_submit = (
+        (is_participant and match.status in ("upcoming", "in_progress"))
+        or (is_organizer and match.status in ("upcoming", "in_progress", "pending_confirmation", "disputed"))
+    )
     can_confirm = (is_participant and match.status == "pending_confirmation" and match.submitted_by != team)
     can_dispute = can_confirm
     pending_no_show_report = match.no_show_reports.filter(status="pending").select_related(
         "absent_team", "present_team"
     ).first()
     no_show_window_open = bool(match.scheduled_time and match.scheduled_time <= timezone.now())
-    can_mark_no_show = _is_organizer(request.user) and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open
+    can_mark_no_show = is_organizer and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open
     can_report_no_show = is_participant and _is_captain(request.user, team) and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open and not pending_no_show_report
     can_reschedule = is_participant and _is_captain(request.user, team)
-    can_override_result = _is_organizer(request.user) and _can_override_match(match)
+    can_override_result = is_organizer and _can_override_match(match)
     reschedule_form = RescheduleForm(tournament=match.tournament)
     open_slot_choices = _build_open_slot_choices(match, reschedule_form.fields["open_slot"].queryset)
     context = {
@@ -1556,7 +1560,7 @@ def match_detail(request, pk):
         "reschedule_form": reschedule_form,
         "open_slot_choices": open_slot_choices,
         "reschedule_requests": match.reschedule_requests.order_by("-created_at"),
-        "is_organizer": _is_organizer(request.user),
+        "is_organizer": is_organizer,
         **_tournament_context(request, match.tournament),
     }
     return _render_refreshable_page(
@@ -1572,28 +1576,66 @@ def match_detail(request, pk):
 def submit_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
     team = _get_team(request.user, match.tournament)
-    if not team or (match.team1 != team and match.team2 != team):
+    is_organizer = _is_organizer(request.user)
+    is_participant = team and (match.team1 == team or match.team2 == team)
+    if not is_organizer and not is_participant:
         messages.error(request, "You are not a participant in this match.")
         return redirect("match_detail", pk=pk)
     if match.tournament.status == "completed":
         messages.error(request, "This tournament has already been completed.")
         return redirect("match_detail", pk=pk)
-    if match.status not in ("upcoming", "in_progress"):
+    allowed_statuses = ("upcoming", "in_progress", "pending_confirmation", "disputed") if is_organizer else ("upcoming", "in_progress")
+    if match.status not in allowed_statuses:
         messages.error(request, "Score cannot be submitted for this match.")
         return redirect("match_detail", pk=pk)
     form = ScoreSubmitForm(request.POST)
     if form.is_valid():
         match.score_team1 = form.cleaned_data["score_team1"]
         match.score_team2 = form.cleaned_data["score_team2"]
-        match.submitted_by = team
-        match.status = "pending_confirmation"
+        tournament = match.tournament
+        is_elimination = tournament.format in ("knockout", "double_elimination", "consolation") or (
+            tournament.format == "hybrid" and not match.group
+        )
+        if is_organizer:
+            if is_elimination and match.score_team1 == match.score_team2:
+                messages.error(request, "Draws are not allowed in elimination matches.")
+                return redirect("match_detail", pk=pk)
+            match.submitted_by = None
+            match.confirmed_by = None
+            match.status = "confirmed"
+            if match.score_team1 > match.score_team2:
+                match.winner = match.team1
+            elif match.score_team2 > match.score_team1:
+                match.winner = match.team2
+            else:
+                match.winner = None
+        else:
+            match.submitted_by = team
+            match.status = "pending_confirmation"
         if form.cleaned_data["notes"]:
             match.notes = form.cleaned_data["notes"]
         match.save()
-        log_action(request, "score_submitted",
-                   f"Score submitted for {match}: {match.score_team1}-{match.score_team2}",
-                   tournament=match.tournament)
-        messages.success(request, "Score submitted. Waiting for opponent confirmation.")
+        if is_organizer:
+            _create_open_slot_for_completed_match(match, f"Completed by organizer: {match}")
+            if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
+                advance_winner(match)
+            if tournament.format == "consolation":
+                generate_consolation_if_ready(tournament)
+            if tournament.format == "hybrid" and match.group:
+                check_group_stage_complete(tournament)
+            _check_and_finalize_tournament(tournament)
+            log_action(
+                request,
+                "score_recorded_by_organizer",
+                f"Organizer recorded score for {match}: {match.score_team1}-{match.score_team2}",
+                tournament=tournament,
+            )
+            messages.success(request, "Score recorded and confirmed instantly.")
+        else:
+            log_action(request, "score_submitted",
+                       f"Score submitted for {match}: {match.score_team1}-{match.score_team2}",
+                       tournament=match.tournament)
+            messages.success(request, "Score submitted. Waiting for opponent confirmation.")
     return redirect("match_detail", pk=pk)
 
 
@@ -1918,6 +1960,11 @@ def standings_view(request):
                 for g in groups:
                     group_standings[g] = calculate_standings(tournament, group=g)
                 context["group_standings"] = group_standings
+                group_matches = tournament.matches.exclude(group="")
+                context["hybrid_group_complete"] = (
+                    group_matches.exists()
+                    and not group_matches.exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"]).exists()
+                )
                 ko_matches = tournament.matches.filter(group="", bracket_type="winners")
                 if ko_matches.exists():
                     context["bracket"] = get_bracket_data(tournament)
@@ -2329,8 +2376,25 @@ def analytics_view(request):
     team_stats = []
     for team in teams.filter(status="active"):
         team_matches = matches.filter(Q(team1=team) | Q(team2=team))
-        wins = team_matches.filter(winner=team).count()
-        played = team_matches.filter(status__in=["confirmed", "forfeited"]).count()
+        played_matches = team_matches.filter(status__in=["confirmed", "forfeited"])
+        played = played_matches.count()
+
+        # Derive wins from scores for confirmed matches; fall back to winner when needed.
+        wins = 0
+        for match in played_matches:
+            if match.status == "forfeited":
+                if match.winner_id == team.id:
+                    wins += 1
+                continue
+
+            if match.score_team1 is not None and match.score_team2 is not None:
+                if match.team1_id == team.id and match.score_team1 > match.score_team2:
+                    wins += 1
+                elif match.team2_id == team.id and match.score_team2 > match.score_team1:
+                    wins += 1
+            elif match.winner_id == team.id:
+                wins += 1
+
         team_stats.append({
             "team": team, "played": played, "wins": wins, "losses": played - wins,
             "win_rate": round(wins / played * 100, 1) if played > 0 else 0,
