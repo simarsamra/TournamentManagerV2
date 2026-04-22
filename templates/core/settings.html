@@ -31,6 +31,47 @@
         </form>
     </div>
 </div>
+
+<div class="card" style="max-width:900px; margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">User Management</h3>
+        <p class="text-muted">Promote users to organizer role or delete user accounts.</p>
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th style="width: 320px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user_obj in users %}
+                    <tr>
+                        <td>{{ user_obj.username }}</td>
+                        <td>{% if user_obj.is_staff %}Organizer{% else %}User{% endif %}</td>
+                        <td>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <form method="post" action="{% url 'set_user_organizer' user_pk=user_obj.pk %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="is_organizer" value="{% if user_obj.is_staff %}0{% else %}1{% endif %}">
+                                    <button type="submit" class="btn btn-secondary">
+                                        {% if user_obj.is_staff %}Demote{% else %}Promote to Organizer{% endif %}
+                                    </button>
+                                </form>
+                                <form method="post" action="{% url 'delete_user_account' user_pk=user_obj.pk %}" onsubmit="return confirm('Delete user account {{ user_obj.username|escapejs }}?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-danger">Delete User</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 {% else %}
 <p class="text-muted">No tournament configured.</p>
 {% endif %}

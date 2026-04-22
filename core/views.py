@@ -172,6 +172,13 @@ def _is_organizer(user):
     return user.is_staff or user.is_superuser
 
 
+def _organizer_count(exclude_user_id=None):
+    qs = User.objects.filter(Q(is_staff=True) | Q(is_superuser=True))
+    if exclude_user_id is not None:
+        qs = qs.exclude(pk=exclude_user_id)
+    return qs.count()
+
+
 def _safe_page_param(request, default=1):
     """Return a safe positive page number from query params."""
     raw = request.GET.get("page", default)
@@ -2351,8 +2358,66 @@ def settings_view(request):
     return render(request, "core/settings.html", {
         "tournament": tournament,
         "form": form,
+        "users": User.objects.filter(is_superuser=False).order_by("username"),
         **_tournament_context(request, tournament),
     })
+
+
+# -- User Management --
+
+@login_required
+@require_POST
+def set_user_organizer(request, user_pk):
+    if not _is_organizer(request.user):
+        return redirect("dashboard")
+    target = get_object_or_404(User, pk=user_pk)
+    if target.is_superuser:
+        messages.error(request, "Superuser accounts cannot be modified here.")
+        return redirect("settings")
+
+    role_value = request.POST.get("is_organizer")
+    if role_value not in {"0", "1"}:
+        messages.error(request, "Invalid organizer role update request.")
+        return redirect("settings")
+    make_organizer = role_value == "1"
+    if not make_organizer and target.is_staff:
+        organizer_count = _organizer_count(exclude_user_id=target.pk)
+        if organizer_count < 1:
+            messages.error(request, "At least one organizer account is required.")
+            return redirect("settings")
+    target.is_staff = make_organizer
+    target.save(update_fields=["is_staff"])
+
+    action = "user_promoted_to_organizer" if make_organizer else "user_demoted_from_organizer"
+    detail = f"User '{target.username}' role updated to {'organizer' if make_organizer else 'user'}."
+    log_action(request, action, detail)
+    messages.success(request, detail)
+    return redirect("settings")
+
+
+@login_required
+@require_POST
+def delete_user_account(request, user_pk):
+    if not _is_organizer(request.user):
+        return redirect("dashboard")
+    target = get_object_or_404(User, pk=user_pk)
+    if target == request.user:
+        messages.error(request, "You cannot delete your own account.")
+        return redirect("settings")
+    if target.is_superuser:
+        messages.error(request, "Superuser accounts cannot be deleted here.")
+        return redirect("settings")
+    if target.is_staff:
+        organizer_count = _organizer_count(exclude_user_id=target.pk)
+        if organizer_count < 1:
+            messages.error(request, "At least one organizer account is required.")
+            return redirect("settings")
+
+    username = target.username
+    target.delete()
+    log_action(request, "user_deleted", f"User '{username}' account deleted.")
+    messages.success(request, f"User '{username}' deleted.")
+    return redirect("settings")
 
 
 # -- Public Views --

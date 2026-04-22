@@ -256,6 +256,109 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertTrue(Tournament.objects.filter(pk=tournament.pk).exists())
 
+	def test_organizer_can_promote_user_to_organizer(self):
+		user = User.objects.create_user(username="regular_user", password="pass123")
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("set_user_organizer", kwargs={"user_pk": user.pk}),
+			{"is_organizer": "1"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		user.refresh_from_db()
+		self.assertTrue(user.is_staff)
+
+	def test_non_organizer_cannot_promote_user_to_organizer(self):
+		tournament = self._create_tournament(name="Role Guard")
+		team = self._create_team(tournament, "Falcons")
+		target = User.objects.create_user(username="target_regular", password="pass123")
+		self.client.force_login(team.user)
+
+		response = self.client.post(
+			reverse("set_user_organizer", kwargs={"user_pk": target.pk}),
+			{"is_organizer": "1"},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		target.refresh_from_db()
+		self.assertFalse(target.is_staff)
+
+	def test_organizer_can_demote_another_organizer_if_one_remains(self):
+		other_organizer = User.objects.create_user(
+			username="other_organizer", password="pass123", is_staff=True
+		)
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("set_user_organizer", kwargs={"user_pk": other_organizer.pk}),
+			{"is_organizer": "0"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		other_organizer.refresh_from_db()
+		self.assertFalse(other_organizer.is_staff)
+
+	def test_cannot_demote_last_organizer(self):
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("set_user_organizer", kwargs={"user_pk": self.organizer.pk}),
+			{"is_organizer": "0"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.organizer.refresh_from_db()
+		self.assertTrue(self.organizer.is_staff)
+		msgs = [str(m) for m in response.context["messages"]]
+		self.assertTrue(any("at least one organizer" in m.lower() for m in msgs))
+
+	def test_set_user_organizer_rejects_invalid_role_value(self):
+		target = User.objects.create_user(
+			username="invalid_role_target", password="pass123", is_staff=True
+		)
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("set_user_organizer", kwargs={"user_pk": target.pk}),
+			{},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		target.refresh_from_db()
+		self.assertTrue(target.is_staff)
+		msgs = [str(m) for m in response.context["messages"]]
+		self.assertTrue(any("invalid organizer role update request" in m.lower() for m in msgs))
+
+	def test_organizer_can_delete_user_account(self):
+		target = User.objects.create_user(username="delete_me", password="pass123")
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("delete_user_account", kwargs={"user_pk": target.pk}),
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertFalse(User.objects.filter(pk=target.pk).exists())
+
+	def test_organizer_cannot_delete_own_account(self):
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("delete_user_account", kwargs={"user_pk": self.organizer.pk}),
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(User.objects.filter(pk=self.organizer.pk).exists())
+		msgs = [str(m) for m in response.context["messages"]]
+		self.assertTrue(any("cannot delete your own account" in m.lower() for m in msgs))
+
 	def test_dashboard_shows_multiple_tournaments_to_organizer(self):
 		first = self._create_tournament(name="Spring Cup")
 		second = self._create_tournament(name="Summer Cup")
