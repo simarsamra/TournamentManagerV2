@@ -62,17 +62,42 @@ def _get_tournament(request=None):
     tournaments = Tournament.objects.all()
     if request and getattr(request, "user", None) and request.user.is_authenticated:
         if _is_organizer(request.user):
-            selected_id = request.GET.get("tournament") or request.session.get("selected_tournament_id")
+            # Check for explicit selection via GET param first
+            selected_id = request.GET.get("tournament")
             if selected_id and tournaments.filter(pk=selected_id).exists():
                 selected = tournaments.get(pk=selected_id)
                 request.session["selected_tournament_id"] = selected.pk
                 return selected
+            
+            # Try session-stored selection if it exists and is still valid
+            selected_id = request.session.get("selected_tournament_id")
+            if selected_id and tournaments.filter(pk=selected_id).exists():
+                return tournaments.get(pk=selected_id)
+            
+            # Default to active tournament; fall back to most recently created
+            active_tournament = tournaments.filter(status="active").first()
+            if active_tournament:
+                request.session["selected_tournament_id"] = active_tournament.pk
+                return active_tournament
+            
+            # Fall back to any available tournament (status-ranked)
             fallback = _get_available_tournaments().first()
             if fallback:
                 request.session["selected_tournament_id"] = fallback.pk
             return fallback
         else:
-            # Non-organiser: honour session selection if they have a membership there
+            # Non-organiser: prioritize active tournament they're enrolled in
+            active_tournaments = tournaments.filter(status="active")
+            user_active = None
+            for t in active_tournaments:
+                if request.user.memberships.filter(team__tournament=t).exists():
+                    user_active = t
+                    break
+            if user_active:
+                request.session["selected_tournament_id"] = user_active.pk
+                return user_active
+            
+            # Honour session selection if they have a membership there
             selected_id = request.session.get("selected_tournament_id")
             if selected_id:
                 has_membership = request.user.memberships.filter(
@@ -82,6 +107,7 @@ def _get_tournament(request=None):
                     t = tournaments.filter(pk=selected_id).first()
                     if t:
                         return t
+            
             # Fall back to the user's first team's tournament
             team = _get_team(request.user)
             if team:
@@ -449,6 +475,9 @@ def login_view(request):
         if user:
             django_cache.delete(cache_key)
             login(request, user)
+            # Clear tournament selection on login to ensure dashboard defaults to active tournament
+            if "selected_tournament_id" in request.session:
+                del request.session["selected_tournament_id"]
             log_action(request, "login", f"User '{username}' logged in")
             return redirect("dashboard")
         django_cache.set(cache_key, attempts + 1, timeout=300)
