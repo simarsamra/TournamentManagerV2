@@ -1391,7 +1391,7 @@ def match_detail(request, pk):
     _expire_no_show_reports(match.tournament)
     match.refresh_from_db()
     _sync_open_slots_for_tournament(match.tournament)
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     is_participant = team and (match.team1 == team or match.team2 == team)
     can_submit = is_participant and match.status in ("upcoming", "in_progress")
     can_confirm = (is_participant and match.status == "pending_confirmation" and match.submitted_by != team)
@@ -1436,7 +1436,7 @@ def match_detail(request, pk):
 @require_POST
 def submit_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "You are not a participant in this match.")
         return redirect("match_detail", pk=pk)
@@ -1466,7 +1466,7 @@ def submit_score(request, pk):
 @require_POST
 def confirm_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     if not team or match.submitted_by == team:
         messages.error(request, "Cannot confirm your own submission.")
         return redirect("match_detail", pk=pk)
@@ -1510,7 +1510,7 @@ def confirm_score(request, pk):
 @require_POST
 def dispute_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     if not team or match.submitted_by == team:
         messages.error(request, "Cannot dispute your own submission.")
         return redirect("match_detail", pk=pk)
@@ -1586,7 +1586,7 @@ def resolve_dispute(request, pk):
 def request_reschedule(request, pk):
     match = get_object_or_404(Match, pk=pk)
     _expire_no_show_reports(match.tournament)
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "Not a participant.")
         return redirect("match_detail", pk=pk)
@@ -1658,7 +1658,7 @@ def request_reschedule(request, pk):
 @require_POST
 def respond_reschedule(request, pk):
     rr = get_object_or_404(RescheduleRequest, pk=pk)
-    team = _get_team(request.user)
+    team = _get_team(request.user, rr.match.tournament)
     match = rr.match
     if not team or rr.requested_by == team:
         messages.error(request, "Cannot respond to your own request.")
@@ -1957,7 +1957,7 @@ def report_no_show(request, pk):
         Match.objects.select_related("team1", "team2", "tournament"),
         pk=pk,
     )
-    team = _get_team(request.user)
+    team = _get_team(request.user, match.tournament)
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "Only participating teams can report a no-show.")
         return redirect("match_detail", pk=pk)
@@ -2169,7 +2169,7 @@ def rescheduling_view(request):
     if not tournament:
         return render(request, "core/rescheduling.html", _tournament_context(request, tournament))
     _sync_open_slots_for_tournament(tournament)
-    team = _get_team(request.user)
+    team = _get_team(request.user, tournament)
     requests_qs = RescheduleRequest.objects.filter(
         match__tournament=tournament
     ).select_related("match", "requested_by", "new_court").order_by("-created_at")
