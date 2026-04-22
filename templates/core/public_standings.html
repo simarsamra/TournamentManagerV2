@@ -80,6 +80,17 @@
                 <div class="bracket-round">
                     <div class="bracket-round-title">Round {{ round_num }}</div>
                     {% for m in matches %}
+                    {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
+                    <div class="bracket-match-info">
+                        {% if m.scheduled_time %}
+                            {{ m.scheduled_time|date:"M d, H:i" }}
+                        {% endif %}
+                        {% if m.court %}
+                            {% if m.scheduled_time %} • {% endif %}
+                            Court {{ m.court.name }}
+                        {% endif %}
+                    </div>
+                    {% endif %}
                     <div class="bracket-match">
                         <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
                             <span>{{ m.team1.name|default:"TBD" }}</span>
@@ -89,17 +100,6 @@
                             <span>{{ m.team2.name|default:"TBD" }}</span>
                             <span>{{ m.score_team2|default:"" }}</span>
                         </div>
-                        {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
-                        <div class="bracket-match-info">
-                            {% if m.scheduled_time %}
-                                {{ m.scheduled_time|date:"M d, H:i" }}
-                            {% endif %}
-                            {% if m.court %}
-                                {% if m.scheduled_time %} • {% endif %}
-                                Court {{ m.court.name }}
-                            {% endif %}
-                        </div>
-                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
