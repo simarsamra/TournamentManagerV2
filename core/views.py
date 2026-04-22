@@ -39,6 +39,10 @@ from .withdrawals import handle_withdrawal
 from .backup import create_backup, validate_backup, restore_backup, list_backups, delete_backup
 from .audit import log_action
 
+DEFAULT_DISPUTE_WINDOW_HOURS = 24
+CRITICAL_STAGE_DISPUTE_WINDOW_HOURS = 12
+CRITICAL_STAGE_MATCHES_THRESHOLD = 2
+
 
 def _get_available_tournaments():
     return Tournament.objects.annotate(
@@ -350,6 +354,85 @@ def _expire_no_show_reports(tournament=None):
                 report=report,
                 report_status="auto_forfeited",
             )
+
+
+def _is_critical_stage_match(match):
+    """Return True for late hybrid group-stage matches close to knockout transition."""
+    tournament = match.tournament
+    if tournament.format != "hybrid" or not match.group:
+        return False
+    remaining_group_matches = tournament.matches.filter(group__gt="").exclude(
+        status__in=["confirmed", "forfeited", "cancelled", "bye"]
+    ).count()
+    return remaining_group_matches <= CRITICAL_STAGE_MATCHES_THRESHOLD
+
+
+def _dispute_window_hours_for_match(match):
+    return (
+        CRITICAL_STAGE_DISPUTE_WINDOW_HOURS
+        if _is_critical_stage_match(match)
+        else DEFAULT_DISPUTE_WINDOW_HOURS
+    )
+
+
+def _is_within_dispute_window(match):
+    return bool(match.dispute_deadline_at and timezone.now() <= match.dispute_deadline_at)
+
+
+def _lock_match_score(match, confirmed_by_team=None, lock_note=""):
+    """Lock score permanently, mark confirmed, and execute completion side-effects."""
+    tournament = match.tournament
+    is_elimination = tournament.format in ("knockout", "double_elimination", "consolation") or (
+        tournament.format == "hybrid" and not match.group
+    )
+    if is_elimination and match.score_team1 == match.score_team2:
+        return False
+
+    match.confirmed_by = confirmed_by_team
+    match.status = "confirmed"
+    match.score_locked_at = timezone.now()
+    match.disputed_by = None
+    match.critical_dispute = False
+    match.dispute_resolved_at = None
+    if match.score_team1 > match.score_team2:
+        match.winner = match.team1
+    elif match.score_team2 > match.score_team1:
+        match.winner = match.team2
+    else:
+        match.winner = None
+    if lock_note:
+        match.notes = (match.notes + "\n" if match.notes else "") + lock_note
+    match.save()
+
+    _create_open_slot_for_completed_match(match, f"Completed early: {match}")
+    if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
+        advance_winner(match)
+    if tournament.format == "consolation":
+        generate_consolation_if_ready(tournament)
+    if tournament.format == "hybrid" and match.group:
+        check_group_stage_complete(tournament)
+    _check_and_finalize_tournament(tournament)
+    return True
+
+
+def _expire_pending_score_disputes(tournament=None):
+    pending_scores = Match.objects.filter(
+        status="pending_confirmation",
+        dispute_deadline_at__isnull=False,
+    ).select_related("team1", "team2", "tournament")
+    if tournament is not None:
+        pending_scores = pending_scores.filter(tournament=tournament)
+
+    now = timezone.now()
+    for match in pending_scores:
+        if match.dispute_deadline_at and match.dispute_deadline_at <= now:
+            if _lock_match_score(match, confirmed_by_team=None, lock_note="Auto-locked after dispute deadline."):
+                log_action(
+                    None,
+                    "score_auto_locked",
+                    f"Score auto-locked for {match} after deadline: {match.score_team1}-{match.score_team2}",
+                    tournament=match.tournament,
+                )
 
 
 def _validate_tournament_ready(tournament):
@@ -779,6 +862,7 @@ def dashboard_view(request):
     tournament = _get_tournament(request)
     if tournament:
         _expire_no_show_reports(tournament)
+        _expire_pending_score_disputes(tournament)
     team = _get_team(request.user, tournament=tournament)
     is_organizer = _is_organizer(request.user)
     
@@ -828,9 +912,11 @@ def dashboard_view(request):
         context["remaining_upcoming"] = all_upcoming[5:]
         context["remaining_matches_count"] = len(all_upcoming)
 
-        context["pending_matches"] = team_matches_qs.filter(
+        pending_matches = team_matches_qs.filter(
             status="pending_confirmation"
         ).exclude(submitted_by=team)
+        context["pending_matches"] = pending_matches
+        context["dispute_window_matches"] = pending_matches.select_related("team1", "team2", "submitted_by")
 
         # Completed matches in chronological order (for trajectory)
         completed_chrono = list(
@@ -1027,6 +1113,9 @@ def dashboard_view(request):
         context["confirmed_matches"] = tournament.matches.filter(status="confirmed").count()
         context["pending_matches_count"] = tournament.matches.filter(status="pending_confirmation").count()
         context["disputed_matches"] = tournament.matches.filter(status="disputed").count()
+        context["critical_disputes"] = tournament.matches.filter(status="disputed", critical_dispute=True).select_related(
+            "team1", "team2", "disputed_by"
+        )
     context.update(_tournament_context(request, tournament))
     return _render_refreshable_page(
         request,
@@ -1454,6 +1543,7 @@ def fixtures_view(request):
     tournament = _get_tournament(request)
     if tournament:
         _expire_no_show_reports(tournament)
+        _expire_pending_score_disputes(tournament)
     if not tournament:
         return render(request, "core/fixtures.html", {
             "matches": [],
@@ -1522,16 +1612,24 @@ def match_detail(request, pk):
         pk=pk,
     )
     _expire_no_show_reports(match.tournament)
+    _expire_pending_score_disputes(match.tournament)
     match.refresh_from_db()
     _sync_open_slots_for_tournament(match.tournament)
     team = _get_team(request.user, match.tournament)
     is_organizer = _is_organizer(request.user)
     is_participant = team and (match.team1 == team or match.team2 == team)
+    dispute_window_open = _is_within_dispute_window(match)
+    is_critical_stage = _is_critical_stage_match(match)
     can_submit = (
         (is_participant and match.status in ("upcoming", "in_progress"))
         or (is_organizer and match.status in ("upcoming", "in_progress", "pending_confirmation", "disputed"))
     )
-    can_confirm = (is_participant and match.status == "pending_confirmation" and match.submitted_by != team)
+    can_confirm = (
+        is_participant
+        and match.status == "pending_confirmation"
+        and match.submitted_by != team
+        and dispute_window_open
+    )
     can_dispute = can_confirm
     pending_no_show_report = match.no_show_reports.filter(status="pending").select_related(
         "absent_team", "present_team"
@@ -1551,6 +1649,9 @@ def match_detail(request, pk):
         "can_submit": can_submit,
         "can_confirm": can_confirm,
         "can_dispute": can_dispute,
+        "dispute_window_open": dispute_window_open,
+        "is_critical_stage": is_critical_stage,
+        "dispute_window_hours": _dispute_window_hours_for_match(match),
         "can_mark_no_show": can_mark_no_show,
         "can_report_no_show": can_report_no_show,
         "can_reschedule": can_reschedule,
@@ -1575,6 +1676,8 @@ def match_detail(request, pk):
 @require_POST
 def submit_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
+    _expire_pending_score_disputes(match.tournament)
+    match.refresh_from_db()
     team = _get_team(request.user, match.tournament)
     is_organizer = _is_organizer(request.user)
     is_participant = team and (match.team1 == team or match.team2 == team)
@@ -1596,13 +1699,20 @@ def submit_score(request, pk):
         is_elimination = tournament.format in ("knockout", "double_elimination", "consolation") or (
             tournament.format == "hybrid" and not match.group
         )
+        if is_elimination and match.score_team1 == match.score_team2:
+            messages.error(request, "Draws are not allowed in elimination matches.")
+            return redirect("match_detail", pk=pk)
         if is_organizer:
-            if is_elimination and match.score_team1 == match.score_team2:
-                messages.error(request, "Draws are not allowed in elimination matches.")
-                return redirect("match_detail", pk=pk)
             match.submitted_by = None
             match.confirmed_by = None
             match.status = "confirmed"
+            match.score_submitted_at = timezone.now()
+            match.dispute_deadline_at = None
+            match.score_locked_at = timezone.now()
+            match.disputed_by = None
+            match.critical_dispute = False
+            match.dispute_resolved_at = None
+            match.dispute_resolution_notes = ""
             if match.score_team1 > match.score_team2:
                 match.winner = match.team1
             elif match.score_team2 > match.score_team1:
@@ -1611,6 +1721,16 @@ def submit_score(request, pk):
                 match.winner = None
         else:
             match.submitted_by = team
+            match.confirmed_by = None
+            submitted_at = timezone.now()
+            window_hours = _dispute_window_hours_for_match(match)
+            match.score_submitted_at = submitted_at
+            match.dispute_deadline_at = submitted_at + timedelta(hours=window_hours)
+            match.score_locked_at = None
+            match.disputed_by = None
+            match.critical_dispute = False
+            match.dispute_resolved_at = None
+            match.dispute_resolution_notes = ""
             match.status = "pending_confirmation"
         if form.cleaned_data["notes"]:
             match.notes = form.cleaned_data["notes"]
@@ -1635,7 +1755,16 @@ def submit_score(request, pk):
             log_action(request, "score_submitted",
                        f"Score submitted for {match}: {match.score_team1}-{match.score_team2}",
                        tournament=match.tournament)
-            messages.success(request, "Score submitted. Waiting for opponent confirmation.")
+            if _is_critical_stage_match(match):
+                messages.success(
+                    request,
+                    f"Score submitted. Opponent has {CRITICAL_STAGE_DISPUTE_WINDOW_HOURS} hours to dispute before auto-lock."
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Score submitted. Opponent has {DEFAULT_DISPUTE_WINDOW_HOURS} hours to dispute before auto-lock."
+                )
     return redirect("match_detail", pk=pk)
 
 
@@ -1643,6 +1772,8 @@ def submit_score(request, pk):
 @require_POST
 def confirm_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
+    _expire_pending_score_disputes(match.tournament)
+    match.refresh_from_db()
     team = _get_team(request.user, match.tournament)
     if not team or match.submitted_by == team:
         messages.error(request, "Cannot confirm your own submission.")
@@ -1650,36 +1781,20 @@ def confirm_score(request, pk):
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
         return redirect("match_detail", pk=pk)
+    if not _is_within_dispute_window(match):
+        messages.error(request, "The dispute window has expired and the score is now locked.")
+        return redirect("match_detail", pk=pk)
     if match.team1 != team and match.team2 != team:
         messages.error(request, "You are not a participant in this match.")
         return redirect("match_detail", pk=pk)
-    is_elimination = (
-        tournament := match.tournament
-    ).format in ("knockout", "double_elimination", "consolation") or (
-        tournament.format == "hybrid" and not match.group
-    )
-    if is_elimination and match.score_team1 == match.score_team2:
+    tournament = match.tournament
+    if not _lock_match_score(match, confirmed_by_team=team):
         messages.error(request, "Draws are not allowed in elimination matches.")
         return redirect("match_detail", pk=pk)
-    match.confirmed_by = team
-    match.status = "confirmed"
-    if match.score_team1 > match.score_team2:
-        match.winner = match.team1
-    elif match.score_team2 > match.score_team1:
-        match.winner = match.team2
-    match.save()
-    _create_open_slot_for_completed_match(match, f"Completed early: {match}")
-    if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
-        advance_winner(match)
-    if tournament.format == "consolation":
-        generate_consolation_if_ready(tournament)
-    if tournament.format == "hybrid" and match.group:
-        check_group_stage_complete(tournament)
-    _check_and_finalize_tournament(tournament)
     log_action(request, "score_confirmed",
                f"Score confirmed for {match}: {match.score_team1}-{match.score_team2}",
                tournament=tournament)
-    messages.success(request, "Score confirmed. Match marked done.")
+    messages.success(request, "Score locked. Match marked done.")
     return redirect("match_detail", pk=pk)
 
 
@@ -1687,6 +1802,8 @@ def confirm_score(request, pk):
 @require_POST
 def dispute_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
+    _expire_pending_score_disputes(match.tournament)
+    match.refresh_from_db()
     team = _get_team(request.user, match.tournament)
     if not team or match.submitted_by == team:
         messages.error(request, "Cannot dispute your own submission.")
@@ -1694,14 +1811,23 @@ def dispute_score(request, pk):
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
         return redirect("match_detail", pk=pk)
+    if not _is_within_dispute_window(match):
+        messages.error(request, "Dispute window has expired; score is locked.")
+        return redirect("match_detail", pk=pk)
     dispute_note = request.POST.get("dispute_notes", "").strip()
     match.status = "disputed"
-    match.notes = f"DISPUTED by {team.name}: {dispute_note}" if dispute_note else f"DISPUTED by {team.name}"
+    match.disputed_by = team
+    match.critical_dispute = _is_critical_stage_match(match)
+    prefix = "CRITICAL-STAGE DISPUTE" if match.critical_dispute else "DISPUTED"
+    match.notes = f"{prefix} by {team.name}: {dispute_note}" if dispute_note else f"{prefix} by {team.name}"
     match.save()
     log_action(request, "score_disputed",
                f"Score disputed for {match} by {team.name}: {dispute_note}",
                tournament=match.tournament)
-    messages.warning(request, "Score has been disputed. An organizer will review.")
+    if match.critical_dispute:
+        messages.warning(request, "Critical-stage dispute filed. Organizers will review with priority.")
+    else:
+        messages.warning(request, "Score has been disputed. An organizer will review.")
     return redirect("match_detail", pk=pk)
 
 
@@ -1714,6 +1840,10 @@ def resolve_dispute(request, pk):
     match = get_object_or_404(Match, pk=pk)
     score1 = request.POST.get("final_score_team1")
     score2 = request.POST.get("final_score_team2")
+    resolution_notes = request.POST.get("resolution_notes", "").strip()
+    if match.critical_dispute and not resolution_notes:
+        messages.error(request, "Critical-stage disputes require resolution notes.")
+        return redirect("match_detail", pk=pk)
     if score1 is not None and score2 is not None:
         try:
             final_score1 = int(score1)
@@ -1734,21 +1864,15 @@ def resolve_dispute(request, pk):
 
         match.score_team1 = final_score1
         match.score_team2 = final_score2
-        match.status = "confirmed"
-        if match.score_team1 > match.score_team2:
-            match.winner = match.team1
-        elif match.score_team2 > match.score_team1:
-            match.winner = match.team2
+        if not _lock_match_score(match, confirmed_by_team=None):
+            messages.error(request, "Draws are not allowed in elimination matches.")
+            return redirect("match_detail", pk=pk)
+        match.dispute_resolution_notes = resolution_notes
+        match.dispute_resolved_at = timezone.now()
         match.notes += f"\nResolved by organizer."
-        match.save()
-        _create_open_slot_for_completed_match(match, f"Completed early after dispute: {match}")
-        if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
-            advance_winner(match)
-        if tournament.format == "consolation":
-            generate_consolation_if_ready(tournament)
-        if tournament.format == "hybrid" and match.group:
-            check_group_stage_complete(tournament)
-        _check_and_finalize_tournament(tournament)
+        if resolution_notes:
+            match.notes += f"\nResolution notes: {resolution_notes}"
+        match.save(update_fields=["dispute_resolution_notes", "dispute_resolved_at", "notes"])
         log_action(request, "dispute_resolved",
                    f"Dispute resolved for {match}: {match.score_team1}-{match.score_team2}",
                    tournament=tournament)
@@ -1949,6 +2073,7 @@ def standings_view(request):
     tournament = _get_tournament(request)
     if tournament:
         _expire_no_show_reports(tournament)
+        _expire_pending_score_disputes(tournament)
     context = {"tournament": tournament}
     if tournament:
         if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
@@ -2329,6 +2454,7 @@ def open_slots_view(request):
     tournament = _get_tournament(request)
     if tournament:
         _expire_no_show_reports(tournament)
+        _expire_pending_score_disputes(tournament)
     context = {
         "tournament": tournament,
         "slots": [],
@@ -2352,6 +2478,7 @@ def analytics_view(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/analytics.html", _tournament_context(request, tournament))
+    _expire_pending_score_disputes(tournament)
     matches = tournament.matches.all()
     teams = tournament.teams.all()
     match_stats = {
@@ -2894,6 +3021,7 @@ def public_standings(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/public_standings.html", {})
+    _expire_pending_score_disputes(tournament)
     context = {"tournament": tournament}
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
         if tournament.format == "hybrid":
@@ -2913,5 +3041,6 @@ def public_fixtures(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/public_fixtures.html", {"matches": []})
+    _expire_pending_score_disputes(tournament)
     matches = tournament.matches.select_related("team1", "team2", "court", "winner").order_by("scheduled_time", "match_number")
     return render(request, "core/public_fixtures.html", {"tournament": tournament, "matches": matches})

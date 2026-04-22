@@ -114,6 +114,23 @@
 {% endif %}
 {% endif %}
 
+{% if effective_view == 'organizer' and critical_disputes %}
+<div class="card card-warning mb-2">
+    <div class="card-header">🚨 Critical Stage Disputes</div>
+    <div class="card-body">
+        {% for m in critical_disputes %}
+        <div class="alert alert-warning d-flex justify-between align-center mb-1">
+            <span>
+                Match #{{ m.match_number }}: {{ m.team1.name|default:"TBD" }} vs {{ m.team2.name|default:"TBD" }}
+                {% if m.disputed_by %}&middot; disputed by {{ m.disputed_by.name }}{% endif %}
+            </span>
+            <a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-warning btn-sm">Review</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 {% if team and effective_view == 'team' %}
 
 {% if tournament.status == 'active' or tournament.status == 'completed' %}
@@ -294,12 +311,27 @@
 <div class="card card-warning">
     <div class="card-header">&#9888;&#65039; Pending Actions</div>
     <div class="card-body">
-        {% if pending_matches %}
-        <h4 class="mb-1">Scores to Confirm</h4>
-        {% for m in pending_matches %}
+        {% if dispute_window_matches %}
+        <h4 class="mb-1">Score Dispute Window Open</h4>
+        <p class="text-muted" style="font-size:0.85rem;">No action is needed if the score is correct; it will auto-lock at the deadline.</p>
+        {% for m in dispute_window_matches %}
         <div class="alert alert-warning d-flex justify-between align-center mb-1">
-            <span>Match #{{ m.match_number }}: {{ m.score_team1 }} - {{ m.score_team2 }}</span>
-            <a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-warning btn-sm">Review</a>
+            <span>
+                Match #{{ m.match_number }}: {{ m.score_team1 }} - {{ m.score_team2 }}
+                {% if m.dispute_deadline_at %}<br><small>Auto-locks at {{ m.dispute_deadline_at|date:"M d, H:i" }}</small>{% endif %}
+                {% if m.group and tournament.format == "hybrid" %}<br><small>Group Stage Match</small>{% endif %}
+            </span>
+            <div class="d-flex gap-1">
+                <form method="post" action="{% url 'confirm_score' pk=m.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm">Lock</button>
+                </form>
+                <form method="post" action="{% url 'dispute_score' pk=m.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger btn-sm">Dispute</button>
+                </form>
+                <a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-warning btn-sm">Open</a>
+            </div>
         </div>
         {% endfor %}
         {% endif %}
@@ -330,7 +362,7 @@
         {% endfor %}
         {% endif %}
 
-        {% if not pending_matches and not pending_reschedules and not pending_no_show_reports %}
+        {% if not dispute_window_matches and not pending_reschedules and not pending_no_show_reports %}
         <p class="text-muted">No pending actions.</p>
         {% endif %}
     </div>

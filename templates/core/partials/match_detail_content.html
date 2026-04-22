@@ -47,6 +47,8 @@
                 {% if match.winner %}<tr><td class="text-muted">Winner</td><td class="text-success"><strong>{{ match.winner.name }}</strong></td></tr>{% endif %}
                 {% if match.submitted_by %}<tr><td class="text-muted">Submitted by</td><td>{{ match.submitted_by.name }}</td></tr>{% endif %}
                 {% if match.confirmed_by %}<tr><td class="text-muted">Confirmed by</td><td>{{ match.confirmed_by.name }}</td></tr>{% endif %}
+                {% if match.dispute_deadline_at %}<tr><td class="text-muted">Dispute deadline</td><td>{{ match.dispute_deadline_at|date:"M d, Y H:i" }}</td></tr>{% endif %}
+                {% if match.score_locked_at %}<tr><td class="text-muted">Score locked at</td><td>{{ match.score_locked_at|date:"M d, Y H:i" }}</td></tr>{% endif %}
                 {% if match.group %}<tr><td class="text-muted">Group</td><td>{{ match.group }}</td></tr>{% endif %}
                 {% if match.round_number %}<tr><td class="text-muted">Round</td><td>{{ match.round_number }}</td></tr>{% endif %}
                 {% if match.notes %}<tr><td class="text-muted">Notes</td><td>{{ match.notes }}</td></tr>{% endif %}
@@ -92,13 +94,19 @@
 
         {% if can_confirm %}
         <div class="card">
-            <div class="card-header">⚠️ Confirm Score</div>
+            <div class="card-header">⚠️ Score Dispute Window</div>
             <div class="card-body">
                 <p class="mb-1">{{ match.submitted_by.name }} reported: <strong>{{ match.score_team1 }} - {{ match.score_team2 }}</strong></p>
+                {% if match.dispute_deadline_at %}
+                <p class="text-muted mb-1">Auto-lock deadline: {{ match.dispute_deadline_at|date:"M d, Y H:i" }}.</p>
+                {% endif %}
+                {% if is_critical_stage %}
+                <p class="text-muted mb-1"><strong>Critical stage match:</strong> disputes are expedited and reviewed with stricter organizer checks.</p>
+                {% endif %}
                 <div class="d-flex gap-1">
                     <form method="post" action="{% url 'confirm_score' pk=match.pk %}">
                         {% csrf_token %}
-                        <button type="submit" class="btn btn-success">✓ Confirm</button>
+                        <button type="submit" class="btn btn-success">✓ Lock Score</button>
                     </form>
                     <form method="post" action="{% url 'dispute_score' pk=match.pk %}">
                         {% csrf_token %}
@@ -114,6 +122,9 @@
         <div class="card">
             <div class="card-header">🔧 Resolve Dispute</div>
             <div class="card-body">
+                {% if match.critical_dispute %}
+                <p class="mb-1"><strong>Critical-stage dispute:</strong> resolution notes are required.</p>
+                {% endif %}
                 <form method="post" action="{% url 'resolve_dispute' pk=match.pk %}">
                     {% csrf_token %}
                     <div class="grid grid-2">
@@ -125,6 +136,10 @@
                             <label>{{ match.team2.name }} Final Score</label>
                             <input type="number" name="final_score_team2" value="{{ match.score_team2 }}" class="form-control" min="0" required>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Resolution Notes{% if match.critical_dispute %} *{% endif %}</label>
+                        <textarea name="resolution_notes" class="form-control" rows="3" {% if match.critical_dispute %}required{% endif %}>{{ match.dispute_resolution_notes }}</textarea>
                     </div>
                     <button type="submit" class="btn btn-warning">Resolve & Confirm</button>
                 </form>

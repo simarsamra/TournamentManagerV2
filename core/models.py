@@ -249,12 +249,21 @@ class Match(models.Model):
 
     score_team1 = models.IntegerField(null=True, blank=True)
     score_team2 = models.IntegerField(null=True, blank=True)
+    score_submitted_at = models.DateTimeField(null=True, blank=True)
+    dispute_deadline_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    score_locked_at = models.DateTimeField(null=True, blank=True)
     submitted_by = models.ForeignKey(
         Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="submitted_scores"
     )
     confirmed_by = models.ForeignKey(
         Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="confirmed_scores"
     )
+    disputed_by = models.ForeignKey(
+        Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="raised_disputes"
+    )
+    critical_dispute = models.BooleanField(default=False)
+    dispute_resolution_notes = models.TextField(blank=True, default="")
+    dispute_resolved_at = models.DateTimeField(null=True, blank=True)
     winner = models.ForeignKey(
         Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="won_matches"
     )
