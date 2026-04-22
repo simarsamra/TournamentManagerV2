@@ -366,6 +366,63 @@
 
 {% block extra_js %}
 <script>
+// Keep analytics position stable after widget form submissions.
+(function() {
+    var scrollKey = 'analytics-scroll:' + window.location.pathname;
+
+    function restoreScrollPosition() {
+        var raw = window.sessionStorage.getItem(scrollKey);
+        if (!raw) {
+            return;
+        }
+
+        window.sessionStorage.removeItem(scrollKey);
+
+        var payload;
+        try {
+            payload = JSON.parse(raw);
+        } catch (e) {
+            return;
+        }
+
+        window.requestAnimationFrame(function() {
+            var cards = document.querySelectorAll('.card');
+            if (
+                payload &&
+                typeof payload.cardIndex === 'number' &&
+                payload.cardIndex >= 0 &&
+                payload.cardIndex < cards.length
+            ) {
+                cards[payload.cardIndex].scrollIntoView({ block: 'start' });
+                window.scrollBy(0, -12);
+                return;
+            }
+
+            if (payload && typeof payload.y === 'number') {
+                window.scrollTo(0, payload.y);
+            }
+        });
+    }
+
+    function wireAnalyticsGetForms() {
+        var allCards = Array.from(document.querySelectorAll('.card'));
+        var forms = document.querySelectorAll('form[method="get"]');
+        forms.forEach(function(form) {
+            form.addEventListener('submit', function() {
+                var card = form.closest('.card');
+                var payload = {
+                    y: window.scrollY || window.pageYOffset || 0,
+                    cardIndex: card ? allCards.indexOf(card) : -1
+                };
+                window.sessionStorage.setItem(scrollKey, JSON.stringify(payload));
+            });
+        });
+    }
+
+    restoreScrollPosition();
+    wireAnalyticsGetForms();
+})();
+
 // Simple bar chart for schedule density
 var data = {{ schedule_density|safe }};
 var container = document.getElementById('schedule-density');

@@ -80,26 +80,39 @@
                 <div class="bracket-round">
                     <div class="bracket-round-title">Round {{ round_num }}</div>
                     {% for m in matches %}
-                    {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
-                    <div class="bracket-match-info">
-                        {% if m.scheduled_time %}
-                            {{ m.scheduled_time|date:"M d, H:i" }}
-                        {% endif %}
-                        {% if m.court %}
-                            {% if m.scheduled_time %} • {% endif %}
-                            Court {{ m.court.name }}
-                        {% endif %}
-                    </div>
-                    {% endif %}
+                    <div class="bracket-match-wrap">
                     <div class="bracket-match">
                         <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
                             <span>{{ m.team1.name|default:"TBD" }}</span>
-                            <span>{{ m.score_team1|default:"" }}</span>
+                            <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
                         </div>
                         <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
                             <span>{{ m.team2.name|default:"TBD" }}</span>
-                            <span>{{ m.score_team2|default:"" }}</span>
+                            <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
                         </div>
+                    </div>
+                    {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
+                    {% if m.scheduled_time or m.court %}
+                    <div class="bracket-match-info" aria-label="Match schedule and location">
+                        {% if m.scheduled_time %}
+                        <span class="bracket-info-chip">
+                            <span class="bracket-info-label">Date</span>
+                            <span>{{ m.scheduled_time|date:"M d" }}</span>
+                        </span>
+                        <span class="bracket-info-chip">
+                            <span class="bracket-info-label">Time</span>
+                            <span>{{ m.scheduled_time|date:"H:i" }}</span>
+                        </span>
+                        {% endif %}
+                        {% if m.court %}
+                        <span class="bracket-info-chip bracket-info-chip-place">
+                            <span class="bracket-info-label">Court</span>
+                            <span>{{ m.court.name }}</span>
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% endif %}
                     </div>
                     {% endfor %}
                 </div>
