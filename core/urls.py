@@ -48,6 +48,7 @@ urlpatterns = [
     path("match/<int:pk>/resolve-dispute/", views.resolve_dispute, name="resolve_dispute"),
     path("match/<int:pk>/report-no-show/", views.report_no_show, name="report_no_show"),
     path("match/<int:pk>/mark-no-show/", views.mark_no_show, name="mark_no_show"),
+    path("match/<int:pk>/override-result/", views.override_match_result, name="override_match_result"),
 
     # Rescheduling
     path("match/<int:pk>/reschedule/", views.request_reschedule, name="request_reschedule"),

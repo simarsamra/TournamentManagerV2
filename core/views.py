@@ -220,6 +220,27 @@ def _render_refreshable_page(request, full_template, partial_template, context):
     return render(request, template_name, context)
 
 
+def _can_override_match(match):
+    """Return True if an organizer can override this match's result.
+
+    Allowed for:
+    - Pure round-robin / double round-robin tournaments (any confirmed/forfeited match)
+    - Hybrid tournament group-stage matches (match.group != "") BUT only while
+      the knockout phase has not yet started (no knockout match has teams assigned).
+    """
+    if match.status not in ("confirmed", "forfeited"):
+        return False
+    tournament = match.tournament
+    if tournament.format in ("round_robin", "double_round_robin"):
+        return True
+    if tournament.format == "hybrid" and match.group:
+        ko_started = tournament.matches.filter(
+            group="", bracket_type="winners", team1__isnull=False
+        ).exists()
+        return not ko_started
+    return False
+
+
 def _finalize_no_show_match(match, loser, winner, reason_text, report=None, report_status="resolved"):
     if not loser or not winner:
         return False
@@ -765,10 +786,17 @@ def dashboard_view(request):
     # Default: if organizer + team, show team view first; can toggle to organizer view
     has_dual_roles = _has_dual_roles(request.user)
     view_mode = request.session.get("view_mode", "team") if has_dual_roles else None
-    
-    # If dual-role user prefers organizer view, redirect to tournament setup
-    if has_dual_roles and view_mode == "organizer":
-        return redirect("tournament_setup")
+
+    # Determine effective view: controls which blocks render in the template
+    # - Pure organizer (no team): always 'organizer'
+    # - Pure team user (not staff): always 'team'
+    # - Dual-role: follows session preference (default 'team')
+    if has_dual_roles:
+        effective_view = view_mode  # 'team' or 'organizer'
+    elif is_organizer:
+        effective_view = "organizer"
+    else:
+        effective_view = "team"
 
     # Non-organiser with no team yet → send to join list
     if not team and not is_organizer:
@@ -783,6 +811,7 @@ def dashboard_view(request):
         "is_captain": _is_captain(request.user, team),
         "has_dual_roles": has_dual_roles,
         "view_mode": view_mode,
+        "effective_view": effective_view,
     }
     if tournament and team:
         team_matches_qs = Match.objects.filter(
@@ -1507,6 +1536,7 @@ def match_detail(request, pk):
     can_mark_no_show = _is_organizer(request.user) and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open
     can_report_no_show = is_participant and _is_captain(request.user, team) and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open and not pending_no_show_report
     can_reschedule = is_participant and _is_captain(request.user, team)
+    can_override_result = _is_organizer(request.user) and _can_override_match(match)
     reschedule_form = RescheduleForm(tournament=match.tournament)
     open_slot_choices = _build_open_slot_choices(match, reschedule_form.fields["open_slot"].queryset)
     context = {
@@ -1520,6 +1550,7 @@ def match_detail(request, pk):
         "can_mark_no_show": can_mark_no_show,
         "can_report_no_show": can_report_no_show,
         "can_reschedule": can_reschedule,
+        "can_override_result": can_override_result,
         "pending_no_show_report": pending_no_show_report,
         "score_form": ScoreSubmitForm(),
         "reschedule_form": reschedule_form,
@@ -1680,6 +1711,68 @@ def resolve_dispute(request, pk):
                    f"Dispute resolved for {match}: {match.score_team1}-{match.score_team2}",
                    tournament=tournament)
         messages.success(request, "Dispute resolved. Match marked done.")
+    return redirect("match_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def override_match_result(request, pk):
+    """Organizer override of a completed/forfeited RR or hybrid group-stage match result."""
+    if not _is_organizer(request.user):
+        messages.error(request, "Only organizers can override match results.")
+        return redirect("match_detail", pk=pk)
+    match = get_object_or_404(Match, pk=pk)
+    if not _can_override_match(match):
+        messages.error(request, "This match cannot be overridden. It may be a knockout match or the knockout phase has already started.")
+        return redirect("match_detail", pk=pk)
+
+    score1 = request.POST.get("override_score_team1", "").strip()
+    score2 = request.POST.get("override_score_team2", "").strip()
+    reason = request.POST.get("override_reason", "").strip()
+
+    try:
+        s1, s2 = int(score1), int(score2)
+    except (TypeError, ValueError):
+        messages.error(request, "Scores must be valid whole numbers.")
+        return redirect("match_detail", pk=pk)
+    if s1 < 0 or s2 < 0:
+        messages.error(request, "Scores cannot be negative.")
+        return redirect("match_detail", pk=pk)
+
+    old_status = match.get_status_display()
+    old_score = f"{match.score_team1}-{match.score_team2}" if match.score_team1 is not None else "N/A"
+
+    match.score_team1 = s1
+    match.score_team2 = s2
+    match.status = "confirmed"
+    if s1 > s2:
+        match.winner = match.team1
+    elif s2 > s1:
+        match.winner = match.team2
+    else:
+        match.winner = None  # draws are valid in round-robin
+
+    note_parts = [f"Result overridden by organizer (was: {old_status}, {old_score})"]
+    if reason:
+        note_parts.append(f"Reason: {reason}")
+    override_note = ". ".join(note_parts)
+    match.notes = (match.notes.rstrip() + "\n" + override_note) if match.notes else override_note
+
+    # Resolve any open no-show reports for this match
+    match.no_show_reports.filter(status="pending").update(
+        status="resolved", resolved_at=timezone.now()
+    )
+    match.save()
+
+    log_action(
+        request,
+        "match_result_overridden",
+        f"Match #{match.match_number} result overridden to {s1}-{s2}"
+        + (f", winner={match.winner.name}" if match.winner else ", draw")
+        + (f". Reason: {reason}" if reason else ""),
+        tournament=match.tournament,
+    )
+    messages.success(request, f"Match result updated to {s1}–{s2}.")
     return redirect("match_detail", pk=pk)
 
 

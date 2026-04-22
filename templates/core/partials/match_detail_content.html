@@ -145,6 +145,43 @@
         {% endif %}{# end tournament not completed #}
 
         {% if can_report_no_show %}
+
+        {% if can_override_result %}
+        <div class="card" style="border-color:var(--warning);">
+            <div class="card-header" style="background:rgba(var(--warning-rgb,255,193,7),0.12);">✏️ Override Match Result</div>
+            <div class="card-body">
+                <p class="text-muted mb-1" style="font-size:0.875rem;">
+                    Override the recorded result for this match (e.g. teams agreed to play after a no-show was recorded).
+                    This updates standings immediately.
+                </p>
+                <form method="post" action="{% url 'override_match_result' pk=match.pk %}"
+                      onsubmit="return confirm('Override the result of this match? This will update standings.')">
+                    {% csrf_token %}
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>{{ match.team1.name }} Score</label>
+                            <input type="number" name="override_score_team1"
+                                   value="{{ match.score_team1|default:'' }}"
+                                   class="form-control" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ match.team2.name }} Score</label>
+                            <input type="number" name="override_score_team2"
+                                   value="{{ match.score_team2|default:'' }}"
+                                   class="form-control" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Reason <span class="text-muted" style="font-weight:400;">(optional)</span></label>
+                        <input type="text" name="override_reason" class="form-control"
+                               placeholder="e.g. Teams played the match on April 25">
+                    </div>
+                    <button type="submit" class="btn btn-warning">Override Result</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card">
             <div class="card-header">Report Opponent No-Show</div>
             <div class="card-body">

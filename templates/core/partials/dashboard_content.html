@@ -9,7 +9,7 @@
 </div>
 {% else %}
 
-{% if is_organizer %}
+{% if effective_view == 'organizer' %}
 <div class="card mb-2">
     <div class="card-header">Tournament Overview</div>
     <div class="card-body">
@@ -80,7 +80,7 @@
     </div>
 </div>
 
-{% if tournament %}
+{% if tournament and effective_view == 'organizer' %}
 <div class="grid grid-4 mb-2">
     <div class="stat-card">
         <div style="font-size:1.5rem;margin-bottom:0.25rem;">👥</div>
@@ -114,7 +114,7 @@
 {% endif %}
 {% endif %}
 
-{% if team %}
+{% if team and effective_view == 'team' %}
 
 {% if tournament.status == 'active' or tournament.status == 'completed' %}
 
