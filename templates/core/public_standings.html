@@ -89,6 +89,17 @@
                             <span>{{ m.team2.name|default:"TBD" }}</span>
                             <span>{{ m.score_team2|default:"" }}</span>
                         </div>
+                        {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
+                        <div class="bracket-match-info">
+                            {% if m.scheduled_time %}
+                                {{ m.scheduled_time|date:"M d, H:i" }}
+                            {% endif %}
+                            {% if m.court %}
+                                {% if m.scheduled_time %} • {% endif %}
+                                Court {{ m.court.name }}
+                            {% endif %}
+                        </div>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
