@@ -380,7 +380,14 @@ def _is_within_dispute_window(match):
 
 
 def _lock_match_score(match, confirmed_by_team=None, lock_note=""):
-    """Lock score permanently, mark confirmed, and execute completion side-effects."""
+    """Lock score permanently, mark confirmed, and execute completion side-effects.
+
+    Args:
+        match: Match whose submitted score should be finalized.
+        confirmed_by_team: Team that explicitly locked the score, or None for
+            organizer/automatic locks.
+        lock_note: Optional note appended to match notes (e.g., auto-lock reason).
+    """
     tournament = match.tournament
     is_elimination = tournament.format in ("knockout", "double_elimination", "consolation") or (
         tournament.format == "hybrid" and not match.group
@@ -914,9 +921,9 @@ def dashboard_view(request):
 
         pending_matches = team_matches_qs.filter(
             status="pending_confirmation"
-        ).exclude(submitted_by=team)
+        ).exclude(submitted_by=team).select_related("team1", "team2", "submitted_by")
         context["pending_matches"] = pending_matches
-        context["dispute_window_matches"] = pending_matches.select_related("team1", "team2", "submitted_by")
+        context["dispute_window_matches"] = pending_matches
 
         # Completed matches in chronological order (for trajectory)
         completed_chrono = list(
@@ -1872,7 +1879,7 @@ def resolve_dispute(request, pk):
         match.notes += f"\nResolved by organizer."
         if resolution_notes:
             match.notes += f"\nResolution notes: {resolution_notes}"
-        match.save(update_fields=["dispute_resolution_notes", "dispute_resolved_at", "notes"])
+        match.save()
         log_action(request, "dispute_resolved",
                    f"Dispute resolved for {match}: {match.score_team1}-{match.score_team2}",
                    tournament=tournament)
