@@ -168,3 +168,98 @@ document.addEventListener('DOMContentLoaded', function() {
         window.setInterval(refreshSection, intervalMs);
     });
 });
+
+// ── Fireworks Animation for Tournament Celebration ──────────────────────────
+function startFireworks() {
+    const canvas = document.getElementById('fireworks-canvas');
+    if (!canvas) return;
+
+    const container = canvas.parentElement;
+    if (!container) return;
+
+    canvas.style.display = 'block';
+    const ctx = canvas.getContext('2d');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+
+    const particles = [];
+    const colors = ['#FFD700', '#FFA500', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
+
+    class Particle {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.size = Math.random() * 3 + 2;
+            this.speedX = (Math.random() - 0.5) * 8;
+            this.speedY = (Math.random() - 0.5) * 8 - 3;
+            this.gravity = 0.1;
+            this.alpha = 1;
+            this.color = colors[Math.floor(Math.random() * colors.length)];
+        }
+
+        draw() {
+            ctx.globalAlpha = this.alpha;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        update() {
+            this.x += this.speedX;
+            this.y += this.speedY;
+            this.speedY += this.gravity;
+            this.alpha -= 0.015;
+            this.speedX *= 0.99;
+        }
+    }
+
+    function createFireworks(x, y) {
+        for (let i = 0; i < 30; i++) {
+            particles.push(new Particle(x, y));
+        }
+    }
+
+    // Create multiple fireworks bursts
+    const burstLocations = [
+        [canvas.width * 0.5, canvas.height * 0.3],
+        [canvas.width * 0.3, canvas.height * 0.5],
+        [canvas.width * 0.7, canvas.height * 0.5],
+        [canvas.width * 0.4, canvas.height * 0.2],
+        [canvas.width * 0.6, canvas.height * 0.6]
+    ];
+
+    let burstIndex = 0;
+    let frameCount = 0;
+
+    function animate() {
+        ctx.globalAlpha = 1;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Create new bursts
+        if (frameCount % 15 === 0 && burstIndex < burstLocations.length) {
+            createFireworks(burstLocations[burstIndex][0], burstLocations[burstIndex][1]);
+            burstIndex++;
+        }
+
+        // Update and draw particles
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            particles[i].draw();
+            if (particles[i].alpha <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+
+        frameCount++;
+
+        // Continue animation until all particles are gone and bursts are complete
+        if (particles.length > 0 || burstIndex < burstLocations.length) {
+            requestAnimationFrame(animate);
+        } else {
+            canvas.style.display = 'none';
+        }
+    }
+
+    animate();
+}

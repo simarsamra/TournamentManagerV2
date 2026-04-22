@@ -744,6 +744,20 @@ def dashboard_view(request):
             standings = calculate_standings(tournament)
             team_standing = next((s for s in standings if s["team"].pk == team.pk), None)
         context["team_standing"] = team_standing
+        
+        # Add runner-ups context for completed tournaments
+        if tournament.status == "completed":
+            if standings:
+                # For round-robin formats, get top 3 from standings
+                context["tournament_champion"] = standings[0]["team"] if standings else tournament.champion
+                context["tournament_runner_up_1"] = standings[1]["team"] if len(standings) > 1 else None
+                context["tournament_runner_up_2"] = standings[2]["team"] if len(standings) > 2 else None
+            else:
+                # For bracket formats, use tournament.champion
+                context["tournament_champion"] = tournament.champion
+                # For bracket formats, we might not have clear 2nd/3rd, so leave empty
+                context["tournament_runner_up_1"] = None
+                context["tournament_runner_up_2"] = None
 
         # Nearby standings rows: up to 2 above + self + 2 below
         if standings and team_standing:

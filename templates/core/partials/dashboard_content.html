@@ -195,30 +195,61 @@
 <div class="card {% if tournament.status == 'completed' %}card-success{% endif %}">
     {% if tournament.status == 'completed' %}
     <div class="card-header">🏆 Tournament Complete</div>
-    <div class="card-body">
-        {% if tournament.champion %}
-            {% if tournament.champion == team %}
-            <div style="text-align:center;padding:1rem 0;">
-                <div style="font-size:2.5rem;">🥇</div>
-                <div style="font-size:1.3rem;font-weight:700;color:var(--success);margin:0.5rem 0;">You are the Champion!</div>
-                <div style="font-size:0.9rem;color:var(--text-muted);">Congratulations, <strong>{{ team.name }}</strong>!</div>
-            </div>
-            {% else %}
-            <div style="text-align:center;padding:1rem 0;">
-                <div style="font-size:2rem;">🏅</div>
-                <div style="font-size:1.1rem;font-weight:700;margin:0.5rem 0;">Champion: {{ tournament.champion.name }}</div>
-                <div style="font-size:0.9rem;color:var(--text-muted);">Tournament has concluded. Thanks for participating!</div>
+    <div class="card-body" style="position:relative;overflow:hidden;">
+        <!-- Fireworks canvas -->
+        <canvas id="fireworks-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:none;"></canvas>
+        
+        <!-- Podium Display -->
+        <div style="display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1;">
+            <!-- Winner at top -->
+            {% if tournament_champion or tournament.champion %}
+            <div class="winner-podium-section" style="margin-bottom:2rem;">
+                <div style="font-size:3rem;margin-bottom:0.5rem;animation:bounce 1s ease-in-out infinite;">🥇</div>
+                <div style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg, #FFD700, #FFA500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:0.25rem;">
+                    {{ tournament_champion.name|default:tournament.champion.name }}
+                </div>
+                {% if tournament_champion == team or tournament.champion == team %}
+                <div style="font-size:1.1rem;font-weight:700;color:var(--success);">🎉 CHAMPION 🎉</div>
+                {% else %}
+                <div style="font-size:0.95rem;color:var(--text-muted);">1st Place</div>
+                {% endif %}
             </div>
             {% endif %}
-        {% else %}
-        <div style="text-align:center;padding:1rem 0;">
-            <div style="font-size:2rem;">✅</div>
-            <div style="font-size:1.1rem;font-weight:600;margin:0.5rem 0;">Tournament has concluded.</div>
+            
+            <!-- Runners-up podium -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;width:100%;max-width:350px;">
+                <!-- 2nd Place -->
+                {% if tournament_runner_up_1 %}
+                <div class="runner-up-podium" style="text-align:center;">
+                    <div style="font-size:2.5rem;margin-bottom:0.3rem;animation:bounce 1.2s ease-in-out infinite;animation-delay:0.1s;">🥈</div>
+                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_1.name }}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">2nd Place</div>
+                </div>
+                {% endif %}
+                
+                <!-- 3rd Place -->
+                {% if tournament_runner_up_2 %}
+                <div class="runner-up-podium" style="text-align:center;">
+                    <div style="font-size:2.5rem;margin-bottom:0.3rem;animation:bounce 1.4s ease-in-out infinite;animation-delay:0.2s;">🥉</div>
+                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_2.name }}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">3rd Place</div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div style="margin-top:1.5rem;width:100%;">
+                <a href="{% url 'standings' %}" class="btn btn-primary">View Final Standings</a>
+            </div>
         </div>
-        {% endif %}
-        <div style="text-align:center;margin-top:0.5rem;">
-            <a href="{% url 'standings' %}" class="btn btn-primary btn-sm">View Final Standings</a>
-        </div>
+        
+        <script>
+            // Start fireworks when page loads
+            document.addEventListener('DOMContentLoaded', function() {
+                setTimeout(function() {
+                    startFireworks();
+                }, 500);
+            });
+        </script>
     </div>
     {% else %}
     <div class="card-header">Next Match</div>
