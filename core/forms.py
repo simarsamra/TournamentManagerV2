@@ -41,9 +41,32 @@ class CourtForm(forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        self.tournament = kwargs.pop("tournament", None)
         super().__init__(*args, **kwargs)
         self.fields["is_available"].required = False
         self.fields["is_available"].initial = True
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            return name
+
+        if self.tournament is None:
+            return name
+
+        duplicate_qs = Court.objects.filter(
+            tournament=self.tournament,
+            name__iexact=name,
+        )
+        if self.instance.pk:
+            duplicate_qs = duplicate_qs.exclude(pk=self.instance.pk)
+
+        if duplicate_qs.exists():
+            raise forms.ValidationError(
+                "A court with this name already exists for this tournament."
+            )
+
+        return name
 
 
 class TimeSlotForm(forms.Form):

@@ -10,6 +10,7 @@ from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.db import IntegrityError
 from django.db import models as db_models
 from django.db.models import Q, Count, Avg, F
 from django.http import JsonResponse, HttpResponse
@@ -1218,15 +1219,25 @@ def add_court(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
-    form = CourtForm(request.POST)
+    form = CourtForm(request.POST, tournament=tournament)
     if form.is_valid():
         court = form.save(commit=False)
         court.tournament = tournament
         if "availability_present" not in request.POST:
             court.is_available = True
-        court.save()
+        try:
+            court.save()
+        except IntegrityError:
+            messages.error(
+                request,
+                "A court with this name already exists for this tournament.",
+            )
+            return redirect("tournament_config", pk=pk)
         log_action(request, "court_added", f"Court '{court.name}' added", tournament=tournament)
         messages.success(request, f"Court '{court.name}' added.")
+    else:
+        for error in form.errors.get("name", []):
+            messages.error(request, error)
     return redirect("tournament_config", pk=pk)
 
 
