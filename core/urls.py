@@ -6,6 +6,7 @@ urlpatterns = [
     path("login/", views.login_view, name="login"),
     path("logout/", views.logout_view, name="logout"),
     path("register/", views.account_register_view, name="account_register"),
+    path("profile/", views.profile_view, name="profile"),
     # Legacy aliases kept for backwards compat
     path("register/legacy/", views.register_view, name="register"),
     path("tournament/<int:pk>/register/", views.register_view, name="tournament_register"),
@@ -18,7 +19,7 @@ urlpatterns = [
 
     # Dashboard
     path("dashboard/", views.dashboard_view, name="dashboard"),
-    path("", views.dashboard_view, name="home"),
+    path("", views.public_home, name="home"),
     path("toggle-view/", views.toggle_view_preference, name="toggle_view_preference"),
 
     # Tournament setup
@@ -26,8 +27,11 @@ urlpatterns = [
     path("tournament/<int:pk>/config/", views.tournament_config, name="tournament_config"),
     path("tournament/<int:pk>/add-court/", views.add_court, name="add_court"),
     path("tournament/<int:pk>/add-court-availability/", views.add_court_availability, name="add_court_availability"),
+    path("tournament/<int:pk>/estimate-availability-end-date/", views.estimate_court_availability_end_date, name="estimate_court_availability_end_date"),
+    path("tournament/<int:pk>/delete-court-availability/<int:availability_pk>/", views.delete_court_availability, name="delete_court_availability"),
     path("tournament/<int:pk>/add-timeslot/", views.add_timeslot, name="add_timeslot"),
     path("tournament/<int:pk>/add-teams/", views.add_teams_bulk, name="add_teams_bulk"),
+    path("tournament/<int:pk>/remove-team/<int:participation_pk>/", views.remove_team_from_tournament, name="remove_team_from_tournament"),
     path("tournament/<int:pk>/open-registration/", views.open_registration, name="open_registration"),
     path("tournament/<int:pk>/close-registration/", views.close_registration, name="close_registration"),
     path("tournament/<int:pk>/generate-schedule/", views.generate_schedule, name="generate_schedule"),
@@ -59,6 +63,7 @@ urlpatterns = [
     # Teams
     path("teams/", views.teams_view, name="teams"),
     path("team/<int:pk>/", views.team_detail, name="team_detail"),
+    path("teams/create/", views.create_standalone_team_view, name="create_standalone_team"),
     path("team/<int:pk>/withdraw/", views.withdraw_team, name="withdraw_team"),
     path("team/<int:pk>/remove/", views.organizer_remove_team, name="organizer_remove_team"),
     path("team/<int:pk>/preferences/", views.team_preferences, name="team_preferences"),
@@ -66,6 +71,10 @@ urlpatterns = [
     path("team/<int:pk>/members/<int:user_pk>/remove/", views.remove_team_member, name="remove_team_member"),
     path("team/<int:pk>/members/<int:user_pk>/reset-password/", views.reset_member_password, name="reset_member_password"),
     path("team/<int:pk>/captain/reset-password/", views.reset_captain_password, name="reset_captain_password"),
+    path("team/<int:pk>/leave/", views.leave_team_view, name="leave_team"),
+    path("team/<int:pk>/transfer-captain/", views.transfer_captaincy_view, name="transfer_captaincy"),
+    path("team/<int:pk>/delete/", views.delete_team_view, name="delete_team"),
+    path("tournament/<int:pk>/enter-team/", views.enter_existing_team_view, name="enter_existing_team"),
 
     # Standings
     path("standings/", views.standings_view, name="standings"),
@@ -87,6 +96,8 @@ urlpatterns = [
 
     # Settings
     path("settings/", views.settings_view, name="settings"),
+    path("settings/compute-end-date/<int:pk>/", views.compute_end_date_view, name="compute_end_date"),
+    path("testing/", views.test_maker_view, name="test_maker"),
     path("settings/users/<int:user_pk>/organizer/", views.set_user_organizer, name="set_user_organizer"),
     path("settings/users/<int:user_pk>/delete/", views.delete_user_account, name="delete_user_account"),
 

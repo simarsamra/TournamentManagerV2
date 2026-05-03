@@ -19,7 +19,7 @@
 {% endif %}
 
 <h1 class="page-title">{{ tournament.name }} <span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span></h1>
-<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Format: {{ tournament.get_format_display }} | Players/{{ tournament.participant_label }}: {{ tournament.players_per_team }} | Expected {{ tournament.participant_label_plural }}: {{ tournament.expected_teams_count|default:"-" }}{% if tournament.matches_per_court_per_day %} | Matches/Court/Day: {{ tournament.matches_per_court_per_day }}{% endif %} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
+<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Registration: {{ tournament.get_registration_mode_display }} | Format: {{ tournament.get_format_display }} | Players/{{ tournament.participant_label }}: {{ tournament.players_per_team }} | Expected {{ tournament.participant_label_plural }}: {{ tournament.expected_teams_count|default:"-" }}{% if tournament.matches_per_court_per_day %} | Matches/Court/Day: {{ tournament.matches_per_court_per_day }}{% endif %} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
 
 <div class="grid grid-3">
     <!-- Courts -->
@@ -70,18 +70,42 @@
 
     <!-- Availability -->
     <div class="card">
-        <div class="card-header">Court Availability</div>
+        <div class="card-header">
+            Court Availability
+            {% if required_matches %}
+            <span class="text-muted" style="font-size:0.8rem;font-weight:normal;margin-left:0.75rem;">
+                {{ available_slots }} schedulable slot{{ available_slots|pluralize }} &nbsp;/&nbsp; ~{{ required_matches }} match{{ required_matches|pluralize }} needed
+                {% if available_slots < required_matches %}
+                <span style="color:#dc3545;font-weight:600;">&#9888; Not enough slots</span>
+                {% endif %}
+            </span>
+            {% endif %}
+        </div>
         <div class="card-body">
             {% for ca in court_availabilities %}
-            <div class="mb-1" style="font-size:0.85rem;">
-                <strong>{{ ca.court.name }}</strong> — {{ ca.get_weekday_display }} {{ ca.start_time|time:"H:i" }} - {{ ca.end_time|time:"H:i" }}{% if ca.start_date or ca.end_date %} ({{ ca.start_date|default:"Any" }} to {{ ca.end_date|default:"Open" }}){% endif %}
+            <div class="mb-1 d-flex justify-between align-center" style="font-size:0.85rem;gap:0.5rem;">
+                <div>
+                    <strong>{{ ca.court.name }}</strong> — {{ ca.get_weekday_display }} {{ ca.match_time_summary }}
+                    • {{ ca.matches_per_court_per_day }} match{{ ca.matches_per_court_per_day|pluralize }} per day
+                    {% if ca.start_date or ca.end_date %}
+                    <span class="text-muted">({{ ca.start_date|default:"Any" }} to
+                        {% if ca.end_date %}<span style="color:#dc3545;">{{ ca.end_date }}</span>{% else %}<span title="Open-ended — uses tournament end date or +365 days as fallback">Open</span>{% endif %})</span>
+                    {% else %}
+                    <span class="text-muted">(Open-ended)</span>
+                    {% endif %}
+                    {% if not ca.is_active %}<span class="badge" style="background:#6c757d;color:#fff;font-size:0.7rem;">Inactive</span>{% endif %}
+                </div>
+                <form method="post" action="{% url 'delete_court_availability' pk=tournament.pk availability_pk=ca.pk %}" style="margin:0;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.1rem 0.45rem;font-size:0.75rem;" title="Delete this availability">✕</button>
+                </form>
             </div>
             {% empty %}
             <p class="text-muted">No recurring availability added yet.</p>
             {% endfor %}
             <hr style="margin:1rem 0;">
             <p class="text-muted" style="font-size:0.85rem;">Select multiple courts and weekdays once, then apply the same hours in a single step. Existing duplicates are skipped automatically.</p>
-            <form method="post" action="{% url 'add_court_availability' pk=tournament.pk %}">
+            <form id="court-availability-form" method="post" action="{% url 'add_court_availability' pk=tournament.pk %}" data-default-match-duration="{{ tournament.default_match_duration|default:'35' }}">
                 {% csrf_token %}
                 <div class="form-group">
                     <div class="d-flex justify-between align-center" style="gap:0.5rem;flex-wrap:wrap;">
@@ -110,13 +134,28 @@
                         {{ court_availability_form.weekdays }}
                     </div>
                 </div>
-                <div class="grid grid-2">
-                    <div class="form-group"><label>Start</label>{{ court_availability_form.start_time }}</div>
-                    <div class="form-group"><label>End</label>{{ court_availability_form.end_time }}</div>
+                <div class="form-group"><label>Matches per Court per Day</label>{{ court_availability_form.matches_per_court_per_day }}<small class="text-muted">Choose how many match slots each selected court should hold on every chosen weekday.</small></div>
+                <div class="form-group" id="explicit-match-slots-section" style="display:none;">
+                    <label>Match slots</label>
+                    <div id="match-slots-container" style="display:grid;gap:0.75rem;"></div>
+                    <small class="text-muted">Provide exact start and end times for each match slot. If left empty, the system infers evenly spaced matches from the first start time and duration.</small>
+                </div>
+                <div style="display:none;">
+                    {{ court_availability_form.start_time }}
+                    {{ court_availability_form.additional_start_times }}
+                    {{ court_availability_form.end_time }}
                 </div>
                 <div class="grid grid-2">
-                    <div class="form-group"><label>Start Date</label>{{ court_availability_form.start_date }}</div>
-                    <div class="form-group"><label>End Date</label>{{ court_availability_form.end_date }}</div>
+                    <div class="form-group"><label>Start Date</label>{{ court_availability_form.start_date }}<small class="text-muted">Leave blank to start from the tournament start date.</small></div>
+                    <div class="form-group">
+                        <label>End Date</label>
+                        <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
+                            {{ court_availability_form.end_date }}
+                            <button type="button" id="estimate-end-date-button" class="btn btn-outline btn-sm" data-estimate-url="{% url 'estimate_court_availability_end_date' pk=tournament.pk %}">Estimate End Date</button>
+                        </div>
+                        <small class="text-muted">Leave blank for open-ended recurring availability (recommended).</small>
+                        <div id="availability-estimate-result" style="margin-top:0.5rem;font-size:0.9rem;"></div>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="d-flex align-center" style="gap:0.5rem;">
@@ -159,42 +198,38 @@
             {% endif %}
         </div>
         <div class="card-body">
-            {% for t in teams %}
+            {% for p in team_participations %}
             <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
                 <div class="d-flex justify-between align-center">
-                    <strong>
-                        {% if tournament.players_per_team == 1 %}
-                            {# For individual tournaments, show player name if available, else team name #}
-                            {% with player=t.players.first %}
-                                {% if player %}{{ player.name }}{% else %}{{ t.name }}{% endif %}
-                            {% endwith %}
-                        {% else %}
-                            {{ t.name }}
-                        {% endif %}
-                    </strong>
-                    <div class="d-flex" style="gap:0.35rem;align-items:center;">
-                        <span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span>
+                    <strong>{{ p.team.name }}</strong>
+                    <div class="d-flex align-center" style="gap:0.5rem;">
+                        <span class="badge badge-{{ p.status }}">{{ p.get_status_display }}</span>
                         {% if tournament.status != 'active' and tournament.status != 'completed' %}
-                        <form method="post" action="{% url 'organizer_remove_team' pk=t.pk %}" style="display:inline;" onsubmit="return confirm('Permanently remove {{ t.name }} and their account from this tournament? This cannot be undone.')">
+                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.team.name }} from this tournament?');">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.45rem;font-size:0.75rem;">✕ Remove</button>
+                            <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.5rem;font-size:0.75rem;">Remove</button>
                         </form>
                         {% endif %}
                     </div>
                 </div>
-                {% if tournament.players_per_team > 1 and t.department %}
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
-                    Department: {{ t.department }}
+                    Sport: {{ p.team.get_sport_type_display }}
+                </div>
+                {% if p.team.department %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Department: {{ p.team.department }}
                 </div>
                 {% endif %}
-                {% if tournament.players_per_team > 1 and t.players.all %}
+                {% if tournament.players_per_team > 1 and p.team.players.all %}
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
-                    Players: {% for p in t.players.all %}{{ p.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    Players: {% for player in p.team.players.all %}{{ player.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
                 </div>
                 {% endif %}
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
-                    Preferred courts:
-                    {% for c in t.preferred_courts.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="text-danger">Not set</span>{% endfor %}
+                    Members: {{ p.member_count }}
+                </div>
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Preferred courts: {% if p.preferred_court_names %}{{ p.preferred_court_names|join:", " }}{% else %}<span class="text-danger">Not set</span>{% endif %}
                 </div>
             </div>
             {% empty %}

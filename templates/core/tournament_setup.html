@@ -17,6 +17,13 @@
                     {{ form.sport_type }}
                 </div>
                 <div class="form-group">
+                    <label for="id_registration_mode">Registration Type</label>
+                    {{ form.registration_mode }}
+                    <small class="text-muted">Choose team-based registration or individual player registration.</small>
+                </div>
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
                     <label for="id_format">Format</label>
                     {{ form.format }}
                     <small class="text-muted">This determines how matches are generated and how standings work.</small>
@@ -26,7 +33,7 @@
                 <div class="form-group">
                     <label for="id_players_per_team">Players per Team</label>
                     {{ form.players_per_team }}
-                    <small class="text-muted">Set to 1 for individual tournaments (e.g., singles). Each "team" is treated as one participant.</small>
+                    <small class="text-muted">For individual registration this will be forced to 1. Set to 1 for singles tournaments.</small>
                 </div>
                 <div class="form-group">
                     <label for="id_expected_teams_count">Expected Number of Participants</label>

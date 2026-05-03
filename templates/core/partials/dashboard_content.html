@@ -69,7 +69,11 @@
                                 <input type="hidden" name="next" value="{{ request.get_full_path }}">
                                 <button type="submit" class="btn btn-outline btn-sm">Open</button>
                             </form>
+                            {% if t.status == 'completed' %}
+                            <span class="btn btn-primary btn-sm" style="opacity:0.45;cursor:not-allowed;pointer-events:none;" title="Completed tournaments cannot be configured">Configure</span>
+                            {% else %}
                             <a href="{% url 'tournament_config' pk=t.pk %}" class="btn btn-primary btn-sm">Configure</a>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -85,7 +89,7 @@
     <div class="stat-card">
         <div style="font-size:1.5rem;margin-bottom:0.25rem;">👥</div>
         <div class="stat-value">{{ total_teams|default:"0" }}</div>
-        <div class="stat-label">Teams</div>
+        <div class="stat-label">{{ roster_label|default:"Teams" }}</div>
     </div>
     <div class="stat-card">
         <div style="font-size:1.5rem;margin-bottom:0.25rem;">📋</div>
@@ -142,7 +146,7 @@
 
             {# Team name + tournament #}
             <div style="min-width:160px;padding-right:1.5rem;margin-right:1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
-                <div style="font-size:1.15rem;font-weight:700;color:var(--text);line-height:1.2;">{{ team.name }}</div>
+                <div style="font-size:1.15rem;font-weight:700;color:var(--text);line-height:1.2;">{{ dashboard_display_name|default:team.name }}</div>
                 <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem;">{{ tournament.name }}</div>
                 <div style="font-size:0.75rem;color:var(--text-muted);">{{ tournament.get_format_display }}</div>
             </div>
@@ -223,7 +227,7 @@
             <div class="winner-podium-section" style="margin-bottom:2rem;">
                 <div style="font-size:3rem;margin-bottom:0.5rem;animation:bounce 1s ease-in-out infinite;">🥇</div>
                 <div style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg, #FFD700, #FFA500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:0.25rem;">
-                    {{ tournament_champion.name|default:tournament.champion.name }}
+                    {{ tournament_champion_label|default:tournament_champion.name|default:tournament.champion.name }}
                 </div>
                 {% if tournament_champion == team or tournament.champion == team %}
                 <div style="font-size:1.1rem;font-weight:700;color:var(--success);">🎉 CHAMPION 🎉</div>
@@ -239,7 +243,7 @@
                 {% if tournament_runner_up_1 %}
                 <div class="runner-up-podium" style="text-align:center;">
                     <div style="font-size:2.5rem;margin-bottom:0.3rem;animation:bounce 1.2s ease-in-out infinite;animation-delay:0.1s;">🥈</div>
-                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_1.name }}</div>
+                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_1_label|default:tournament_runner_up_1.name }}</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);">2nd Place</div>
                 </div>
                 {% endif %}
@@ -248,7 +252,7 @@
                 {% if tournament_runner_up_2 %}
                 <div class="runner-up-podium" style="text-align:center;">
                     <div style="font-size:2.5rem;margin-bottom:0.3rem;animation:bounce 1.4s ease-in-out infinite;animation-delay:0.2s;">🥉</div>
-                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_2.name }}</div>
+                    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.1rem;">{{ tournament_runner_up_2_label|default:tournament_runner_up_2.name }}</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);">3rd Place</div>
                 </div>
                 {% endif %}
@@ -273,7 +277,7 @@
     <div class="card-body">
         {% if next_match %}
         <div style="margin-bottom:0.75rem;">
-            <div style="font-size:1rem;font-weight:600;">vs {{ next_opponent.name|default:"TBD" }}</div>
+            <div style="font-size:1rem;font-weight:600;">vs {{ next_opponent_label|default:next_opponent.name|default:"TBD" }}</div>
             <div style="font-size:0.85rem;color:var(--text-muted);">
                 {{ next_match.scheduled_time|date:"l, M d \a\t H:i"|default:"Time TBD" }}{% if next_match.court %} &middot; {{ next_match.court.name }}{% endif %}
             </div>
@@ -386,7 +390,7 @@
             {% for m in upcoming_matches %}
             <tr>
                 <td>{{ m.match_number }}</td>
-                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.team1 == team %}{{ m.opponent_display|default:m.team2.name|default:"TBD" }}{% else %}{{ m.opponent_display|default:m.team1.name|default:"TBD" }}{% endif %}</td>
                 <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
                 <td>{{ m.court.name|default:"-" }}</td>
                 <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
@@ -403,7 +407,7 @@
                 {% for m in remaining_upcoming %}
                 <tr>
                     <td>{{ m.match_number }}</td>
-                    <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                    <td>{% if m.team1 == team %}{{ m.opponent_display|default:m.team2.name|default:"TBD" }}{% else %}{{ m.opponent_display|default:m.team1.name|default:"TBD" }}{% endif %}</td>
                     <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
                     <td>{{ m.court.name|default:"-" }}</td>
                     <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
@@ -444,7 +448,7 @@
             {% for row, is_me in standings_nearby %}
             <tr {% if is_me %}class="row-me"{% endif %}>
                 <td>{{ row.rank }}</td>
-                <td>{{ row.team.name }}{% if is_me %} <span style="font-size:0.75rem;color:var(--primary);">(you)</span>{% endif %}</td>
+                <td>{{ row.display_label|default:row.team.name }}{% if is_me %} <span style="font-size:0.75rem;color:var(--primary);">(you)</span>{% endif %}</td>
                 <td>{{ row.played }}</td>
                 <td style="color:var(--success);">{{ row.wins }}</td>
                 <td style="color:var(--danger);">{{ row.losses }}</td>
@@ -466,7 +470,7 @@
             {% for m in recent_matches %}
             <tr>
                 <td>{{ m.match_number }}</td>
-                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.team1 == team %}{{ m.opponent_display|default:m.team2.name|default:"TBD" }}{% else %}{{ m.opponent_display|default:m.team1.name|default:"TBD" }}{% endif %}</td>
                 <td>{% if m.team1 == team %}{{ m.score_team1|default:"-" }}&ndash;{{ m.score_team2|default:"-" }}{% else %}{{ m.score_team2|default:"-" }}&ndash;{{ m.score_team1|default:"-" }}{% endif %}</td>
                 <td>{% if m.winner == team %}<strong style="color:var(--success);">Won</strong>{% elif m.winner %}<strong style="color:var(--danger);">Lost</strong>{% else %}&ndash;{% endif %}</td>
                 <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
@@ -519,7 +523,7 @@
             {% for m in recent_matches %}
             <tr>
                 <td>{{ m.match_number }}</td>
-                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.team1 == team %}{{ m.opponent_display|default:m.team2.name|default:"TBD" }}{% else %}{{ m.opponent_display|default:m.team1.name|default:"TBD" }}{% endif %}</td>
                 <td>{% if m.team1 == team %}{{ m.score_team1|default:"-" }}&ndash;{{ m.score_team2|default:"-" }}{% else %}{{ m.score_team2|default:"-" }}&ndash;{{ m.score_team1|default:"-" }}{% endif %}</td>
                 <td>{% if m.winner == team %}<strong style="color:var(--success);">Won</strong>{% elif m.winner %}<strong style="color:var(--danger);">Lost</strong>{% else %}&ndash;{% endif %}</td>
                 <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
@@ -571,12 +575,12 @@
 {# --- Team card --- #}
 <div class="card">
     <div class="card-header">
-        Your Team
-        {% if is_captain %}<span style="font-size:0.8rem;font-weight:400;margin-left:0.5rem;color:var(--text-muted);">👑 Captain</span>{% endif %}
+        {% if tournament.registration_mode == "individual" %}Your registration{% else %}Your Team{% endif %}
+        {% if tournament.registration_mode != "individual" and is_captain %}<span style="font-size:0.8rem;font-weight:400;margin-left:0.5rem;color:var(--text-muted);">👑 Captain</span>{% endif %}
     </div>
     <div class="card-body">
-        <div style="font-size:1.25rem;font-weight:700;margin-bottom:0.2rem;">{{ team.name }}</div>
-        {% if team.department %}
+        <div style="font-size:1.25rem;font-weight:700;margin-bottom:0.2rem;">{{ dashboard_display_name|default:team.name }}</div>
+        {% if tournament.registration_mode != "individual" and team.department %}
         <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.75rem;">{{ team.department }}</div>
         {% endif %}
 

@@ -19,7 +19,19 @@
         <div class="bracket-container" style="display:flex; align-items:flex-start;">
             {% for round_num, round_matches in bracket.items %}
             <div class="bracket-round">
-                <div class="bracket-round-title">Round {{ round_num }}</div>
+                <div class="bracket-round-title">
+                    {% with match_count=round_matches|length %}
+                        {% if match_count == 1 %}
+                            Final
+                        {% elif match_count == 2 %}
+                            Semi-finals
+                        {% elif match_count == 4 %}
+                            Quarter-finals
+                        {% else %}
+                            Round {{ round_num }}
+                        {% endif %}
+                    {% endwith %}
+                </div>
                 {% for m in round_matches %}
                     <div class="bracket-match-wrap">
                     <div class="bracket-match">
@@ -135,7 +147,19 @@
         <div class="bracket-container" style="display:flex; align-items:flex-start;">
             {% for round_num, round_matches in bracket.items %}
             <div class="bracket-round">
-                <div class="bracket-round-title">Round {{ round_num }}</div>
+                <div class="bracket-round-title">
+                    {% with match_count=round_matches|length %}
+                        {% if match_count == 1 %}
+                            Final
+                        {% elif match_count == 2 %}
+                            Semi-finals
+                        {% elif match_count == 4 %}
+                            Quarter-finals
+                        {% else %}
+                            Round {{ round_num }}
+                        {% endif %}
+                    {% endwith %}
+                </div>
                 {% for m in round_matches %}
                 <div class="bracket-match-wrap">
                 <div class="bracket-match">

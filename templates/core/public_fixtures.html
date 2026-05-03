@@ -12,10 +12,22 @@
     <div class="d-flex justify-between align-center mb-2">
         <h1>{% if tournament %}{{ tournament.name }}{% endif %} — Fixtures</h1>
         <div>
-            <a href="{% url 'public_standings' %}" class="btn btn-outline">Standings</a>
+            <a href="{% url 'public_standings' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}" class="btn btn-outline">Standings</a>
             <a href="{% url 'login' %}" class="btn btn-primary">Login</a>
         </div>
     </div>
+
+    {% if public_tournaments %}
+    <form method="get" class="card mb-2" style="padding:0.75rem;display:flex;gap:0.75rem;align-items:center;">
+        <label for="public-tournament-switch" class="text-muted" style="font-size:0.9rem;">Tournament</label>
+        <select id="public-tournament-switch" name="tournament" class="form-select" style="max-width:360px;" onchange="this.form.submit()">
+            {% for t in public_tournaments %}
+            <option value="{{ t.pk }}" {% if selected_tournament and selected_tournament.pk == t.pk %}selected{% endif %}>{{ t.name }} • {{ t.get_status_display }}</option>
+            {% endfor %}
+        </select>
+        <a href="{% url 'home' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}" class="btn btn-outline btn-sm">Home</a>
+    </form>
+    {% endif %}
 
     <div class="card">
         <div class="table-container">

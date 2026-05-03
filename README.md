@@ -1,132 +1,147 @@
-# 🏓 Tournament Manager
+# Tournament Manager
 
-A comprehensive local-network web application for managing table tennis tournaments. Runs on a single machine and is accessible to all users on the same LAN via browser.
+Tournament Manager is a Django web app for running sports tournaments (table tennis by default) on a local network. Organizers can configure tournaments, schedules, and rules, while players can register, join teams, submit scores, and manage match workflows.
 
-## Features
+## Highlights
 
-- **Multiple formats**: Round Robin, Knockout, Double Elimination, Hybrid (Groups + Knockout)
-- **Decentralized score validation**: Teams submit and confirm scores mutually
-- **Rescheduling**: Propose and approve new match times with conflict detection
-- **Withdrawal handling**: Configurable forfeit/void policies with automatic bracket updates
-- **Analytics dashboard**: Match stats, court utilization, team performance, schedule density
-- **Backup & restore**: Manual and automatic JSON backups with validation
-- **Audit logging**: Every action logged with user, timestamp, and details
-- **Desktop-first UI**: Wide data tables, sidebar navigation, inline actions
-- **Public views**: Standings and fixtures visible without login (for viewers/spectators)
+- Multiple formats: round robin, knockout, double elimination, and hybrid.
+- Registration modes: team-based and individual-based tournaments.
+- Team lifecycle: create standalone teams, enter teams into open tournaments, and manage memberships.
+- Score workflow: submit, confirm, dispute, and audit all changes.
+- Rescheduling and open slots management.
+- Withdrawal handling with policy-based behavior.
+- Organizer tools: analytics, backups, audit log, and test maker.
+- Public pages: standings and fixtures without login.
+
+## Current Behavior Rules
+
+### Team creation without a selected tournament
+
+- Users can create standalone teams even when no tournament is currently selected.
+- A quick create-team action is visible from team navigation and the teams page empty state.
+
+### Team-size enforcement for tournament entry
+
+- For team-mode tournaments, a team can only be entered when its member count is exactly equal to the tournament players-per-team value.
+- Example: if a tournament requires 2 players per team, a team with 3 members cannot register.
+
+### Withdrawal behavior before and after activation
+
+- Before tournament activation (setup, registration_open, ready, scheduled):
+	- Team withdrawal is treated as deregistration.
+	- Draft matches involving that team are cancelled.
+	- No forfeits are applied.
+- After activation:
+	- Withdrawal uses the configured withdrawal policy (forfeit or void).
+- Completed tournaments do not allow withdrawals.
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Create and activate a virtual environment
 
-```bash
-pip install django
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
-### 2. Initialize database
+### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Run migrations
 
 ```bash
 python manage.py migrate
 ```
 
-### 3. Create organizer account
+### 4. Create an organizer account
 
 ```bash
 python manage.py createsuperuser
 ```
 
-### 4. Run the server (LAN accessible)
+### 5. Start the server
 
 ```bash
 python manage.py runserver 0.0.0.0:8000
 ```
 
-### 5. Access the application
+### 6. Open the app
 
-- **Local**: http://localhost:8000
-- **LAN**: http://<your-local-ip>:8000
-- Find your IP: `hostname -I` (Linux) or `ipconfig` (Windows)
+- Local: http://localhost:8000
+- LAN: http://<your-local-ip>:8000
 
-## Default Admin Account
+## Organizer Flow
 
-If using the pre-created admin:
-- **Username**: `admin`
-- **Password**: `admin123`
+1. Create tournament and choose format/registration mode.
+2. Add courts and availability or time slots.
+3. Open registration.
+4. Generate schedule draft.
+5. Start tournament (publish fixtures).
+6. Monitor dashboard, resolve disputes, and manage withdrawals.
 
-## How to Use
+## Player Flow
 
-### As Organizer (admin/staff user)
-
-1. **Login** → Create Tournament (select format, configure scoring)
-2. **Configure** → Add courts, time slots, and teams (bulk or individual)
-3. **Start Tournament** → Fixtures are auto-generated with schedule
-4. **Monitor** → Dashboard shows stats; resolve disputed scores
-5. **Backup** → Create backups from the Backup page
-
-### As Team
-
-1. **Register** or login with credentials provided by organizer
-2. **Dashboard** → See upcoming matches and pending actions
-3. **Submit scores** → After a match, submit the score on the match page
-4. **Confirm scores** → When opponent submits, confirm or dispute
-5. **Reschedule** → Request new time for upcoming matches
-6. **Preferences** → Set preferred courts and availability
-
-### As Viewer (no login)
-
-- Visit `/public/standings/` for live standings
-- Visit `/public/fixtures/` for match schedule
+1. Create account and log in.
+2. Join an open tournament (or create/enter a team).
+3. Manage team members (captain/organizer controls).
+4. Submit and confirm scores.
+5. Request reschedules when needed.
 
 ## Tournament Formats
 
 | Format | Description |
-|--------|-------------|
-| Round Robin | All teams play each other; standings by points |
-| Knockout | Single elimination bracket; winners advance |
-| Double Elimination | Winners and losers brackets |
-| Hybrid | Group stage (round robin) → Knockout playoffs |
+|---|---|
+| Round Robin | All teams play each other and standings are points-based. |
+| Knockout | Single elimination bracket. |
+| Double Elimination | Winners and losers brackets. |
+| Hybrid | Group phase followed by knockout playoffs. |
 
-## Architecture
+## Tech Stack
 
-- **Backend**: Django 6.x with SQLite
-- **Frontend**: Server-rendered Django templates with custom CSS
-- **Auth**: Django's built-in authentication with session management
-- **Data**: SQLite database at `db.sqlite3`
-- **Backups**: JSON files in `backups/` directory
+- Backend: Django + SQLite
+- Frontend: Django templates + static CSS/JS
+- Authentication: Django auth and sessions
+- Data storage: db.sqlite3
+- Backups: JSON files in backups
 
-## Project Structure
+## Project Layout
 
+```text
+core/
+	models.py
+	views.py
+	forms.py
+	urls.py
+	scheduling.py
+	standings.py
+	withdrawals.py
+	backup.py
+	audit.py
+templates/core/
+static/
+tournament_manager/
+manage.py
+requirements.txt
 ```
-├── core/                   # Main application
-│   ├── models.py          # Database models
-│   ├── views.py           # All view functions
-│   ├── forms.py           # Django forms
-│   ├── urls.py            # URL routing
-│   ├── scheduling.py      # Fixture generation engine
-│   ├── standings.py       # Standings & bracket logic
-│   ├── withdrawals.py     # Withdrawal handling
-│   ├── backup.py          # Backup/restore system
-│   └── audit.py           # Audit logging
-├── templates/core/         # HTML templates
-├── static/                 # CSS and JS
-├── tournament_manager/     # Django project settings
-├── manage.py
-└── db.sqlite3
-```
 
-## Key URLs
+## Key Routes
 
-| URL | Description |
-|-----|-------------|
-| `/dashboard/` | Team/organizer dashboard |
-| `/fixtures/` | All matches with filters |
-| `/match/<id>/` | Match detail, score submission |
-| `/teams/` | Team list |
-| `/standings/` | League table or bracket |
-| `/analytics/` | Stats and charts |
-| `/rescheduling/` | Reschedule requests |
-| `/backup/` | Backup management (admin) |
-| `/audit-log/` | Action history (admin) |
-| `/settings/` | Tournament settings (admin) |
-| `/public/standings/` | Public standings (no login) |
-| `/public/fixtures/` | Public fixtures (no login) |
-Manages different kinds of tournaments
+| Route | Purpose |
+|---|---|
+| /dashboard/ | Organizer/team dashboard |
+| /join/ | Open tournaments listing |
+| /teams/ | Teams or participants for selected tournament |
+| /fixtures/ | Tournament fixtures |
+| /standings/ | Standings or bracket |
+| /rescheduling/ | Reschedule requests and actions |
+| /analytics/ | Tournament analytics |
+| /settings/ | Organizer settings |
+| /backup/ | Backup and restore |
+| /audit-log/ | Action history |
+| /public/standings/ | Public standings |
+| /public/fixtures/ | Public fixtures |

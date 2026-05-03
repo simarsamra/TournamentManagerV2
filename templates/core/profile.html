@@ -1,0 +1,66 @@
+{% extends "core/base.html" %}
+{% block title %}My Profile{% endblock %}
+{% block page_header %}My Profile{% endblock %}
+{% block content %}
+<h1 class="page-title">My Profile</h1>
+
+<div class="grid grid-2" style="align-items:start;">
+    <div class="card">
+        <div class="card-header">Account Information</div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_profile">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="{{ profile_form.first_name.id_for_label }}">First Name</label>
+                        {{ profile_form.first_name }}
+                    </div>
+                    <div class="form-group">
+                        <label for="{{ profile_form.last_name.id_for_label }}">Last Name</label>
+                        {{ profile_form.last_name }}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="{{ profile_form.email.id_for_label }}">Email Address (optional)</label>
+                    {{ profile_form.email }}
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" class="form-control" value="{{ request.user.username }}" disabled>
+                </div>
+                {% if profile_form.non_field_errors %}
+                <div class="alert alert-error">{{ profile_form.non_field_errors.0 }}</div>
+                {% endif %}
+                <button type="submit" class="btn btn-primary">Save Profile</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Change Password</div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="change_password">
+                <div class="form-group">
+                    <label for="{{ password_form.current_password.id_for_label }}">Current Password</label>
+                    {{ password_form.current_password }}
+                </div>
+                <div class="form-group">
+                    <label for="{{ password_form.new_password.id_for_label }}">New Password</label>
+                    {{ password_form.new_password }}
+                </div>
+                <div class="form-group">
+                    <label for="{{ password_form.confirm_password.id_for_label }}">Confirm New Password</label>
+                    {{ password_form.confirm_password }}
+                </div>
+                {% if password_form.non_field_errors %}
+                <div class="alert alert-error">{{ password_form.non_field_errors.0 }}</div>
+                {% endif %}
+                <button type="submit" class="btn btn-warning">Update Password</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "core/base.html" %}
+{% block title %}Create Team{% endblock %}
+{% block page_header %}Create Team{% endblock %}
+{% block content %}
+<div style="max-width:560px;margin:0 auto;">
+    <h1 class="page-title">Create Team</h1>
+    <p class="text-muted mb-2">Create a team first, then enter it into any tournament while registration is open.</p>
+    <div class="card">
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="{{ form.team_name.id_for_label }}">Team Name</label>
+                    {{ form.team_name }}
+                    {% if form.team_name.errors %}<small class="text-danger">{{ form.team_name.errors.0 }}</small>{% endif %}
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="{{ form.sport_type.id_for_label }}">Game / Sport</label>
+                        {{ form.sport_type }}
+                        {% if form.sport_type.errors %}<small class="text-danger">{{ form.sport_type.errors.0 }}</small>{% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="{{ form.department.id_for_label }}">Department</label>
+                        {{ form.department }}
+                        {% if form.department.errors %}<small class="text-danger">{{ form.department.errors.0 }}</small>{% endif %}
+                    </div>
+                </div>
+                {% if form.non_field_errors %}
+                <div class="alert alert-error">{{ form.non_field_errors.0 }}</div>
+                {% endif %}
+                <div style="display:flex;gap:0.75rem;margin-top:1rem;">
+                    <button type="submit" class="btn btn-primary">Create Team</button>
+                    <a href="{% url 'teams' %}" class="btn btn-outline">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

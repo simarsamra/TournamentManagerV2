@@ -6,76 +6,124 @@
     <div>
         <h1 class="page-title" style="margin:0;">{{ tournament.name }}</h1>
         <p class="text-muted" style="margin:0.25rem 0 0;">{{ tournament.get_sport_type_display }} &mdash; {{ tournament.get_format_display }}</p>
+        <p class="text-muted" style="margin:0.25rem 0 0;">
+            Registration: {% if registration_mode == "individual" %}<strong>Individual Players</strong>{% else %}<strong>Teams</strong>{% endif %}
+        </p>
         {% if tournament.expected_teams_count %}
         <p class="text-muted" style="margin:0.15rem 0 0;font-size:0.9rem;">
-            Registered: {{ team_list|length }} / {{ tournament.expected_teams_count }} {{ tournament.participant_label_plural }}
+            Registered: {{ participant_list|length|default:team_list|length }} / {{ tournament.expected_teams_count }} {{ tournament.participant_label_plural }}
             {% if registration_full %}<span class="badge badge-withdrawn" style="margin-left:0.4rem;">Full</span>{% endif %}
         </p>
         {% endif %}
     </div>
     <div style="display:flex;gap:0.75rem;align-items:center;">
-        {% if not user_team and not registration_full %}
-        <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary">+ Create New {{ tournament.participant_label }}</a>
+        {% if registration_mode == "individual" %}
+            {% if not user_registration and not registration_full %}
+            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary">+ Register as Participant</a>
+            {% endif %}
+        {% else %}
+            {% if not user_team and not registration_full %}
+            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary">+ Create New {{ tournament.participant_label }}</a>
+            <form method="post" action="{% url 'enter_existing_team' pk=tournament.pk %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline">Enter Existing Team</button>
+            </form>
+            {% endif %}
         {% endif %}
         <a href="{% url 'join_tournament_list' %}" class="btn btn-outline btn-sm">← Back</a>
     </div>
 </div>
 
-{% if registration_full and not user_team %}
+{% if registration_full and not user_team and not user_registration %}
 <div class="alert alert-warning">
     Registration for this tournament is full ({{ tournament.expected_teams_count }} {{ tournament.participant_label_plural|lower }} reached). No more participants can be added.
 </div>
 {% endif %}
 
-{% if user_team %}
+{% if registration_mode == "individual" and user_registration %}
+<div class="alert alert-success">
+    You are registered as <strong>{{ user_registration.display_name }}</strong> for this tournament.
+</div>
+{% elif user_team %}
 <div class="alert alert-success">
     You are in <strong>{{ user_team.name }}</strong> for this tournament. 
     <a href="{% url 'team_detail' pk=user_team.pk %}">View your team →</a>
 </div>
 {% endif %}
 
-{% if team_list %}
-<p class="text-muted mb-1">Each team needs <strong>{{ players_per_team }}</strong> player{{ players_per_team|pluralize }}. Full teams are greyed out.</p>
-<div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">
-    {% for item in team_list %}
-    <div class="card {% if item.is_full %}opacity-muted{% endif %}" style="{% if item.is_full %}opacity:0.55;{% endif %}">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-            <strong>{{ item.team.name }}</strong>
-            {% if item.is_full %}
-            <span class="badge" style="background:var(--color-muted,#aaa);color:#fff;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Full</span>
-            {% elif item.is_user_member %}
-            <span class="badge badge-success" style="font-size:0.78rem;">Your Team</span>
-            {% else %}
-            <span class="badge badge-info" style="font-size:0.78rem;">Open</span>
-            {% endif %}
+{% if registration_mode == "individual" %}
+    {% if participant_list %}
+    <p class="text-muted mb-1">Registered participants for this tournament.</p>
+    <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">
+        {% for item in participant_list %}
+        <div class="card">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <strong>{{ item.display_name }}</strong>
+                {% if item.is_self %}
+                <span class="badge badge-success" style="font-size:0.78rem;">You</span>
+                {% else %}
+                <span class="badge badge-info" style="font-size:0.78rem;">Registered</span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <span class="text-muted" style="font-size:0.85rem;">Status: Active</span>
+            </div>
         </div>
-        <div class="card-body">
-            <p class="mb-1">
-                Members: <strong>{{ item.member_count }} / {{ item.players_per_team }}</strong>
-            </p>
-            {% if item.is_user_member %}
-                <a href="{% url 'team_detail' pk=item.team.pk %}" class="btn btn-outline btn-sm">View Team</a>
-            {% elif user_team %}
-                {# Already in another team in this tournament — disable join #}
-                <button class="btn btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">Join</button>
-            {% elif item.is_full %}
-                <button class="btn btn-sm" disabled style="opacity:0.5;cursor:not-allowed;pointer-events:none;">Full</button>
-            {% else %}
-                <form method="post" action="{% url 'join_team' tournament_pk=tournament.pk team_pk=item.team.pk %}">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-primary btn-sm">Join Team</button>
-                </form>
-            {% endif %}
-        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
-</div>
-{% else %}
-<div class="alert alert-warning">
-    No teams yet. 
-    {% if not user_team %}
-    <a href="{% url 'create_team' pk=tournament.pk %}">Be the first to create one!</a>
+    {% else %}
+    <div class="alert alert-warning">
+        No participants yet.
+        {% if not user_registration %}
+        <a href="{% url 'create_team' pk=tournament.pk %}">Be the first to register!</a>
+        {% endif %}
+    </div>
     {% endif %}
-</div>
+{% else %}
+    {% if team_list %}
+    <p class="text-muted mb-1">
+        Each team needs <strong>{{ players_per_team }}</strong> player{{ players_per_team|pluralize }}. Full teams are greyed out.
+    </p>
+    <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">
+        {% for item in team_list %}
+        <div class="card {% if item.is_full %}opacity-muted{% endif %}" style="{% if item.is_full %}opacity:0.55;{% endif %}">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <strong>{{ item.team.name }}</strong>
+                {% if item.is_full %}
+                <span class="badge" style="background:var(--color-muted,#aaa);color:#fff;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Full</span>
+                {% elif item.is_user_member %}
+                <span class="badge badge-success" style="font-size:0.78rem;">Your Team</span>
+                {% else %}
+                <span class="badge badge-info" style="font-size:0.78rem;">Open</span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <p class="mb-1">
+                    Members: <strong>{{ item.member_count }} / {{ item.players_per_team }}</strong>
+                </p>
+                {% if item.is_user_member %}
+                    <a href="{% url 'team_detail' pk=item.team.pk %}" class="btn btn-outline btn-sm">View Team</a>
+                {% elif user_team %}
+                    <button class="btn btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">Join</button>
+                {% elif item.is_full %}
+                    <button class="btn btn-sm" disabled style="opacity:0.5;cursor:not-allowed;pointer-events:none;">Full</button>
+                {% else %}
+                    <form method="post" action="{% url 'join_team' tournament_pk=tournament.pk team_pk=item.team.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-sm">Join Team</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        No teams yet.
+        {% if not user_team %}
+        <a href="{% url 'create_team' pk=tournament.pk %}">Be the first to create one!</a>
+        {% endif %}
+    </div>
+    {% endif %}
 {% endif %}
 {% endblock %}

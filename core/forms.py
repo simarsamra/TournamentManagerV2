@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from django import forms
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -8,8 +10,8 @@ class TournamentForm(forms.ModelForm):
     class Meta:
         model = Tournament
         fields = [
-            "name", "sport_type", "format", "players_per_team",
-            "start_date", "expected_teams_count",
+            "name", "sport_type", "registration_mode", "format", "players_per_team",
+            "start_date", "end_date", "expected_teams_count",
             "points_per_win", "points_per_loss",
             "points_per_draw", "num_groups", "teams_per_group_advance",
             "withdrawal_policy", "default_match_duration", "matches_per_court_per_day",
@@ -17,9 +19,11 @@ class TournamentForm(forms.ModelForm):
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-control"}),
             "sport_type": forms.Select(attrs={"class": "form-select"}),
+            "registration_mode": forms.Select(attrs={"class": "form-select"}),
             "format": forms.Select(attrs={"class": "form-select"}),
             "players_per_team": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
             "start_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "end_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "expected_teams_count": forms.NumberInput(attrs={"class": "form-control", "min": "2"}),
             "points_per_win": forms.NumberInput(attrs={"class": "form-control"}),
             "points_per_loss": forms.NumberInput(attrs={"class": "form-control"}),
@@ -30,6 +34,17 @@ class TournamentForm(forms.ModelForm):
             "default_match_duration": forms.NumberInput(attrs={"class": "form-control", "min": "5"}),
             "matches_per_court_per_day": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep backwards compatibility for callers/tests that do not post this field.
+        self.fields["registration_mode"].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("registration_mode") == "individual":
+            cleaned["players_per_team"] = 1
+        return cleaned
 
 
 class CourtForm(forms.ModelForm):
@@ -99,8 +114,23 @@ class CourtAvailabilityForm(forms.Form):
         error_messages={"required": "Select at least one weekday."},
         help_text="Choose every day that should reuse this time range.",
     )
-    start_time = forms.TimeField(widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}))
-    end_time = forms.TimeField(widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}))
+    matches_per_court_per_day = forms.IntegerField(
+        min_value=1,
+        initial=1,
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        help_text="How many matches should be scheduled on each selected court on each chosen weekday.",
+    )
+    start_time = forms.TimeField(widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}), help_text="Time for the first match on each selected day.")
+    additional_start_times = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "13:00, 15:30"}),
+        help_text="Optional list of additional match start times after the first match, comma-separated.",
+    )
+    end_time = forms.TimeField(
+        required=False,
+        widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}),
+        help_text="Optional: leave blank to infer the end time from the selected match count.",
+    )
     start_date = forms.DateField(
         required=False,
         widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
@@ -124,12 +154,43 @@ class CourtAvailabilityForm(forms.Form):
         cleaned = super().clean()
         start = cleaned.get("start_time")
         end = cleaned.get("end_time")
+        additional = cleaned.get("additional_start_times")
         start_date = cleaned.get("start_date")
         end_date = cleaned.get("end_date")
+
         if start and end and end <= start:
             raise forms.ValidationError("End time must be after start time.")
         if start_date and end_date and end_date < start_date:
             raise forms.ValidationError("End date cannot be before start date.")
+
+        parsed_times = []
+        if additional:
+            parts = [part.strip() for part in additional.split(",") if part.strip()]
+            seen = set()
+            for part in parts:
+                try:
+                    parsed = datetime.strptime(part, "%H:%M").time()
+                except ValueError:
+                    raise forms.ValidationError(
+                        "Additional start times must be valid times in HH:MM format, comma-separated."
+                    )
+                if start and parsed <= start:
+                    raise forms.ValidationError(
+                        "Additional start times must be after the first match start time."
+                    )
+                if parsed in seen:
+                    raise forms.ValidationError("Duplicate additional start times are not allowed.")
+                seen.add(parsed)
+                parsed_times.append(parsed)
+
+            parsed_times.sort()
+            cleaned["additional_start_times"] = ", ".join(t.strftime("%H:%M") for t in parsed_times)
+            cleaned["additional_start_times_list"] = parsed_times
+            cleaned["matches_per_court_per_day"] = 1 + len(parsed_times)
+
+        if additional and not start:
+            raise forms.ValidationError("First match start time is required when additional start times are provided.")
+
         return cleaned
 
 
@@ -162,6 +223,49 @@ class AccountRegistrationForm(forms.Form):
         return cleaned
 
 
+class ProfileUpdateForm(forms.Form):
+    first_name = forms.CharField(
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "First name"}),
+    )
+    last_name = forms.CharField(
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Last name"}),
+    )
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={"class": "form-control", "placeholder": "Email (optional)"}),
+    )
+
+
+class SelfPasswordChangeForm(forms.Form):
+    current_password = forms.CharField(
+        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Current password"}),
+    )
+    new_password = forms.CharField(
+        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "New password"}),
+    )
+    confirm_password = forms.CharField(
+        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Confirm new password"}),
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        current = cleaned.get("current_password") or ""
+        new_password = cleaned.get("new_password") or ""
+        confirm = cleaned.get("confirm_password") or ""
+
+        if new_password != confirm:
+            raise forms.ValidationError("New password and confirmation do not match.")
+        if len(new_password) < 6:
+            raise forms.ValidationError("New password must be at least 6 characters.")
+        if current and new_password and current == new_password:
+            raise forms.ValidationError("New password must be different from current password.")
+        return cleaned
+
+
 class CreateTeamForm(forms.Form):
     """Step 2: Create a new team inside an open tournament."""
     team_name = forms.CharField(
@@ -179,10 +283,16 @@ class CreateTeamForm(forms.Form):
         widget=forms.CheckboxSelectMultiple(),
         help_text="Select the courts your team prefers for scheduled matches.",
     )
+    participant_name = forms.CharField(
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Your name"}),
+    )
 
     def __init__(self, *args, tournament=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.tournament = tournament
+        self.is_individual_mode = bool(tournament and tournament.registration_mode == "individual")
         if tournament:
             courts = Court.objects.filter(tournament=tournament, is_available=True).order_by("name")
             self.fields["preferred_courts"].queryset = courts
@@ -190,12 +300,43 @@ class CreateTeamForm(forms.Form):
             if not courts.exists():
                 self.fields["preferred_courts"].help_text = "No courts are currently available for preference selection."
 
+        if self.is_individual_mode:
+            self.fields["team_name"].required = False
+            self.fields["department"].required = False
+            self.fields["participant_name"].required = True
+            self.fields["team_name"].widget = forms.HiddenInput()
+            self.fields["department"].widget = forms.HiddenInput()
+        else:
+            self.fields["participant_name"].widget = forms.HiddenInput()
+
     def clean(self):
         cleaned = super().clean()
+        if self.is_individual_mode:
+            if not (cleaned.get("participant_name") or "").strip():
+                raise forms.ValidationError("Please provide a player name.")
+            return cleaned
+
         courts = cleaned.get("preferred_courts")
         if self.tournament and self.tournament.courts.filter(is_available=True).exists() and not courts:
             raise forms.ValidationError("Please select at least one preferred court.")
         return cleaned
+
+
+class StandaloneTeamForm(forms.Form):
+    team_name = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Team Name"}),
+    )
+    department = forms.CharField(
+        max_length=120,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Department (optional)"}),
+    )
+    sport_type = forms.ChoiceField(
+        choices=Tournament.SPORT_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        initial="other",
+    )
 
 
 # Keep for backwards compat with bulk-add (organiser tool) — still used in _create_teams_from_data
@@ -348,3 +489,10 @@ class TeamMemberInviteForm(forms.Form):
         if username and User.objects.filter(username=username).exists():
             raise forms.ValidationError("Username already taken.")
         return cleaned
+
+
+class ExistingTeamMemberForm(forms.Form):
+    username = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Existing username"}),
+    )

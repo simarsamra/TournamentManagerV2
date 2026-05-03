@@ -21,30 +21,41 @@
             <div class="sidebar-section">Main</div>
             <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">📊 Dashboard</a>
             <a href="{% url 'fixtures' %}" class="{% if request.resolver_match.url_name == 'fixtures' %}active{% endif %}">📋 Fixtures</a>
-            <a href="{% url 'teams' %}" class="{% if request.resolver_match.url_name == 'teams' or request.resolver_match.url_name == 'team_detail' %}active{% endif %}">👥 Teams</a>
+            <a href="{% url 'teams' %}" class="{% if request.resolver_match.url_name == 'teams' or request.resolver_match.url_name == 'team_detail' or request.resolver_match.url_name == 'create_standalone_team' %}active{% endif %}">👥 Teams</a>
             <a href="{% url 'standings' %}" class="{% if request.resolver_match.url_name == 'standings' %}active{% endif %}">🏆 Standings</a>
             <a href="{% url 'analytics' %}" class="{% if request.resolver_match.url_name == 'analytics' %}active{% endif %}">📈 Analytics</a>
+            <a href="{% url 'profile' %}" class="{% if request.resolver_match.url_name == 'profile' %}active{% endif %}">🙍 My Profile</a>
             <div class="sidebar-section">Actions</div>
             <a href="{% url 'rescheduling' %}" class="{% if request.resolver_match.url_name == 'rescheduling' %}active{% endif %}">🔄 Rescheduling</a>
             <a href="{% url 'open_slots' %}" class="{% if request.resolver_match.url_name == 'open_slots' %}active{% endif %}">📅 Open Slots</a>
-            {% if team %}
-            <div class="sidebar-section">My Team</div>
-            <a href="{% url 'team_detail' pk=team.pk %}" class="{% if request.resolver_match.url_name == 'team_detail' %}active{% endif %}">🏅 {{ team.name }}</a>
-            {% if joinable_tournaments %}
-            <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}" style="margin-top:0.5rem;">➕ Join New Tournament
-                <span style="font-size:0.7rem;background:var(--primary);color:#fff;border-radius:10px;padding:1px 7px;margin-left:0.3rem;vertical-align:middle;">{{ joinable_tournaments|length }}</span>
-            </a>
-            {% endif %}
-            {% else %}
+            {% if not user.is_staff %}
             <div class="sidebar-section">Tournaments</div>
             <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}">🎯 Join a Tournament</a>
+            {% if open_registration_tournaments %}
+            <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}" style="margin-top:0.5rem;">➕ Open Registrations
+                <span style="font-size:0.7rem;background:var(--primary);color:#fff;border-radius:10px;padding:1px 7px;margin-left:0.3rem;vertical-align:middle;">{{ open_registration_tournaments|length }}</span>
+            </a>
+            {% endif %}
             {% endif %}
             {% if user.is_staff %}
             <div class="sidebar-section">Admin</div>
             <a href="{% url 'tournament_setup' %}" class="{% if request.resolver_match.url_name == 'tournament_setup' %}active{% endif %}">⚙️ New Tournament</a>
             <a href="{% url 'backup' %}" class="{% if request.resolver_match.url_name == 'backup' %}active{% endif %}">💾 Backup</a>
+            <a href="{% url 'test_maker' %}" class="{% if request.resolver_match.url_name == 'test_maker' %}active{% endif %}">🧪 Test Maker</a>
             <a href="{% url 'audit_log' %}" class="{% if request.resolver_match.url_name == 'audit_log' %}active{% endif %}">📝 Audit Log</a>
             <a href="{% url 'settings' %}" class="{% if request.resolver_match.url_name == 'settings' %}active{% endif %}">🔧 Settings</a>
+            {% endif %}
+
+            {% if my_teams_sidebar %}
+            <div class="sidebar-section" style="margin-top:1rem;">My Teams</div>
+            <a href="{% url 'teams' %}" class="{% if request.resolver_match.url_name == 'teams' or request.resolver_match.url_name == 'team_detail' or request.resolver_match.url_name == 'create_standalone_team' %}active{% endif %}">🛠️ Manage My Teams</a>
+            <a href="{% url 'create_standalone_team' %}" class="{% if request.resolver_match.url_name == 'create_standalone_team' %}active{% endif %}">➕ Create New Team</a>
+            {% for owned_team in my_teams_sidebar %}
+            <a href="{% url 'team_detail' pk=owned_team.pk %}" class="{% if request.resolver_match.url_name == 'team_detail' and team and team.pk == owned_team.pk %}active{% endif %}">🏅 {{ owned_team.name }}</a>
+            {% endfor %}
+            {% else %}
+            <div class="sidebar-section" style="margin-top:1rem;">My Teams</div>
+            <a href="{% url 'create_standalone_team' %}" class="{% if request.resolver_match.url_name == 'create_standalone_team' %}active{% endif %}">➕ Create New Team</a>
             {% endif %}
         </nav>
     </aside>
@@ -92,10 +103,11 @@
                 </a>
                 {% endif %}
                 {% if team %}
-                <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline btn-sm">&#9881;&#65039; {{ team.name }}</a>
+                <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline btn-sm">&#9881;&#65039; {% if ribbon_team_pk and team.pk == ribbon_team_pk and ribbon_team_label %}{{ ribbon_team_label }}{% else %}{{ team.name }}{% endif %}</a>
                 {% elif user.is_staff %}
                 <span class="text-muted">Organizer: <strong>{{ user.username }}</strong></span>
                 {% endif %}
+                <a href="{% url 'profile' %}" class="btn btn-outline btn-sm">My Profile</a>
                 <form method="post" action="{% url 'logout' %}" style="display:inline;">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline btn-sm">Logout</button>

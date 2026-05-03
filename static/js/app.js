@@ -46,6 +46,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) {
+            return parts.pop().split(';').shift();
+        }
+        return null;
+    }
+
     // Bulk checkbox shortcuts for availability forms
     document.querySelectorAll('[data-check-target]').forEach(function(button) {
         button.addEventListener('click', function() {
@@ -69,6 +78,185 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     });
+
+    const estimateEndDateButton = document.getElementById('estimate-end-date-button');
+    if (estimateEndDateButton) {
+        const form = document.getElementById('court-availability-form');
+        const resultContainer = document.getElementById('availability-estimate-result');
+        estimateEndDateButton.addEventListener('click', function() {
+            if (!form) {
+                return;
+            }
+
+            resultContainer.style.color = '#333';
+            resultContainer.textContent = 'Estimating end date...';
+            const formData = new FormData(form);
+            fetch(this.dataset.estimateUrl, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken') || '',
+                },
+                body: formData,
+            })
+                .then(function(response) {
+                    return response.json().then(function(data) {
+                        return {status: response.status, body: data};
+                    });
+                })
+                .then(function(result) {
+                    const data = result.body;
+                    if (data.status === 'ok') {
+                        resultContainer.style.color = '#155724';
+                        if (data.estimated_end_date) {
+                            const endDateInput = form.querySelector('[name="end_date"]');
+                            if (endDateInput) {
+                                endDateInput.value = data.estimated_end_date;
+                            }
+                        }
+                        resultContainer.textContent = data.message;
+                    } else {
+                        resultContainer.style.color = '#856404';
+                        resultContainer.textContent = data.message || 'Could not estimate an end date.';
+                    }
+                })
+                .catch(function() {
+                    resultContainer.style.color = '#856404';
+                    resultContainer.textContent = 'Could not calculate the end date. Please try again.';
+                });
+        });
+    }
+
+    function formatMinutes(minutes) {
+        var hours = Math.floor(minutes / 60);
+        var mins = minutes % 60;
+        return String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0');
+    }
+
+    function parseTimeValue(value) {
+        if (!value || typeof value !== 'string') {
+            return null;
+        }
+        var parts = value.split(':');
+        if (parts.length !== 2) {
+            return null;
+        }
+        var hours = parseInt(parts[0], 10);
+        var minutes = parseInt(parts[1], 10);
+        if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+            return null;
+        }
+        return hours * 60 + minutes;
+    }
+
+    function buildMatchSlotRows() {
+        var form = document.getElementById('court-availability-form');
+        if (!form) {
+            return;
+        }
+
+        var countInput = form.querySelector('[name="matches_per_court_per_day"]');
+        var firstStartHidden = form.querySelector('[name="start_time"]');
+        var defaultDuration = parseInt(form.dataset.defaultMatchDuration || '35', 10);
+        var container = document.getElementById('match-slots-container');
+        var section = document.getElementById('explicit-match-slots-section');
+        if (!countInput || !firstStartHidden || !container || !section) {
+            return;
+        }
+
+        var desiredCount = Math.max(1, parseInt(countInput.value, 10) || 1);
+        section.style.display = '';
+
+        var existingStarts = Array.from(container.querySelectorAll('input[name="match_start"]')).map(function(input) {
+            return input.value || '';
+        });
+        var existingEnds = Array.from(container.querySelectorAll('input[name="match_end"]')).map(function(input) {
+            return input.value || '';
+        });
+
+        container.innerHTML = '';
+        var previousEndMinutes = null;
+
+        for (var i = 1; i <= desiredCount; i += 1) {
+            var startValue = existingStarts[i - 1] || '';
+            var endValue = existingEnds[i - 1] || '';
+            if (i === 1 && !startValue) {
+                startValue = firstStartHidden.value || '';
+            }
+            if (startValue && !endValue) {
+                var startMinutes = parseTimeValue(startValue);
+                if (startMinutes !== null) {
+                    endValue = formatMinutes(startMinutes + defaultDuration);
+                }
+            }
+            if (i > 1 && !startValue && previousEndMinutes !== null) {
+                startValue = formatMinutes(previousEndMinutes);
+                if (!endValue) {
+                    endValue = formatMinutes(previousEndMinutes + defaultDuration);
+                }
+            }
+            if (endValue) {
+                var endMinutes = parseTimeValue(endValue);
+                if (endMinutes !== null) {
+                    previousEndMinutes = endMinutes;
+                }
+            }
+
+            var slotRow = document.createElement('div');
+            slotRow.className = 'grid grid-2';
+            slotRow.style.gap = '0.5rem';
+
+            var startGroup = document.createElement('div');
+            startGroup.className = 'form-group';
+            var startLabel = document.createElement('label');
+            startLabel.textContent = 'Match ' + i + ' start';
+            var startInput = document.createElement('input');
+            startInput.type = 'time';
+            startInput.name = 'match_start';
+            startInput.className = 'form-control';
+            startInput.value = startValue;
+            startInput.autocomplete = 'off';
+            startInput.addEventListener('input', function() {
+                var firstMatchInput = container.querySelector('input[name="match_start"]');
+                if (firstMatchInput) {
+                    firstStartHidden.value = firstMatchInput.value;
+                }
+            });
+            startGroup.appendChild(startLabel);
+            startGroup.appendChild(startInput);
+
+            var endGroup = document.createElement('div');
+            endGroup.className = 'form-group';
+            var endLabel = document.createElement('label');
+            endLabel.textContent = 'Match ' + i + ' end';
+            var endInput = document.createElement('input');
+            endInput.type = 'time';
+            endInput.name = 'match_end';
+            endInput.className = 'form-control';
+            endInput.value = endValue;
+            endInput.autocomplete = 'off';
+            endGroup.appendChild(endLabel);
+            endGroup.appendChild(endInput);
+
+            slotRow.appendChild(startGroup);
+            slotRow.appendChild(endGroup);
+            container.appendChild(slotRow);
+        }
+    }
+
+    var courtAvailabilityFormElement = document.getElementById('court-availability-form');
+    if (courtAvailabilityFormElement) {
+        courtAvailabilityFormElement.dataset.defaultMatchDuration = courtAvailabilityFormElement.dataset.defaultMatchDuration || '35';
+        var dayCountInput = courtAvailabilityFormElement.querySelector('[name="matches_per_court_per_day"]');
+        var hiddenStartInput = courtAvailabilityFormElement.querySelector('[name="start_time"]');
+        if (dayCountInput) {
+            dayCountInput.addEventListener('input', buildMatchSlotRows);
+            dayCountInput.addEventListener('change', buildMatchSlotRows);
+        }
+        if (hiddenStartInput) {
+            hiddenStartInput.addEventListener('input', buildMatchSlotRows);
+        }
+        buildMatchSlotRows();
+    }
 
     // Live registration review summary
     const registrationForm = document.querySelector('#registration-form');
@@ -154,7 +342,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 })
                 .then(function(html) {
                     if (html && section.isConnected) {
-                        section.innerHTML = html;
+                        // Flicker-free swap: only replace when new content is ready.
+                        // Build off-screen, then do a single atomic innerHTML assignment
+                        // so there is never a blank frame between old and new content.
+                        const trimmed = html.trim();
+                        if (trimmed && trimmed !== section.innerHTML.trim()) {
+                            section.innerHTML = trimmed;
+                        }
                     }
                 })
                 .catch(function() {

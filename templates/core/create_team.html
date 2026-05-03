@@ -3,15 +3,24 @@
 {% block page_header %}Create Team{% endblock %}
 {% block content %}
 <div style="max-width:520px;margin:0 auto;">
-    <h1 class="page-title">Create a Team</h1>
+    <h1 class="page-title">{% if tournament.registration_mode == 'individual' %}Register Individual{% else %}Create a Team{% endif %}</h1>
     <p class="text-muted mb-2">Tournament: <strong>{{ tournament.name }}</strong> ({{ tournament.get_sport_type_display }})</p>
-    {% if tournament.players_per_team > 1 %}
+    {% if tournament.registration_mode == 'individual' %}
+    <p class="text-muted mb-2">This tournament accepts individual players. Your registered player name will be shown in fixtures and standings.</p>
+    {% elif tournament.players_per_team > 1 %}
     <p class="text-muted mb-2">This tournament needs <strong>{{ tournament.players_per_team }}</strong> players per team. After creating your team, others can join from the tournament page.</p>
     {% endif %}
     <div class="card">
         <div class="card-body">
             <form method="post">
                 {% csrf_token %}
+                {% if tournament.registration_mode == 'individual' %}
+                <div class="form-group">
+                    <label for="{{ form.participant_name.id_for_label }}">Player Name</label>
+                    {{ form.participant_name }}
+                    {% if form.participant_name.errors %}<small class="text-danger">{{ form.participant_name.errors.0 }}</small>{% endif %}
+                </div>
+                {% else %}
                 <div class="form-group">
                     <label for="{{ form.team_name.id_for_label }}">Team Name</label>
                     {{ form.team_name }}
@@ -22,6 +31,7 @@
                     {{ form.department }}
                     {% if form.department.errors %}<small class="text-danger">{{ form.department.errors.0 }}</small>{% endif %}
                 </div>
+                {% endif %}
                 {% if form.preferred_courts.field.queryset.exists %}
                 <div class="form-group">
                     <label>Preferred Courts</label>
@@ -34,7 +44,7 @@
                 <div class="alert alert-error">{{ form.non_field_errors.0 }}</div>
                 {% endif %}
                 <div style="display:flex;gap:0.75rem;margin-top:1rem;">
-                    <button type="submit" class="btn btn-primary">Create Team</button>
+                    <button type="submit" class="btn btn-primary">{% if tournament.registration_mode == 'individual' %}Register{% else %}Create Team{% endif %}</button>
                     <a href="{% url 'join_tournament' pk=tournament.pk %}" class="btn btn-outline">Cancel</a>
                 </div>
             </form>

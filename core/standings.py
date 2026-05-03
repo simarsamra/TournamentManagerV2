@@ -1,15 +1,25 @@
 """Standings calculation and bracket progression logic."""
 from collections import defaultdict
 from django.db import models
-from django.db.models import Max
-from .models import Match, Team
+from django.db.models import F, Max
+from .models import Match, Team, TeamTournamentParticipation
+
+
+def _tournament_teams(tournament, statuses):
+    """Return teams for a tournament filtered by participation status."""
+    return Team.objects.filter(
+        participations__tournament=tournament,
+        participations__status__in=statuses,
+    ).annotate(
+        group=F("participations__group"),
+    ).distinct()
 
 
 def calculate_standings(tournament, group=None):
     """Calculate standings for round-robin or group stage."""
-    teams = tournament.teams.filter(status__in=["active", "withdrawn"])
+    teams = _tournament_teams(tournament, ["active", "withdrawn"])
     if group:
-        teams = teams.filter(group=group)
+        teams = teams.filter(participations__group=group)
 
     matches = tournament.matches.filter(status="confirmed")
     if group:
@@ -170,7 +180,7 @@ def check_group_stage_complete(tournament):
             return False
         # Assign group "A" to these matches and to all active teams so existing logic can proceed
         rr_qs.update(group="A")
-        tournament.teams.filter(status="active").update(group="A")
+        tournament.team_participations.filter(status="active").update(group="A")
         group_matches = tournament.matches.filter(group="A")
 
     if not group_matches.exists():
@@ -182,7 +192,7 @@ def check_group_stage_complete(tournament):
 
     # Group stage complete – generate knockout from top teams
     groups = set(
-        tournament.teams.filter(status="active").exclude(group="").values_list("group", flat=True)
+        tournament.team_participations.filter(status="active").exclude(group="").values_list("group", flat=True)
     )
     advancing = []
     for group_name in sorted(groups):

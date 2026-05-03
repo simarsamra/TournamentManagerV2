@@ -1,0 +1,41 @@
+{% extends "core/base.html" %}
+{% block title %}Transfer Captaincy — {{ team.name }}{% endblock %}
+{% block page_header %}Transfer Captaincy{% endblock %}
+{% block content %}
+<div style="max-width:480px;margin:0 auto;">
+    <h1 class="page-title">Transfer Captaincy</h1>
+    <p class="text-muted mb-2">
+        You are transferring the <strong>Captain</strong> role for <strong>{{ team.name }}</strong> to another member.
+        Your role will become <em>Member</em>.
+    </p>
+
+    {% if messages %}
+    <div class="mb-2">
+        {% for msg in messages %}
+        <div class="alert alert-{{ msg.tags }}">{{ msg }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="new_captain">Select new captain</label>
+                    <select id="new_captain" name="new_captain" class="form-control" required>
+                        <option value="">— choose a member —</option>
+                        {% for m in members %}
+                        <option value="{{ m.user.pk }}">{{ m.user.username }} ({{ m.get_role_display }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="display:flex;gap:0.75rem;margin-top:1.25rem;">
+                    <button type="submit" class="btn btn-primary" onclick="return confirm('Transfer captaincy? You will become a regular member.')">Transfer</button>
+                    <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

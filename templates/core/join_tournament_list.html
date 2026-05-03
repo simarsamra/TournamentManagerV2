@@ -15,7 +15,11 @@
         <div class="card-body">
             <p class="text-muted mb-1">{{ item.tournament.get_format_display }}</p>
             <p class="mb-1">
+                {% if item.tournament.registration_mode == "individual" %}
+                <strong>{{ item.team_count }}</strong> participant{{ item.team_count|pluralize }} registered
+                {% else %}
                 <strong>{{ item.team_count }}</strong> team{{ item.team_count|pluralize }} registered
+                {% endif %}
                 {% if item.tournament.expected_teams_count %}
                     / {{ item.tournament.expected_teams_count }} expected
                 {% endif %}
@@ -24,9 +28,13 @@
             <p class="text-muted mb-2" style="font-size:0.85rem;">Starts {{ item.tournament.start_date }}</p>
             {% endif %}
             {% if item.already_joined %}
-            <span class="badge badge-success" style="padding:0.5rem 1rem;">✓ You have a team in this tournament</span>
+            <span class="badge badge-success" style="padding:0.5rem 1rem;">
+                {% if item.tournament.registration_mode == "individual" %}✓ You are registered{% else %}✓ You have a team in this tournament{% endif %}
+            </span>
             {% else %}
-            <a href="{% url 'join_tournament' pk=item.tournament.pk %}" class="btn btn-primary btn-sm">Browse Teams &amp; Join</a>
+            <a href="{% url 'join_tournament' pk=item.tournament.pk %}" class="btn btn-primary btn-sm">
+                {% if item.tournament.registration_mode == "individual" %}View &amp; Register{% else %}Browse Teams &amp; Join{% endif %}
+            </a>
             {% endif %}
         </div>
     </div>

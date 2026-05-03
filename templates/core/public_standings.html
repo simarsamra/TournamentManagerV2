@@ -12,10 +12,22 @@
     <div class="d-flex justify-between align-center mb-2">
         <h1>{% if tournament %}{{ tournament.name }}{% endif %} — Standings</h1>
         <div>
-            <a href="{% url 'public_fixtures' %}" class="btn btn-outline">Fixtures</a>
+            <a href="{% url 'public_fixtures' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}" class="btn btn-outline">Fixtures</a>
             <a href="{% url 'login' %}" class="btn btn-primary">Login</a>
         </div>
     </div>
+
+    {% if public_tournaments %}
+    <form method="get" class="card mb-2" style="padding:0.75rem;display:flex;gap:0.75rem;align-items:center;">
+        <label for="public-tournament-switch" class="text-muted" style="font-size:0.9rem;">Tournament</label>
+        <select id="public-tournament-switch" name="tournament" class="form-select" style="max-width:360px;" onchange="this.form.submit()">
+            {% for t in public_tournaments %}
+            <option value="{{ t.pk }}" {% if selected_tournament and selected_tournament.pk == t.pk %}selected{% endif %}>{{ t.name }} • {{ t.get_status_display }}</option>
+            {% endfor %}
+        </select>
+        <a href="{% url 'home' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}" class="btn btn-outline btn-sm">Home</a>
+    </form>
+    {% endif %}
 
     {% if tournament and tournament.status == 'completed' %}
     <div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;font-size:1.05rem;margin-bottom:1rem;">
@@ -78,7 +90,19 @@
             <div class="bracket-container" style="display:flex;">
                 {% for round_num, matches in bracket.items %}
                 <div class="bracket-round">
-                    <div class="bracket-round-title">Round {{ round_num }}</div>
+                    <div class="bracket-round-title">
+                        {% with match_count=matches|length %}
+                            {% if match_count == 1 %}
+                                Final
+                            {% elif match_count == 2 %}
+                                Semi-finals
+                            {% elif match_count == 4 %}
+                                Quarter-finals
+                            {% else %}
+                                Round {{ round_num }}
+                            {% endif %}
+                        {% endwith %}
+                    </div>
                     {% for m in matches %}
                     <div class="bracket-match-wrap">
                     <div class="bracket-match">

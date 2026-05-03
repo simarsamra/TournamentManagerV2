@@ -4,7 +4,35 @@
 {% block content %}
 <h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}{{ tournament.participant_label_plural|default:"Teams" }}</h1>
 {% if tournament %}
-<div class="card">
+<div class="card mb-2">
+    {% if registration_mode == "individual" %}
+    <div class="card-header">Participants in selected tournament ({{ participant_list|length }})</div>
+    <div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Participant</th>
+                <th>Username</th>
+                <th>Status</th>
+                {% if tournament.format == "hybrid" %}<th>Group</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for reg in participant_list %}
+            <tr>
+                <td><strong>{{ reg.display_name }}</strong></td>
+                <td class="text-muted">{{ reg.user.username }}</td>
+                <td>{{ reg.get_status_display }}</td>
+                {% if tournament.format == "hybrid" %}<td>{{ reg.group|default:"-" }}</td>{% endif %}
+            </tr>
+            {% empty %}
+            <tr><td colspan="{% if tournament.format == 'hybrid' %}4{% else %}3{% endif %}" class="text-center text-muted">No active participants in the selected tournament.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="card-header">Teams in selected tournament ({{ teams|length }})</div>
     <div class="table-container">
     <table>
         <thead>
@@ -57,8 +85,19 @@
         </tbody>
     </table>
     </div>
+    {% endif %}
 </div>
 {% else %}
-<p class="text-muted">No tournament active.</p>
+<div class="card mb-2">
+    <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+        <div>
+            <p class="text-muted" style="margin:0;">No tournament selected. You can still create and manage standalone teams.</p>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <a href="{% url 'create_standalone_team' %}" class="btn btn-primary">+ Create Standalone Team</a>
+            <a href="{% url 'join_tournament_list' %}" class="btn btn-outline">Open Registrations</a>
+        </div>
+    </div>
+</div>
 {% endif %}
 {% endblock %}

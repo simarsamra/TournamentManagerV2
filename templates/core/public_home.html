@@ -1,0 +1,489 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tournament Manager</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <style>
+        /* ── Public landing page styles ── */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f4f8; color: #1e293b; }
+
+        /* Navbar */
+        .pub-nav {
+            background: #1e293b;
+            padding: 0 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 60px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,.25);
+        }
+        .pub-nav-brand {
+            color: #fff;
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: .5px;
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            text-decoration: none;
+        }
+        .pub-nav-brand span { color: #60a5fa; }
+        .pub-nav-links { display: flex; gap: .5rem; }
+        .pub-nav-links a {
+            color: #cbd5e1;
+            text-decoration: none;
+            padding: .4rem .9rem;
+            border-radius: 6px;
+            font-size: .88rem;
+            transition: background .15s, color .15s;
+        }
+        .pub-nav-links a:hover { background: #334155; color: #fff; }
+        .pub-nav-links a.login-btn {
+            background: #2563eb;
+            color: #fff;
+            font-weight: 600;
+        }
+        .pub-nav-links a.login-btn:hover { background: #1d4ed8; }
+
+        /* Hero */
+        .pub-hero {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #1e3a5f 100%);
+            padding: 5rem 2rem 4rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .pub-hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2360a5fa' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            pointer-events: none;
+        }
+        .pub-hero > * {
+            position: relative;
+            z-index: 1;
+        }
+        .pub-hero-badge {
+            display: inline-block;
+            background: rgba(96,165,250,.15);
+            color: #60a5fa;
+            border: 1px solid rgba(96,165,250,.3);
+            padding: .3rem .9rem;
+            border-radius: 999px;
+            font-size: .8rem;
+            font-weight: 600;
+            letter-spacing: .5px;
+            text-transform: uppercase;
+            margin-bottom: 1.25rem;
+        }
+        .pub-hero h1 {
+            color: #fff;
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 800;
+            line-height: 1.15;
+            margin-bottom: 1rem;
+        }
+        .pub-hero h1 span { color: #60a5fa; }
+        .pub-hero p {
+            color: #94a3b8;
+            font-size: 1.1rem;
+            max-width: 540px;
+            margin: 0 auto 2rem;
+            line-height: 1.65;
+        }
+        .pub-hero-actions { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+        .pub-hero-actions a {
+            padding: .75rem 1.75rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: .95rem;
+            text-decoration: none;
+            transition: transform .15s, box-shadow .15s;
+        }
+        .pub-hero-actions a:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+        .pub-hero-actions .cta-primary { background: #2563eb; color: #fff; }
+        .pub-hero-actions .cta-primary:hover { background: #1d4ed8; }
+        .pub-hero-actions .cta-ghost {
+            background: transparent;
+            color: #94a3b8;
+            border: 1.5px solid #334155;
+        }
+        .pub-hero-actions .cta-ghost:hover { border-color: #60a5fa; color: #60a5fa; }
+
+        /* Stats bar */
+        .pub-stats {
+            background: #fff;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: center;
+            gap: 0;
+            flex-wrap: wrap;
+        }
+        .pub-stat {
+            padding: 1.25rem 2.5rem;
+            text-align: center;
+            border-right: 1px solid #e2e8f0;
+        }
+        .pub-stat:last-child { border-right: none; }
+        .pub-stat-value { font-size: 1.75rem; font-weight: 800; color: #2563eb; line-height: 1; }
+        .pub-stat-label { font-size: .78rem; color: #64748b; text-transform: uppercase; letter-spacing: .5px; margin-top: .25rem; }
+
+        /* Content wrapper */
+        .pub-wrap { max-width: 1100px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+
+        /* Tournament switcher */
+        .pub-switcher {
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: .75rem 1rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 4px rgba(0,0,0,.05);
+        }
+        .pub-switcher label { font-size: .85rem; color: #64748b; white-space: nowrap; font-weight: 500; }
+        .pub-switcher select {
+            flex: 1;
+            max-width: 400px;
+            padding: .4rem .75rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: .9rem;
+            background: #f8fafc;
+            color: #1e293b;
+            outline: none;
+        }
+
+        /* Section title */
+        .pub-section-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 1rem;
+            padding-bottom: .5rem;
+            border-bottom: 2px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+        }
+
+        /* Tournament hero card */
+        .pub-tournament-card {
+            background: linear-gradient(135deg, #1e293b, #1e3a5f);
+            border-radius: 14px;
+            padding: 1.75rem 2rem;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            box-shadow: 0 4px 16px rgba(0,0,0,.12);
+        }
+        .pub-tournament-card-left h2 { color: #fff; font-size: 1.5rem; font-weight: 800; margin-bottom: .35rem; }
+        .pub-tournament-status {
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            padding: .25rem .75rem;
+            border-radius: 999px;
+            font-size: .78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        .status-active { background: rgba(22,163,74,.2); color: #4ade80; border: 1px solid rgba(74,222,128,.25); }
+        .status-registration_open { background: rgba(37,99,235,.2); color: #93c5fd; border: 1px solid rgba(147,197,253,.25); }
+        .status-scheduled { background: rgba(217,119,6,.2); color: #fcd34d; border: 1px solid rgba(252,211,77,.25); }
+        .status-other { background: rgba(100,116,139,.15); color: #cbd5e1; border: 1px solid rgba(203,213,225,.2); }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+        .pub-tournament-card-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+        .pub-tournament-card-actions a {
+            padding: .5rem 1.1rem;
+            border-radius: 7px;
+            font-size: .85rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all .15s;
+        }
+        .pub-btn-ghost {
+            background: rgba(255,255,255,.1);
+            color: #e2e8f0;
+            border: 1px solid rgba(255,255,255,.15);
+        }
+        .pub-btn-ghost:hover { background: rgba(255,255,255,.2); color: #fff; }
+        .pub-btn-blue { background: #2563eb; color: #fff; }
+        .pub-btn-blue:hover { background: #1d4ed8; }
+
+        /* Two-column grid */
+        .pub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+        @media (max-width: 700px) { .pub-grid { grid-template-columns: 1fr; } }
+
+        /* Data cards */
+        .pub-data-card {
+            background: #fff;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+            box-shadow: 0 1px 6px rgba(0,0,0,.05);
+        }
+        .pub-data-card-header {
+            padding: .9rem 1.25rem;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: .88rem;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            display: flex;
+            align-items: center;
+            gap: .4rem;
+        }
+        .pub-data-card table { width: 100%; border-collapse: collapse; }
+        .pub-data-card th { background: #f8fafc; padding: .6rem 1rem; font-size: .78rem; color: #64748b; text-transform: uppercase; letter-spacing: .4px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        .pub-data-card td { padding: .65rem 1rem; border-bottom: 1px solid #f1f5f9; font-size: .9rem; }
+        .pub-data-card tr:last-child td { border-bottom: none; }
+        .pub-data-card tr:hover td { background: #f8fafc; }
+        .pub-rank-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            font-size: .75rem;
+            font-weight: 700;
+        }
+        .rank-1 { background: #fef3c7; color: #92400e; }
+        .rank-2 { background: #f1f5f9; color: #475569; }
+        .rank-3 { background: #fef2f2; color: #991b1b; }
+        .rank-n { background: #f1f5f9; color: #94a3b8; }
+        .match-vs { color: #94a3b8; margin: 0 .25rem; font-size: .8rem; }
+        .match-time { color: #64748b; font-size: .8rem; white-space: nowrap; }
+
+        /* Empty state */
+        .pub-empty {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: #fff;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+        .pub-empty-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .pub-empty h3 { color: #1e293b; font-size: 1.15rem; margin-bottom: .5rem; }
+        .pub-empty p { color: #64748b; font-size: .9rem; }
+
+        /* Features strip */
+        .pub-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin: 2.5rem 0 0;
+        }
+        .pub-feature {
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+            box-shadow: 0 1px 4px rgba(0,0,0,.04);
+        }
+        .pub-feature-icon { font-size: 1.75rem; margin-bottom: .6rem; }
+        .pub-feature-title { font-size: .88rem; font-weight: 700; color: #1e293b; margin-bottom: .3rem; }
+        .pub-feature-desc { font-size: .8rem; color: #64748b; line-height: 1.5; }
+
+        /* Footer */
+        .pub-footer {
+            text-align: center;
+            padding: 2rem;
+            color: #94a3b8;
+            font-size: .8rem;
+            border-top: 1px solid #e2e8f0;
+            background: #fff;
+            margin-top: 3rem;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="pub-nav">
+    <a class="pub-nav-brand" href="#">🏆 <span>Tournament</span> Manager</a>
+    <div class="pub-nav-links">
+        <a href="{% url 'public_standings' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}">Standings</a>
+        <a href="{% url 'public_fixtures' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}">Fixtures</a>
+        <a href="{% url 'login' %}" class="login-btn">Login</a>
+    </div>
+</nav>
+
+<!-- Hero -->
+<section class="pub-hero">
+    <div class="pub-hero-badge">Live Tournament Platform</div>
+    <h1>Your <span>Tournament.</span><br>Organised. Live. Easy.</h1>
+    <p>Follow live standings, upcoming fixtures, and match results — all in one place.</p>
+    <div class="pub-hero-actions">
+        <a href="{% url 'login' %}" class="cta-primary">Get Started →</a>
+        <a href="{% url 'public_standings' %}{% if selected_tournament %}?tournament={{ selected_tournament.pk }}{% endif %}" class="cta-ghost">View Standings</a>
+    </div>
+</section>
+
+<!-- Stats bar -->
+{% if public_tournaments %}
+<div class="pub-stats">
+    <div class="pub-stat">
+        <div class="pub-stat-value">{{ public_tournaments|length }}</div>
+        <div class="pub-stat-label">Tournaments</div>
+    </div>
+    {% if tournament %}
+    <div class="pub-stat">
+        <div class="pub-stat-value">{{ tournament.team_participations.count }}</div>
+        <div class="pub-stat-label">Teams</div>
+    </div>
+    <div class="pub-stat">
+        <div class="pub-stat-value">{{ tournament.matches.count }}</div>
+        <div class="pub-stat-label">Matches</div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Main content -->
+<div class="pub-wrap">
+
+    {% if public_tournaments and public_tournaments|length > 1 %}
+    <form method="get" class="pub-switcher">
+        <label for="pub-t-switch">Viewing</label>
+        <select id="pub-t-switch" name="tournament" onchange="this.form.submit()">
+            {% for t in public_tournaments %}
+            <option value="{{ t.pk }}" {% if selected_tournament and selected_tournament.pk == t.pk %}selected{% endif %}>{{ t.name }} — {{ t.get_status_display }}</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% endif %}
+
+    {% if tournament %}
+
+    <!-- Tournament header card -->
+    <div class="pub-tournament-card">
+        <div class="pub-tournament-card-left">
+            <h2>{{ tournament.name }}</h2>
+            {% with s=tournament.status %}
+            <span class="pub-tournament-status {% if s == 'active' %}status-active{% elif s == 'registration_open' %}status-registration_open{% elif s == 'scheduled' %}status-scheduled{% else %}status-other{% endif %}">
+                <span class="status-dot"></span>
+                {{ tournament.get_status_display }}
+            </span>
+            {% endwith %}
+            {% if tournament.start_date %}
+            <span style="color:#94a3b8;font-size:.82rem;margin-left:.75rem;">📅 {{ tournament.start_date|date:"M d, Y" }}{% if tournament.end_date %} → {{ tournament.end_date|date:"M d, Y" }}{% endif %}</span>
+            {% endif %}
+        </div>
+        <div class="pub-tournament-card-actions">
+            <a href="{% url 'public_standings' %}?tournament={{ tournament.pk }}" class="pub-btn-ghost">📊 Standings</a>
+            <a href="{% url 'public_fixtures' %}?tournament={{ tournament.pk }}" class="pub-btn-ghost">📋 Fixtures</a>
+            <a href="{% url 'login' %}" class="pub-btn-blue">Login</a>
+        </div>
+    </div>
+
+    <!-- Data grid -->
+    <div class="pub-grid">
+        <div class="pub-data-card">
+            <div class="pub-data-card-header">📊 Standings Snapshot</div>
+            <table>
+                <thead><tr><th>#</th><th>Team</th><th>Pts</th></tr></thead>
+                <tbody>
+                {% for s in standings_snapshot %}
+                <tr>
+                    <td>
+                        <span class="pub-rank-badge {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">
+                            {{ s.rank }}
+                        </span>
+                    </td>
+                    <td><strong>{{ s.team.name }}</strong></td>
+                    <td><strong style="color:#2563eb;">{{ s.points }}</strong></td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="3" style="padding:1.5rem;text-align:center;color:#94a3b8;">Standings are available for round-robin formats once matches begin.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pub-data-card">
+            <div class="pub-data-card-header">🗓️ Upcoming Matches</div>
+            <table>
+                <thead><tr><th>#</th><th>Match</th><th>Time</th></tr></thead>
+                <tbody>
+                {% for m in upcoming_matches %}
+                <tr>
+                    <td style="color:#94a3b8;font-size:.82rem;">{{ m.match_number }}</td>
+                    <td>
+                        <strong>{{ m.team1.name|default:"TBD" }}</strong>
+                        <span class="match-vs">vs</span>
+                        <strong>{{ m.team2.name|default:"TBD" }}</strong>
+                    </td>
+                    <td class="match-time">{{ m.scheduled_time|date:"M d, H:i"|default:"TBD" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="3" style="padding:1.5rem;text-align:center;color:#94a3b8;">No upcoming matches scheduled yet.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% else %}
+    <div class="pub-empty">
+        <div class="pub-empty-icon">🏆</div>
+        <h3>No tournaments yet</h3>
+        <p>Check back soon or <a href="{% url 'login' %}" style="color:#2563eb;">login</a> to create one.</p>
+    </div>
+    {% endif %}
+
+    <!-- Features strip -->
+    <div class="pub-features">
+        <div class="pub-feature">
+            <div class="pub-feature-icon">📋</div>
+            <div class="pub-feature-title">Live Fixtures</div>
+            <div class="pub-feature-desc">Real-time match schedules with courts and times.</div>
+        </div>
+        <div class="pub-feature">
+            <div class="pub-feature-icon">📊</div>
+            <div class="pub-feature-title">Live Standings</div>
+            <div class="pub-feature-desc">Points tables updated as results come in.</div>
+        </div>
+        <div class="pub-feature">
+            <div class="pub-feature-icon">🔄</div>
+            <div class="pub-feature-title">Rescheduling</div>
+            <div class="pub-feature-desc">Teams can request slot swaps with approval flow.</div>
+        </div>
+        <div class="pub-feature">
+            <div class="pub-feature-icon">🛡️</div>
+            <div class="pub-feature-title">Score Disputes</div>
+            <div class="pub-feature-desc">Opponent confirmation with auto-lock deadlines.</div>
+        </div>
+        <div class="pub-feature">
+            <div class="pub-feature-icon">🏅</div>
+            <div class="pub-feature-title">Multiple Formats</div>
+            <div class="pub-feature-desc">Round Robin, Knockout, Hybrid and more.</div>
+        </div>
+    </div>
+
+</div>
+
+<footer class="pub-footer">
+    Tournament Manager &mdash; Built for organizers and players.
+</footer>
+
+</body>
+</html>

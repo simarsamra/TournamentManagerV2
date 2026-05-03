@@ -1,15 +1,50 @@
 """Withdrawal handling logic."""
 from django.utils import timezone
-from .models import Match, Team
+from .models import Match, Team, TeamTournamentParticipation
 from .standings import advance_winner
 from .audit import log_action
 
 
 def handle_withdrawal(request, team, tournament):
     """Process a team withdrawal."""
-    team.status = "withdrawn"
-    team.withdrawn_at = timezone.now()
-    team.save(update_fields=["status", "withdrawn_at"])
+    participation = TeamTournamentParticipation.objects.filter(
+        team=team, tournament=tournament
+    ).first()
+    if participation:
+        participation.status = "withdrawn"
+        participation.withdrawn_at = timezone.now()
+        participation.save(update_fields=["status", "withdrawn_at"])
+
+    # Before publication (active), treat withdrawal as deregistration: do not apply forfeits.
+    pre_active_statuses = {"setup", "registration_open", "ready", "scheduled"}
+    if tournament.status in pre_active_statuses:
+        draft_matches = Match.objects.filter(
+            tournament=tournament,
+            status__in=["upcoming", "in_progress", "pending_confirmation", "disputed"],
+        ).filter(models_q_team(team))
+
+        for match in draft_matches:
+            match.status = "cancelled"
+            match.winner = None
+            match.notes = f"{team.name} withdrew before tournament activation"
+            match.save(update_fields=["status", "winner", "notes"])
+
+        from .models import RescheduleRequest
+        from django.contrib.auth.models import User
+        team_member_users = User.objects.filter(memberships__team=team)
+        RescheduleRequest.objects.filter(
+            requested_by__in=team_member_users,
+            match__tournament=tournament,
+            status="pending",
+        ).update(status="cancelled")
+
+        log_action(
+            request,
+            "team_withdrawal_pre_activation",
+            f"Team '{team.name}' withdrew before activation. Cancelled draft matches: {draft_matches.count()}",
+            tournament=tournament,
+        )
+        return
 
     policy = tournament.withdrawal_policy
 
@@ -52,10 +87,14 @@ def handle_withdrawal(request, team, tournament):
                 reason=f"Withdrawal of {team.name}",
             )
 
-    # Cancel pending reschedule requests
+    # Cancel pending reschedule requests from any team member
     from .models import RescheduleRequest
+    from django.contrib.auth.models import User
+    team_member_users = User.objects.filter(memberships__team=team)
     RescheduleRequest.objects.filter(
-        requested_by=team, status="pending"
+        requested_by__in=team_member_users,
+        match__tournament=tournament,
+        status="pending",
     ).update(status="cancelled")
 
     log_action(

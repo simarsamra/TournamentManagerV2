@@ -1,21 +1,45 @@
 {% extends "core/base.html" %}
-{% block title %}{{ team.name }}{% endblock %}
+{% block title %}{{ team_heading_label }}{% endblock %}
 {% block page_header %}Team Detail{% endblock %}
 {% block content %}
 <div class="d-flex justify-between align-center mb-2">
-    <h1 class="page-title" style="margin-bottom:0">{{ team.name }} <span class="badge badge-{{ team.status }}">{{ team.get_status_display }}</span></h1>
+    <h1 class="page-title" style="margin-bottom:0">{{ team_heading_label }}</h1>
     <div class="d-flex gap-1">
         {% if is_captain or is_organizer %}
         <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline">Preferences</a>
         {% endif %}
-        {% if team.status == "active" and is_captain or team.status == "active" and is_organizer %}
+        {% if is_captain and not is_organizer %}
+        <a href="{% url 'transfer_captaincy' pk=team.pk %}" class="btn btn-outline">Transfer Captaincy</a>
+        <form method="post" action="{% url 'delete_team' pk=team.pk %}" style="display:inline">
+            {% csrf_token %}
+            <input type="hidden" name="confirm_delete" value="yes">
+            <input type="password" name="password" class="form-control" placeholder="Confirm password" style="display:inline;width:160px;vertical-align:middle;">
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Delete this team permanently? This cannot be undone.')">Delete Team</button>
+        </form>
+        {% endif %}
+        {% if is_captain and not is_organizer %}
         <form method="post" action="{% url 'withdraw_team' pk=team.pk %}" style="display:inline">
             {% csrf_token %}
-            {% if is_captain and not is_organizer %}
             <input type="hidden" name="confirm_withdraw" value="yes">
             <input type="password" name="password" class="form-control" placeholder="Confirm password" style="display:inline;width:180px;vertical-align:middle;">
-            {% endif %}
-            <button type="submit" class="btn btn-danger" onclick="return confirm('Withdraw this team? This cannot be undone.')">Withdraw</button>
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Withdraw this team from the tournament?')">Withdraw</button>
+        </form>
+        {% elif is_organizer %}
+        <form method="post" action="{% url 'withdraw_team' pk=team.pk %}" style="display:inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Withdraw this team from the tournament?')">Withdraw</button>
+        </form>
+        {% endif %}
+        {% if not is_captain and not is_organizer %}
+        <form method="post" action="{% url 'leave_team' pk=team.pk %}" style="display:inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline" onclick="return confirm('Leave this team?')">Leave Team</button>
+        </form>
+        {% endif %}
+        {% if is_organizer and tournament.status != 'active' and tournament.status != 'completed' %}
+        <form method="post" action="{% url 'organizer_remove_team' pk=team.pk %}" style="display:inline" onsubmit="return confirm('Permanently remove {{ team.name }} from this tournament? This will delete the team and its captain account.')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">✕ Remove Team</button>
         </form>
         {% endif %}
         {% if is_organizer and tournament.status != 'active' and tournament.status != 'completed' %}
@@ -30,10 +54,7 @@
 <div class="card mb-2">
     <div class="card-body">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
-            <span><strong>Captain account:</strong> {{ team.user.username }}</span>
-            {% if team.department %}
-            <span><strong>Department:</strong> {{ team.department }}</span>
-            {% endif %}
+            {% if team.department %}<span><strong>Department:</strong> {{ team.department }}</span>{% endif %}
             {% if is_organizer %}
             <div>
                 <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('reset-captain-pw').style.display=document.getElementById('reset-captain-pw').style.display==='none'?'block':'none'">Reset Captain Password</button>
@@ -83,7 +104,7 @@
                     <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
                         <form method="post" action="{% url 'remove_team_member' pk=team.pk user_pk=m.user.pk %}" style="display:inline;">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove {{ m.user.username }} from the team? Their account will be deleted.')">Remove</button>
+                            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove {{ m.user.username }} from the team? Their account will be preserved.')">Remove</button>
                         </form>
                         <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('reset-pw-{{ m.user.pk }}').style.display=document.getElementById('reset-pw-{{ m.user.pk }}').style.display==='none'?'block':'none'">Reset PW</button>
                     </div>
@@ -130,8 +151,26 @@
                     {{ invite_form.password_confirm }}
                 </div>
             </div>
-            <button type="submit" class="btn btn-primary btn-sm" {% if members_full %}disabled{% endif %}>Add Member</button>
+            <input type="hidden" name="member_action" value="create_account">
+            <button type="submit" class="btn btn-primary btn-sm" {% if members_full %}disabled{% endif %}>Create and Add Member</button>
         </form>
+
+        {% if existing_member_form %}
+        <hr style="margin:1rem 0;">
+        <h4 style="margin-bottom:0.75rem;font-size:0.9rem;">Add Existing User</h4>
+        <form method="post" action="{% url 'manage_team_members' pk=team.pk %}">
+            {% csrf_token %}
+            <div style="display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+                <div class="form-group" style="margin-bottom:0;min-width:240px;">
+                    <label style="font-size:0.8rem;">Username</label>
+                    {{ existing_member_form.username }}
+                </div>
+                <input type="hidden" name="member_action" value="add_existing">
+                <button type="submit" class="btn btn-outline btn-sm" {% if members_full %}disabled{% endif %}>Add Existing User</button>
+            </div>
+            <p class="text-muted" style="margin-top:0.4rem;font-size:0.8rem;">Use this when the person already has an account.</p>
+        </form>
+        {% endif %}
     </div>
     {% endif %}
 </div>

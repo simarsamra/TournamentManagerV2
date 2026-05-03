@@ -1,0 +1,178 @@
+﻿{% extends "core/base.html" %}
+{% block title %}Test Maker{% endblock %}
+{% block page_header %}Test Maker{% endblock %}
+{% block content %}
+<h1 class="page-title">Admin Test Maker</h1>
+
+{% if tournament %}
+<p class="text-muted mb-2">
+    Working tournament: <strong>{{ tournament.name }}</strong>
+    <span class="badge badge-{{ tournament.status }}" style="margin-left:0.4rem;">{{ tournament.get_status_display }}</span>
+</p>
+{% else %}
+<div class="alert alert-warning">No tournament selected. Select or create a tournament first.</div>
+{% endif %}
+
+<div class="grid grid-4 mb-2">
+    <div class="stat-card">
+        <div class="stat-value">{{ total_teams }}</div>
+        <div class="stat-label">{{ roster_label|default:"Teams" }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ total_courts }}</div>
+        <div class="stat-label">Courts</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ total_matches }}</div>
+        <div class="stat-label">Matches</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--warning);">{{ pending_matches }}</div>
+        <div class="stat-label">Non-Terminal Matches</div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">{% if registration_mode == "individual" %}Create Participants{% else %}Create Teams + Members{% endif %}</div>
+        <div class="card-body">
+            {% if registration_mode == "individual" %}
+            <p class="text-muted mb-1">Creates N participant accounts with registrations and internal shadow competitors (no multi-member teams).</p>
+            {% else %}
+            <p class="text-muted mb-1">Creates N new teams in selected tournament and auto-creates captain/member accounts. Bypasses registration flow.</p>
+            {% endif %}
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_test_teams">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>{% if registration_mode == "individual" %}Number of participants{% else %}Number of teams{% endif %}</label>
+                        <input type="number" name="team_count" class="form-control" min="1" value="10" required>
+                    </div>
+                    {% if registration_mode != "individual" %}
+                    <div class="form-group">
+                        <label>Members per team</label>
+                        <input type="number" name="members_per_team" class="form-control" min="1" value="2" required>
+                    </div>
+                    {% else %}
+                    <input type="hidden" name="members_per_team" value="1">
+                    {% endif %}
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>{% if registration_mode == "individual" %}Display name prefix{% else %}Team prefix{% endif %}</label>
+                        <input type="text" name="team_prefix" class="form-control" value="{% if registration_mode == "individual" %}p{% else %}team{% endif %}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Username prefix</label>
+                        <input type="text" name="username_prefix" class="form-control" value="t" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Default password</label>
+                    <input type="text" name="default_password" class="form-control" value="pass123" required>
+                </div>
+                <button type="submit" class="btn btn-primary">{% if registration_mode == "individual" %}Create Test Participants{% else %}Create Test Teams{% endif %}</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Register {% if registration_mode == "individual" %}Individuals{% else %}Teams{% endif %} to Open Tournament</div>
+        <div class="card-body">
+            {% if tournament and tournament.status == "registration_open" %}
+            <p class="text-muted mb-1">
+                Creates new {% if registration_mode == "individual" %}participant accounts and registers them{% else %}teams with captain/member accounts and registers them{% endif %}
+                via the registration system (<code>{% if registration_mode == "individual" %}IndividualRegistration{% else %}TeamRegistration{% endif %}</code> model, status=approved).
+            </p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="register_to_open_tournament">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>{% if registration_mode == "individual" %}Number of participants{% else %}Number of teams{% endif %}</label>
+                        <input type="number" name="reg_count" class="form-control" min="1" value="5" required>
+                    </div>
+                    {% if registration_mode != "individual" %}
+                    <div class="form-group">
+                        <label>Members per team</label>
+                        <input type="number" name="reg_members_per_team" class="form-control" min="1" value="{{ tournament.players_per_team|default:1 }}" required>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>{% if registration_mode == "individual" %}Name prefix{% else %}Team prefix{% endif %}</label>
+                        <input type="text" name="reg_prefix" class="form-control" value="{% if registration_mode == "individual" %}p{% else %}rteam{% endif %}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Username prefix</label>
+                        <input type="text" name="reg_username_prefix" class="form-control" value="r" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Default password</label>
+                    <input type="text" name="reg_password" class="form-control" value="pass123" required>
+                </div>
+                <button type="submit" class="btn btn-success">Register {% if registration_mode == "individual" %}Test Individuals{% else %}Test Teams{% endif %}</button>
+            </form>
+            {% else %}
+            <p class="text-muted mb-1">
+                Tournament must be in <strong>Registration Open</strong> status to use this action.
+                {% if tournament %}<span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span>{% endif %}
+            </p>
+            <button type="button" class="btn btn-outline" disabled>Unavailable — Not Open for Registration</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Randomize Court Preferences</div>
+        <div class="card-body">
+            {% if registration_mode == "individual" %}
+            <p class="text-muted mb-1">Not used for individual-mode tournaments (preferences are tied to team participations).</p>
+            <button type="button" class="btn btn-outline" disabled>Unavailable</button>
+            {% else %}
+            <p class="text-muted mb-1">Assigns random 1-3 preferred courts for every active team in selected tournament.</p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="randomize_court_preferences">
+                <button type="submit" class="btn btn-primary">Randomize Preferences</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Random Scores (First N Matches)</div>
+        <div class="card-body">
+            <p class="text-muted mb-1">Auto-fills random non-draw scores for the first N eligible matches and marks them confirmed.</p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="randomize_scores">
+                <div class="form-group">
+                    <label>Number of matches</label>
+                    <input type="number" name="match_count" class="form-control" min="1" value="20" required>
+                </div>
+                <button type="submit" class="btn btn-warning">Apply Random Scores</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Random Schedule (First N Unscheduled)</div>
+        <div class="card-body">
+            <p class="text-muted mb-1">Assigns times and courts to first N unscheduled matches using default match duration.</p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="randomize_schedule">
+                <div class="form-group">
+                    <label>Number of matches</label>
+                    <input type="number" name="schedule_count" class="form-control" min="1" value="20" required>
+                </div>
+                <button type="submit" class="btn btn-outline">Randomize Schedule</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

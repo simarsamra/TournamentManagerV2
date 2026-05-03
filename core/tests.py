@@ -1,16 +1,39 @@
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
-from django.db import models
+from django.db import models, IntegrityError
 from datetime import timedelta
 
-from .models import Team, Tournament, Match, Court, TimeSlot, CourtAvailability, Player, OpenSlot, RescheduleRequest, TeamMembership
-from .scheduling import generate_fixtures
+from .models import (
+    Team,
+    Tournament,
+    Match,
+    Court,
+    TimeSlot,
+    CourtAvailability,
+    Player,
+    OpenSlot,
+    RescheduleRequest,
+    TeamMembership,
+    TeamTournamentParticipation,
+    TeamTournamentCourtPreference,
+    TournamentIndividualRegistration,
+)
+from .scheduling import generate_fixtures, count_available_slots
 from .standings import calculate_standings, advance_winner
 from .withdrawals import handle_withdrawal
 from .forms import TournamentForm
 from .scheduling import generate_consolation_if_ready
+
+
+def _captain_user(team):
+	return TeamMembership.objects.get(team=team, role="captain").user
+
+
+def _participation(team, tournament):
+	return TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
 
 
 class UXAndLogicRegressionTests(TestCase):
@@ -35,33 +58,33 @@ class UXAndLogicRegressionTests(TestCase):
 	def _create_team(self, tournament, team_name, username=None, seed=0):
 		username = username or team_name.lower().replace(" ", "_")
 		user = User.objects.create_user(username=username, password="pass123")
-		return Team.objects.create(
-			user=user,
-			tournament=tournament,
-			name=team_name,
-			seed=seed,
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": seed}
 		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
+		return team
 
 	def test_register_duplicate_team_name_shows_form_error(self):
 		tournament = self._create_tournament()
 		tournament.status = "registration_open"
 		tournament.save(update_fields=["status"])
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
 		self._create_team(tournament, "Falcons", username="existing_user")
+		new_user = User.objects.create_user(username="new_user", password="abc12345")
+		self.client.force_login(new_user)
 
 		response = self.client.post(
-			reverse("register"),
+			reverse("create_team", kwargs={"pk": tournament.pk}),
 			{
 				"team_name": "Falcons",
-				"username": "new_user",
-				"password": "abc12345",
-				"password_confirm": "abc12345",
-				"player_names": "Alice",
-				"confirm_registration": "on",
+				"department": "Engineering",
+				"preferred_courts": [str(court.pk)],
 			},
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertContains(response, "Team name already exists")
+		self.assertContains(response, "already exists")
 
 	def test_fixtures_invalid_page_query_does_not_crash(self):
 		tournament = self._create_tournament()
@@ -140,6 +163,140 @@ class UXAndLogicRegressionTests(TestCase):
 		duplicate_messages = [str(m) for m in duplicate_response.context["messages"]]
 		self.assertTrue(any("skipped" in m.lower() for m in duplicate_messages))
 
+	def test_add_court_availability_stores_matches_per_court_per_day(self):
+		tournament = self._create_tournament(name="Matches Per Day")
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("add_court_availability", kwargs={"pk": tournament.pk}),
+			{
+				"courts": [str(court.pk)],
+				"weekdays": ["0"],
+				"start_time": "09:00",
+				"end_time": "12:00",
+				"start_date": "2026-05-01",
+				"matches_per_court_per_day": "2",
+				"is_active": "on",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		availability = CourtAvailability.objects.get(court=court)
+		self.assertEqual(availability.matches_per_court_per_day, 2)
+
+	def test_add_court_availability_supports_additional_start_times(self):
+		tournament = self._create_tournament(name="Explicit Times")
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("add_court_availability", kwargs={"pk": tournament.pk}),
+			{
+				"courts": [str(court.pk)],
+				"weekdays": ["0"],
+				"start_time": "10:00",
+				"additional_start_times": "13:00",
+				"start_date": "2026-05-04",
+				"end_date": "2026-05-04",
+				"matches_per_court_per_day": "2",
+				"is_active": "on",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		availability = CourtAvailability.objects.get(court=court)
+		self.assertEqual(availability.additional_start_times, "13:00")
+		self.assertEqual(availability.matches_per_court_per_day, 2)
+		self.assertEqual(count_available_slots(tournament), 2)
+
+	def test_estimate_court_availability_end_date_uses_matches_per_court_per_day(self):
+		tournament = self._create_tournament(name="Estimate Matches Per Day")
+		tournament.expected_teams_count = 4
+		tournament.save(update_fields=["expected_teams_count"])
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("estimate_court_availability_end_date", kwargs={"pk": tournament.pk}),
+			{
+				"courts": [str(court.pk)],
+				"weekdays": ["0", "2"],
+				"start_time": "09:00",
+				"end_time": "14:00",
+				"start_date": "2026-05-01",
+				"matches_per_court_per_day": "2",
+			},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		json_data = response.json()
+		self.assertEqual(json_data["status"], "ok")
+		self.assertIn("Estimated end date", json_data["message"])
+		self.assertIn("per court per day", json_data["message"])
+
+	def test_team_membership_supports_manager_role(self):
+		tournament = self._create_tournament(name="Role Model")
+		team = self._create_team(tournament, "Role Team")
+		manager_user = User.objects.create_user(username="role_manager", password="pass123")
+
+		membership = TeamMembership.objects.create(team=team, user=manager_user, role="member")
+
+		self.assertEqual(membership.role, "member")
+		self.assertIn("member", dict(TeamMembership.ROLE_CHOICES))
+
+	def test_team_can_have_multiple_tournament_participations(self):
+		first = self._create_tournament(name="Participation A")
+		second = self._create_tournament(name="Participation B")
+		team = self._create_team(first, "Multi Team")
+
+		p1 = TeamTournamentParticipation.objects.get(team=team, tournament=first)
+		p1.group = "A"
+		p1.seed = 1
+		p1.save(update_fields=["group", "seed"])
+		p2 = TeamTournamentParticipation.objects.create(team=team, tournament=second, group="B", seed=2)
+
+		self.assertNotEqual(p1.pk, p2.pk)
+		self.assertEqual(team.participations.count(), 2)
+
+	def test_team_participation_is_unique_per_tournament(self):
+		tournament = self._create_tournament(name="Unique Participation")
+		team = self._create_team(tournament, "Unique Team")
+
+		with self.assertRaises(IntegrityError):
+			TeamTournamentParticipation.objects.create(team=team, tournament=tournament)
+
+	def test_participation_court_preference_is_unique(self):
+		tournament = self._create_tournament(name="Preference Uniqueness")
+		team = self._create_team(tournament, "Pref Team")
+		court = Court.objects.create(tournament=tournament, name="Center", is_available=True)
+		participation = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+		TeamTournamentCourtPreference.objects.create(participation=participation, court=court)
+
+		with self.assertRaises(IntegrityError):
+			TeamTournamentCourtPreference.objects.create(participation=participation, court=court)
+
+	def test_backfill_team_participations_command_is_idempotent(self):
+		tournament = self._create_tournament(name="Backfill Tournament")
+		team = self._create_team(tournament, "Backfill Team")
+		court = Court.objects.create(tournament=tournament, name="Backfill Court", is_available=True)
+		participation = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+		TeamTournamentCourtPreference.objects.create(participation=participation, court=court)
+
+		call_command("backfill_team_participations")
+		first_participation_count = TeamTournamentParticipation.objects.count()
+		first_pref_count = TeamTournamentCourtPreference.objects.count()
+
+		call_command("backfill_team_participations")
+
+		self.assertEqual(TeamTournamentParticipation.objects.count(), first_participation_count)
+		self.assertEqual(TeamTournamentCourtPreference.objects.count(), first_pref_count)
+		self.assertTrue(
+			TeamTournamentParticipation.objects.filter(team=team, tournament=tournament).exists()
+		)
+
 	def test_add_court_availability_rejects_invalid_bulk_time_range(self):
 		tournament = self._create_tournament(name="Bad Availability")
 		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
@@ -181,8 +338,13 @@ class UXAndLogicRegressionTests(TestCase):
 		register_response = self.client.get(
 			reverse("tournament_register", kwargs={"pk": tournament.pk})
 		)
-		self.assertEqual(register_response.status_code, 200)
-		self.assertContains(register_response, "Center Court")
+		self.assertEqual(register_response.status_code, 302)
+
+		team_user = User.objects.create_user(username="court_view_user", password="pass123")
+		self.client.force_login(team_user)
+		create_team_response = self.client.get(reverse("create_team", kwargs={"pk": tournament.pk}))
+		self.assertEqual(create_team_response.status_code, 200)
+		self.assertContains(create_team_response, "Center Court")
 
 	def test_active_availability_marks_court_available(self):
 		tournament = self._create_tournament(name="Availability Reactivate")
@@ -210,22 +372,49 @@ class UXAndLogicRegressionTests(TestCase):
 		open_tournament.status = "registration_open"
 		open_tournament.save(update_fields=["status"])
 		court = Court.objects.create(tournament=open_tournament, name="Court A", is_available=True)
+		new_user = User.objects.create_user(username="joiners_user_blocked", password="abc12345")
+		self.client.force_login(new_user)
 
 		response = self.client.post(
-			reverse("tournament_register", kwargs={"pk": open_tournament.pk}),
+			reverse("create_team", kwargs={"pk": open_tournament.pk}),
 			{
 				"team_name": "Joiners",
-				"username": "joiners_user_blocked",
-				"password": "abc12345",
-				"password_confirm": "abc12345",
-				"player_names": "Alice",
+				"department": "Engineering",
 				"preferred_courts": [str(court.pk)],
 			},
+			follow=True,
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertFalse(Team.objects.filter(tournament=open_tournament, name="Joiners").exists())
-		self.assertContains(response, "Please confirm that the team information is correct")
+		self.assertTrue(Team.objects.filter(name="Joiners").exists())
+
+	def test_test_maker_create_teams_creates_participations(self):
+		tournament = self._create_tournament(name="Test Maker Participation")
+		self.client.force_login(self.organizer)
+
+		session = self.client.session
+		session["selected_tournament_id"] = tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "create_test_teams",
+				"team_count": "2",
+				"members_per_team": "2",
+				"team_prefix": "tm_team_",
+				"username_prefix": "tmuser_",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TeamTournamentParticipation.objects.filter(tournament=tournament).count(), 2)
+		self.assertEqual(TeamMembership.objects.filter(team__participations__tournament=tournament).count(), 4)
+		self.assertEqual(
+			TeamTournamentParticipation.objects.filter(tournament=tournament).count(),
+			2,
+		)
 
 	def test_organizer_can_delete_tournament(self):
 		tournament = self._create_tournament(name="Delete Me")
@@ -245,7 +434,7 @@ class UXAndLogicRegressionTests(TestCase):
 	def test_non_organizer_cannot_delete_tournament(self):
 		tournament = self._create_tournament(name="Keep Me")
 		team = self._create_team(tournament, "Falcons")
-		self.client.force_login(team.user)
+		self.client.force_login(_captain_user(team))
 
 		response = self.client.post(
 			reverse("delete_tournament", kwargs={"pk": tournament.pk}),
@@ -268,13 +457,13 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		user.refresh_from_db()
-		self.assertTrue(user.is_staff)
+		self.assertTrue(user.organizer_profile.verified)
 
 	def test_non_organizer_cannot_promote_user_to_organizer(self):
 		tournament = self._create_tournament(name="Role Guard")
 		team = self._create_team(tournament, "Falcons")
 		target = User.objects.create_user(username="target_regular", password="pass123")
-		self.client.force_login(team.user)
+		self.client.force_login(_captain_user(team))
 
 		response = self.client.post(
 			reverse("set_user_organizer", kwargs={"user_pk": target.pk}),
@@ -283,7 +472,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 302)
 		target.refresh_from_db()
-		self.assertFalse(target.is_staff)
+		self.assertFalse(target.organizer_profile.verified)
 
 	def test_organizer_can_demote_another_organizer_if_one_remains(self):
 		other_organizer = User.objects.create_user(
@@ -299,7 +488,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		other_organizer.refresh_from_db()
-		self.assertFalse(other_organizer.is_staff)
+		self.assertFalse(other_organizer.organizer_profile.verified)
 
 	def test_cannot_demote_last_organizer(self):
 		self.client.force_login(self.organizer)
@@ -312,7 +501,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.organizer.refresh_from_db()
-		self.assertTrue(self.organizer.is_staff)
+		self.assertTrue(self.organizer.organizer_profile.verified)
 		msgs = [str(m) for m in response.context["messages"]]
 		self.assertTrue(any("at least one organizer" in m.lower() for m in msgs))
 
@@ -330,7 +519,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		target.refresh_from_db()
-		self.assertTrue(target.is_staff)
+		self.assertTrue(target.organizer_profile.verified)
 		msgs = [str(m) for m in response.context["messages"]]
 		self.assertTrue(any("invalid organizer role update request" in m.lower() for m in msgs))
 
@@ -394,6 +583,148 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(teams_response, "Alpha")
 		self.assertNotContains(teams_response, "Beta")
 
+	def test_home_route_is_public_for_anonymous_users(self):
+		tournament = self._create_tournament(name="Public Main")
+		tournament.status = "active"
+		tournament.save(update_fields=["status"])
+
+		response = self.client.get(reverse("home"))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Tournament Manager")
+		self.assertContains(response, "Login")
+		self.assertEqual(response.context.get("tournament"), tournament)
+
+	def test_public_views_support_tournament_query_selection(self):
+		first = self._create_tournament(name="Public A")
+		second = self._create_tournament(name="Public B")
+
+		response = self.client.get(reverse("public_standings"), {"tournament": second.pk})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.context["tournament"], second)
+		self.assertEqual(self.client.session.get("selected_tournament_id"), second.pk)
+
+		fixtures_response = self.client.get(reverse("public_fixtures"))
+		self.assertEqual(fixtures_response.status_code, 200)
+		self.assertEqual(fixtures_response.context["tournament"], second)
+
+	def test_teams_page_shows_only_active_teams_in_selected_tournament(self):
+		tournament = self._create_tournament(name="Visibility Cup")
+		active_team = self._create_team(tournament, "Active Team")
+		withdrawn_team = self._create_team(tournament, "Withdrawn Team")
+		p = TeamTournamentParticipation.objects.get(team=withdrawn_team, tournament=tournament)
+		p.status = "withdrawn"
+		p.save(update_fields=["status"])
+
+		self.client.force_login(self.organizer)
+		response = self.client.get(reverse("teams"))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Active Team")
+		self.assertNotContains(response, "Withdrawn Team")
+
+	def test_remove_team_member_keeps_user_account(self):
+		tournament = self._create_tournament(name="Membership Safety")
+		team = self._create_team(tournament, "Captains")
+		member_user = User.objects.create_user(username="kept_member", password="pass123")
+		TeamMembership.objects.create(team=team, user=member_user, role="member")
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("remove_team_member", kwargs={"pk": team.pk, "user_pk": member_user.pk}),
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertFalse(TeamMembership.objects.filter(team=team, user=member_user).exists())
+		self.assertTrue(User.objects.filter(pk=member_user.pk).exists())
+
+	def test_add_existing_user_to_team(self):
+		tournament = self._create_tournament(name="Existing User Add")
+		tournament.players_per_team = 2
+		tournament.save(update_fields=["players_per_team"])
+		team = self._create_team(tournament, "Captains")
+		existing_user = User.objects.create_user(username="already_here", password="pass123")
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("manage_team_members", kwargs={"pk": team.pk}),
+			{"member_action": "add_existing", "username": existing_user.username},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(TeamMembership.objects.filter(team=team, user=existing_user, role="member").exists())
+
+	def test_add_existing_user_prevents_duplicate_membership(self):
+		tournament = self._create_tournament(name="Duplicate Existing User")
+		tournament.players_per_team = 3
+		tournament.save(update_fields=["players_per_team"])
+		team = self._create_team(tournament, "Captains")
+		existing_user = User.objects.create_user(username="already_member", password="pass123")
+		TeamMembership.objects.create(team=team, user=existing_user, role="member")
+		self.client.force_login(self.organizer)
+
+		response = self.client.post(
+			reverse("manage_team_members", kwargs={"pk": team.pk}),
+			{"member_action": "add_existing", "username": existing_user.username},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TeamMembership.objects.filter(team=team, user=existing_user).count(), 1)
+
+	def test_user_can_update_own_profile_fields(self):
+		user = User.objects.create_user(
+			username="profile_user",
+			password="pass123",
+			first_name="Old",
+			last_name="Name",
+			email="old@example.com",
+		)
+		self.client.force_login(user)
+
+		response = self.client.post(
+			reverse("profile"),
+			{
+				"action": "update_profile",
+				"first_name": "New",
+				"last_name": "User",
+				"email": "new@example.com",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		user.refresh_from_db()
+		self.assertEqual(user.first_name, "New")
+		self.assertEqual(user.last_name, "User")
+		self.assertEqual(user.email, "new@example.com")
+
+	def test_user_can_change_own_password(self):
+		user = User.objects.create_user(username="pw_user", password="pass123")
+		self.client.force_login(user)
+
+		response = self.client.post(
+			reverse("profile"),
+			{
+				"action": "change_password",
+				"current_password": "pass123",
+				"new_password": "pass12345",
+				"confirm_password": "pass12345",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		user.refresh_from_db()
+		self.assertTrue(user.check_password("pass12345"))
+
+		self.client.logout()
+		login_ok = self.client.login(username="pw_user", password="pass12345")
+		self.assertTrue(login_ok)
+
 	def test_tournament_form_saves_start_date_and_expected_teams(self):
 		form = TournamentForm(data={
 			"name": "Planned Event",
@@ -422,28 +753,120 @@ class UXAndLogicRegressionTests(TestCase):
 		open_tournament.save(update_fields=["status"])
 		other_tournament = self._create_tournament(name="Other Cup")
 		court = Court.objects.create(tournament=open_tournament, name="Court A", is_available=True)
+		join_user = User.objects.create_user(username="joiners_user", password="abc12345")
+		self.client.force_login(join_user)
 
 		response = self.client.post(
-			reverse("tournament_register", kwargs={"pk": open_tournament.pk}),
+			reverse("create_team", kwargs={"pk": open_tournament.pk}),
 			{
 				"team_name": "Joiners",
-				"username": "joiners_user",
 				"department": "Engineering",
-				"password": "abc12345",
-				"password_confirm": "abc12345",
-				"player_names": "Alice",
 				"preferred_courts": [str(court.pk)],
-				"confirm_registration": "on",
 			},
 			follow=True,
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertTrue(Team.objects.filter(tournament=open_tournament, name="Joiners").exists())
-		self.assertFalse(Team.objects.filter(tournament=other_tournament, name="Joiners").exists())
-		self.assertEqual(
-			Team.objects.get(tournament=open_tournament, name="Joiners").department,
-			"Engineering",
+		team = Team.objects.filter(name="Joiners").first()
+		self.assertIsNotNone(team)
+		self.assertTrue(
+			TeamTournamentParticipation.objects.filter(team=team, tournament=open_tournament).exists()
+		)
+		self.assertFalse(
+			TeamTournamentParticipation.objects.filter(team=team, tournament=other_tournament).exists()
+		)
+		self.assertEqual(team.department, "Engineering")
+
+	def test_user_can_create_multiple_standalone_teams(self):
+		user = User.objects.create_user(username="multi_team_owner", password="abc12345")
+		self.client.force_login(user)
+
+		response_one = self.client.post(
+			reverse("create_standalone_team"),
+			{
+				"team_name": "Street Smashers",
+				"sport_type": "table_tennis",
+				"department": "Operations",
+			},
+			follow=True,
+		)
+		response_two = self.client.post(
+			reverse("create_standalone_team"),
+			{
+				"team_name": "Sunday Strikers",
+				"sport_type": "tennis",
+				"department": "Finance",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response_one.status_code, 200)
+		self.assertEqual(response_two.status_code, 200)
+		self.assertEqual(Team.objects.filter(memberships__user=user).distinct().count(), 2)
+		self.assertTrue(Team.objects.filter(name="Street Smashers", sport_type="table_tennis").exists())
+		self.assertTrue(Team.objects.filter(name="Sunday Strikers", sport_type="tennis").exists())
+
+	def test_teams_page_without_selected_tournament_shows_create_team_action(self):
+		user = User.objects.create_user(username="no_tournament_user", password="abc12345")
+		self.client.force_login(user)
+
+		response = self.client.get(reverse("teams"))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Create Standalone Team")
+
+	def test_enter_existing_team_rejects_team_with_extra_members(self):
+		open_tournament = self._create_tournament(name="Open 2P")
+		open_tournament.status = "registration_open"
+		open_tournament.players_per_team = 2
+		open_tournament.save(update_fields=["status", "players_per_team"])
+
+		captain = User.objects.create_user(username="cap_over", password="pass123")
+		member1 = User.objects.create_user(username="mem_over_1", password="pass123")
+		member2 = User.objects.create_user(username="mem_over_2", password="pass123")
+		team = Team.objects.create(name="Oversized Team", sport_type=open_tournament.sport_type)
+		TeamMembership.objects.create(team=team, user=captain, role="captain")
+		TeamMembership.objects.create(team=team, user=member1, role="member")
+		TeamMembership.objects.create(team=team, user=member2, role="member")
+
+		self.client.force_login(captain)
+		response = self.client.post(
+			reverse("enter_existing_team", kwargs={"pk": open_tournament.pk}),
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertFalse(
+			TeamTournamentParticipation.objects.filter(team=team, tournament=open_tournament).exists()
+		)
+		msgs = [str(m) for m in response.context["messages"]]
+		self.assertTrue(any("must have exactly" in m.lower() for m in msgs))
+
+	def test_individual_registration_mode_registers_player_name(self):
+		tournament = self._create_tournament(name="Singles Cup")
+		tournament.status = "registration_open"
+		tournament.registration_mode = "individual"
+		tournament.players_per_team = 1
+		tournament.save(update_fields=["status", "registration_mode", "players_per_team"])
+
+		user = User.objects.create_user(username="solo_player", password="abc12345", first_name="Solo Player")
+		self.client.force_login(user)
+
+		response = self.client.post(
+			reverse("create_team", kwargs={"pk": tournament.pk}),
+			{"participant_name": "Solo Player"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		reg = TournamentIndividualRegistration.objects.filter(user=user, tournament=tournament).first()
+		self.assertIsNotNone(reg)
+		self.assertEqual(reg.display_name, "Solo Player")
+		self.assertIsNotNone(reg.shadow_team)
+		self.assertTrue(reg.shadow_team.is_internal)
+		self.assertFalse(TeamMembership.objects.filter(user=user).exists())
+		self.assertTrue(
+			TeamTournamentParticipation.objects.filter(team=reg.shadow_team, tournament=tournament).exists()
 		)
 
 	def test_organizer_generates_schedule_draft_then_publishes_tournament(self):
@@ -462,7 +885,8 @@ class UXAndLogicRegressionTests(TestCase):
 		for name in ("Team A", "Team B"):
 			team = self._create_team(tournament, name)
 			Player.objects.create(team=team, name=f"{name} Player")
-			team.preferred_courts.add(court)
+			p = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court)
 		self.client.force_login(self.organizer)
 
 		self.client.post(reverse("open_registration", kwargs={"pk": tournament.pk}), follow=True)
@@ -515,7 +939,8 @@ class UXAndLogicRegressionTests(TestCase):
 		team4 = self._create_team(tournament, "D")
 		for team in (team3, team4):
 			Player.objects.create(team=team, name=f"{team.name} Player")
-			team.preferred_courts.add(court)
+			p = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court)
 		response = self.client.post(
 			reverse("start_tournament", kwargs={"pk": tournament.pk}),
 			follow=True,
@@ -540,7 +965,8 @@ class UXAndLogicRegressionTests(TestCase):
 		for name in ("Red", "Blue"):
 			team = self._create_team(tournament, name)
 			Player.objects.create(team=team, name=f"{name} Player 1")
-			team.preferred_courts.add(court)
+			p = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court)
 		self.client.force_login(self.organizer)
 
 		response = self.client.post(
@@ -550,7 +976,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		msgs = [str(m) for m in response.context["messages"]]
-		self.assertTrue(any("players" in m.lower() for m in msgs))
+		self.assertTrue(any("enough members" in m.lower() for m in msgs))
 
 	def test_generate_fixtures_uses_court_availability_slots(self):
 		tournament = self._create_tournament(name="Court Bound")
@@ -567,8 +993,9 @@ class UXAndLogicRegressionTests(TestCase):
 		)
 		team1 = self._create_team(tournament, "Falcons")
 		team2 = self._create_team(tournament, "Wolves")
-		team1.preferred_courts.add(court)
-		team2.preferred_courts.add(court)
+		for team in (team1, team2):
+			p = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court)
 		Player.objects.create(team=team1, name="Falcons Player")
 		Player.objects.create(team=team2, name="Wolves Player")
 
@@ -605,7 +1032,9 @@ class UXAndLogicRegressionTests(TestCase):
 		teams = [self._create_team(tournament, f"Team{i}", seed=i) for i in range(1, 5)]
 		for team in teams:
 			Player.objects.create(team=team, name=f"{team.name} Player")
-			team.preferred_courts.add(court1, court2)
+			p = TeamTournamentParticipation.objects.get(team=team, tournament=tournament)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court1)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=p, court=court2)
 
 		generate_fixtures(tournament)
 
@@ -620,6 +1049,9 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_confirming_match_ahead_of_schedule_creates_open_slot(self):
 		tournament = self._create_tournament(name="Early Finish Opens Slot")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		court = Court.objects.create(tournament=tournament, name="Court 1", is_available=True)
 		team1 = self._create_team(tournament, "Alpha", username="alpha_open_slot")
 		team2 = self._create_team(tournament, "Beta", username="beta_open_slot")
@@ -634,7 +1066,7 @@ class UXAndLogicRegressionTests(TestCase):
 			status="upcoming",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		submit_response = self.client.post(
 			reverse("submit_score", kwargs={"pk": match.pk}),
 			{"score_team1": 3, "score_team2": 1, "notes": "Played early"},
@@ -642,7 +1074,7 @@ class UXAndLogicRegressionTests(TestCase):
 		)
 		self.assertEqual(submit_response.status_code, 200)
 
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		confirm_response = self.client.post(reverse("confirm_score", kwargs={"pk": match.pk}), follow=True)
 
 		self.assertEqual(confirm_response.status_code, 200)
@@ -681,6 +1113,9 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_request_reschedule_can_use_open_slot_choice(self):
 		tournament = self._create_tournament(name="Open Slot Choice")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		primary_court = Court.objects.create(tournament=tournament, name="Primary", is_available=True)
 		alt_court = Court.objects.create(tournament=tournament, name="Alt", is_available=True)
 		team1 = self._create_team(tournament, "Res A", username="res_a_user")
@@ -703,7 +1138,7 @@ class UXAndLogicRegressionTests(TestCase):
 			reason="Free slot",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.post(
 			reverse("request_reschedule", kwargs={"pk": match.pk}),
 			{"open_slot": str(slot.pk), "reason": "Use free slot"},
@@ -711,12 +1146,15 @@ class UXAndLogicRegressionTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		rr = RescheduleRequest.objects.get(match=match, requested_by=team1)
+		rr = RescheduleRequest.objects.get(match=match, requested_by=_captain_user(team1))
 		self.assertEqual(rr.new_time, slot.start_time)
 		self.assertEqual(rr.new_court, alt_court)
 
 	def test_match_detail_reschedule_shows_open_slot_date_in_list(self):
 		tournament = self._create_tournament(name="Readable Slot Picker")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		primary_court = Court.objects.create(tournament=tournament, name="Primary", is_available=True)
 		alt_court = Court.objects.create(tournament=tournament, name="Alt", is_available=True)
 		team1 = self._create_team(tournament, "Slot A", username="slot_a_user")
@@ -739,7 +1177,7 @@ class UXAndLogicRegressionTests(TestCase):
 			reason="Readable slot",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.get(reverse("match_detail", kwargs={"pk": match.pk}))
 
 		self.assertEqual(response.status_code, 200)
@@ -763,7 +1201,7 @@ class UXAndLogicRegressionTests(TestCase):
 			status="confirmed",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.get(reverse("match_detail", kwargs={"pk": match.pk}))
 
 		self.assertEqual(response.status_code, 200)
@@ -786,6 +1224,9 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_match_detail_partial_refresh_returns_section_only(self):
 		tournament = self._create_tournament(name="Live Match Detail")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		court = Court.objects.create(tournament=tournament, name="Court Live", is_available=True)
 		team1 = self._create_team(tournament, "Live A", username="live_a_user")
 		team2 = self._create_team(tournament, "Live B", username="live_b_user")
@@ -800,7 +1241,7 @@ class UXAndLogicRegressionTests(TestCase):
 			status="upcoming",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.get(
 			reverse("match_detail", kwargs={"pk": match.pk}),
 			{"partial": "1"},
@@ -814,6 +1255,9 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_match_detail_reschedule_shows_same_day_context_for_both_teams(self):
 		tournament = self._create_tournament(name="Same Day Slot Context")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		primary_court = Court.objects.create(tournament=tournament, name="Primary", is_available=True)
 		court_x = Court.objects.create(tournament=tournament, name="Court X", is_available=True)
 		court_z = Court.objects.create(tournament=tournament, name="Court Z", is_available=True)
@@ -860,7 +1304,7 @@ class UXAndLogicRegressionTests(TestCase):
 			reason="Same-day review",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.get(reverse("match_detail", kwargs={"pk": match.pk}))
 
 		self.assertEqual(response.status_code, 200)
@@ -872,6 +1316,9 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_request_reschedule_accepts_open_slot_backed_by_completed_match(self):
 		tournament = self._create_tournament(name="Completed Match Slot")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		current_court = Court.objects.create(tournament=tournament, name="Current", is_available=True)
 		open_court = Court.objects.create(tournament=tournament, name="Open Court", is_available=True)
 		team1 = self._create_team(tournament, "Team 9", username="team9_user")
@@ -908,7 +1355,7 @@ class UXAndLogicRegressionTests(TestCase):
 			reason="Finished early",
 		)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.post(
 			reverse("request_reschedule", kwargs={"pk": match.pk}),
 			{"open_slot": str(slot.pk), "reason": "Move to open slot"},
@@ -916,11 +1363,14 @@ class UXAndLogicRegressionTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=team1).exists())
+		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=_captain_user(team1)).exists())
 		self.assertFalse(any("conflict" in str(m).lower() for m in response.context["messages"]))
 
 	def test_request_reschedule_allows_same_day_if_times_do_not_overlap(self):
 		tournament = self._create_tournament(name="Same Day Reschedule")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		court1 = Court.objects.create(tournament=tournament, name="Court 1", is_available=True)
 		court2 = Court.objects.create(tournament=tournament, name="Court 2", is_available=True)
 		team9 = self._create_team(tournament, "Team 9", username="same_day_team9")
@@ -956,7 +1406,7 @@ class UXAndLogicRegressionTests(TestCase):
 			reason="Later same-day opening",
 		)
 
-		self.client.force_login(team10.user)
+		self.client.force_login(_captain_user(team10))
 		response = self.client.post(
 			reverse("request_reschedule", kwargs={"pk": match.pk}),
 			{"open_slot": str(slot.pk), "reason": "Later the same day"},
@@ -964,7 +1414,7 @@ class UXAndLogicRegressionTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=team10).exists())
+		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=_captain_user(team10)).exists())
 		self.assertFalse(any("already has another match scheduled on that day" in str(m).lower() for m in response.context["messages"]))
 
 	def test_knockout_disallows_draw_on_confirm(self):
@@ -976,10 +1426,15 @@ class UXAndLogicRegressionTests(TestCase):
 		match.status = "pending_confirmation"
 		match.score_team1 = 2
 		match.score_team2 = 2
-		match.submitted_by = team1
-		match.save(update_fields=["status", "score_team1", "score_team2", "submitted_by"])
+		match.submitted_by = _captain_user(team1)
+		match.score_submitted_at = timezone.now()
+		match.dispute_deadline_at = timezone.now() + timedelta(hours=24)
+		match.save(update_fields=[
+			"status", "score_team1", "score_team2", "submitted_by",
+			"score_submitted_at", "dispute_deadline_at",
+		])
 
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		response = self.client.post(reverse("confirm_score", kwargs={"pk": match.pk}), follow=True)
 
 		self.assertEqual(response.status_code, 200)
@@ -1012,6 +1467,24 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertIn("bracket", response.context)
 		self.assertTrue(response.context["bracket"])
+
+	def test_knockout_standings_uses_quarter_semi_final_labels(self):
+		tournament = self._create_tournament(fmt="knockout", name="Knockout Labels")
+		for i in range(1, 9):
+			self._create_team(tournament, f"Team {i}", seed=i)
+		generate_fixtures(tournament)
+
+		self.client.force_login(self.organizer)
+		session = self.client.session
+		session["selected_tournament_id"] = tournament.pk
+		session.save()
+
+		response = self.client.get(reverse("standings"), follow=True)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Quarter-finals")
+		self.assertContains(response, "Semi-finals")
+		self.assertContains(response, "Final")
 
 	def test_analytics_exposes_head_to_head_form_and_prep_context(self):
 		tournament = self._create_tournament(fmt="round_robin", name="Analytics Context")
@@ -1137,12 +1610,12 @@ class DoubleEliminationBracketTests(TestCase):
 	def _create_team(self, tournament, team_name, username=None, seed=0):
 		username = username or team_name.lower().replace(" ", "_")
 		user = User.objects.create_user(username=username, password="pass123")
-		return Team.objects.create(
-			user=user,
-			tournament=tournament,
-			name=team_name,
-			seed=seed,
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": seed}
 		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
+		return team
 
 	def test_double_elim_winners_bracket_progression(self):
 		"""Verify winners bracket matches advance correctly."""
@@ -1163,7 +1636,7 @@ class DoubleEliminationBracketTests(TestCase):
 			match.score_team1 = 2
 			match.score_team2 = 1
 			match.winner = match.team1
-			match.submitted_by = match.team1
+			match.submitted_by = _captain_user(match.team1)
 			match.save(update_fields=["status", "score_team1", "score_team2", "winner", "submitted_by"])
 
 			# Advance winner to next round
@@ -1292,11 +1765,16 @@ class DoubleEliminationBracketTests(TestCase):
 		match.status = "pending_confirmation"
 		match.score_team1 = 2
 		match.score_team2 = 2
-		match.submitted_by = team1
-		match.save(update_fields=["status", "score_team1", "score_team2", "submitted_by"])
+		match.submitted_by = _captain_user(team1)
+		match.score_submitted_at = timezone.now()
+		match.dispute_deadline_at = timezone.now() + timedelta(hours=24)
+		match.save(update_fields=[
+			"status", "score_team1", "score_team2", "submitted_by",
+			"score_submitted_at", "dispute_deadline_at",
+		])
 
 		# Try to confirm as opponent
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		response = self.client.post(
 			reverse("confirm_score", kwargs={"pk": match.pk}), follow=True
 		)
@@ -1332,12 +1810,12 @@ class WithdrawalPolicyTests(TestCase):
 	def _create_team(self, tournament, team_name, username=None, seed=0):
 		username = username or team_name.lower().replace(" ", "_")
 		user = User.objects.create_user(username=username, password="pass123")
-		return Team.objects.create(
-			user=user,
-			tournament=tournament,
-			name=team_name,
-			seed=seed,
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": seed}
 		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
+		return team
 
 	def _create_mock_request(self, user=None):
 		"""Create a mock request object for withdrawal handling."""
@@ -1350,6 +1828,9 @@ class WithdrawalPolicyTests(TestCase):
 	def test_withdrawal_forfeit_policy_marks_future_matches(self):
 		"""Verify forfeit policy marks future matches as forfeited with opponent as winner."""
 		tournament = self._create_tournament(policy="forfeit")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
 		team3 = self._create_team(tournament, "Team C", seed=3)
@@ -1366,7 +1847,7 @@ class WithdrawalPolicyTests(TestCase):
 
 		# Verify team status is withdrawn
 		team1.refresh_from_db()
-		self.assertEqual(team1.status, "withdrawn")
+		self.assertEqual(_participation(team1, tournament).status, "withdrawn")
 
 		# Verify future matches are now forfeited with opponent as winner
 		forfeited_matches = tournament.matches.filter(
@@ -1384,6 +1865,9 @@ class WithdrawalPolicyTests(TestCase):
 	def test_withdrawal_void_policy_marks_future_matches_cancelled(self):
 		"""Verify void policy marks future matches as cancelled."""
 		tournament = self._create_tournament(policy="void")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
 		team3 = self._create_team(tournament, "Team C", seed=3)
@@ -1413,6 +1897,9 @@ class WithdrawalPolicyTests(TestCase):
 	def test_withdrawal_forfeit_standings_impact(self):
 		"""Verify forfeit policy impacts standings (opponent gets win)."""
 		tournament = self._create_tournament(policy="forfeit")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
 		team3 = self._create_team(tournament, "Team C", seed=3)
@@ -1438,7 +1925,7 @@ class WithdrawalPolicyTests(TestCase):
 
 		# Verify team1 is withdrawn
 		team1.refresh_from_db()
-		self.assertEqual(team1.status, "withdrawn")
+		self.assertEqual(_participation(team1, tournament).status, "withdrawn")
 
 		# Check that forfeit match was created
 		forfeits = tournament.matches.filter(status="forfeited")
@@ -1453,6 +1940,9 @@ class WithdrawalPolicyTests(TestCase):
 	def test_withdrawal_void_standings_not_impacted(self):
 		"""Verify void policy doesn't impact standings (match voided)."""
 		tournament = self._create_tournament(policy="void")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
 		team3 = self._create_team(tournament, "Team C", seed=3)
@@ -1490,6 +1980,9 @@ class WithdrawalPolicyTests(TestCase):
 	def test_withdrawal_creates_open_slots(self):
 		"""Verify scheduled matches create open slots when team withdraws."""
 		tournament = self._create_tournament(policy="forfeit")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
 
@@ -1523,13 +2016,38 @@ class WithdrawalPolicyTests(TestCase):
 		open_slots_after = tournament.open_slots.count()
 		self.assertGreater(open_slots_after, open_slots_before)
 
+	def test_pre_activation_withdrawal_cancels_draft_matches_without_forfeit(self):
+		tournament = self._create_tournament(policy="forfeit")
+		tournament.status = "scheduled"
+		tournament.save(update_fields=["status"])
+		team1 = self._create_team(tournament, "Team A", seed=1)
+		self._create_team(tournament, "Team B", seed=2)
+		generate_fixtures(tournament)
+
+		request = self._create_mock_request()
+		handle_withdrawal(request, team1, tournament)
+
+		self.assertEqual(_participation(team1, tournament).status, "withdrawn")
+		self.assertFalse(
+			tournament.matches.filter(
+				(models.Q(team1=team1) | models.Q(team2=team1)),
+				status="forfeited",
+			).exists()
+		)
+		self.assertTrue(
+			tournament.matches.filter(
+				(models.Q(team1=team1) | models.Q(team2=team1)),
+				status="cancelled",
+			).exists()
+		)
+
 	def test_team_self_withdraw_requires_correct_password(self):
 		tournament = self._create_tournament(policy="forfeit")
 		team1 = self._create_team(tournament, "Team A", username="team_a", seed=1)
 		self._create_team(tournament, "Team B", username="team_b", seed=2)
 		generate_fixtures(tournament)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.post(
 			reverse("withdraw_team", kwargs={"pk": team1.pk}),
 			{"confirm_withdraw": "yes", "password": "wrong-pass"},
@@ -1538,7 +2056,7 @@ class WithdrawalPolicyTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		team1.refresh_from_db()
-		self.assertEqual(team1.status, "active")
+		self.assertEqual(_participation(team1, tournament).status, "active")
 		msgs = [str(m) for m in response.context["messages"]]
 		self.assertTrue(any("Incorrect password" in m for m in msgs))
 
@@ -1548,7 +2066,7 @@ class WithdrawalPolicyTests(TestCase):
 		self._create_team(tournament, "Team B", username="team_b2", seed=2)
 		generate_fixtures(tournament)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.post(
 			reverse("withdraw_team", kwargs={"pk": team1.pk}),
 			{"confirm_withdraw": "yes", "password": "pass123"},
@@ -1557,7 +2075,7 @@ class WithdrawalPolicyTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		team1.refresh_from_db()
-		self.assertEqual(team1.status, "withdrawn")
+		self.assertEqual(_participation(team1, tournament).status, "withdrawn")
 
 	def test_organizer_can_withdraw_team_without_password(self):
 		tournament = self._create_tournament(policy="forfeit")
@@ -1573,7 +2091,7 @@ class WithdrawalPolicyTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		team1.refresh_from_db()
-		self.assertEqual(team1.status, "withdrawn")
+		self.assertEqual(_participation(team1, tournament).status, "withdrawn")
 
 	def test_organizer_mark_no_show_forfeits_match(self):
 		tournament = self._create_tournament(fmt="round_robin", policy="forfeit")
@@ -1584,6 +2102,9 @@ class WithdrawalPolicyTests(TestCase):
 		match.scheduled_time = timezone.now() - timedelta(minutes=20)
 		match.scheduled_end_time = timezone.now() + timedelta(minutes=10)
 		match.save(update_fields=["scheduled_time", "scheduled_end_time"])
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 
 		self.client.force_login(self.organizer)
 		response = self.client.post(
@@ -1604,7 +2125,7 @@ class WithdrawalPolicyTests(TestCase):
 		generate_fixtures(tournament)
 		match = tournament.matches.filter(status="upcoming").first()
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		response = self.client.post(
 			reverse("mark_no_show", kwargs={"pk": match.pk}),
 			{"no_show_team": str(team2.pk)},
@@ -1625,7 +2146,7 @@ class WithdrawalPolicyTests(TestCase):
 		match.scheduled_end_time = match.scheduled_time + timedelta(minutes=30)
 		match.save(update_fields=["scheduled_time", "scheduled_end_time"])
 
-		self.client.force_login(team_b.user)
+		self.client.force_login(_captain_user(team_b))
 		response = self.client.post(
 			reverse("report_no_show", kwargs={"pk": match.pk}),
 			{"no_show_team": str(team_a.pk)},
@@ -1640,13 +2161,16 @@ class WithdrawalPolicyTests(TestCase):
 		tournament = self._create_tournament(fmt="round_robin", policy="forfeit")
 		team_a = self._create_team(tournament, "Team A", username="team_a_no_show", seed=1)
 		team_b = self._create_team(tournament, "Team B", username="team_b_no_show", seed=2)
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		generate_fixtures(tournament)
 		match = tournament.matches.filter(status="upcoming").first()
 		match.scheduled_time = timezone.now() - timedelta(minutes=20)
 		match.scheduled_end_time = timezone.now() + timedelta(minutes=10)
 		match.save(update_fields=["scheduled_time", "scheduled_end_time"])
 
-		self.client.force_login(team_b.user)
+		self.client.force_login(_captain_user(team_b))
 		response = self.client.post(
 			reverse("report_no_show", kwargs={"pk": match.pk}),
 			{"no_show_team": str(team_a.pk)},
@@ -1659,12 +2183,15 @@ class WithdrawalPolicyTests(TestCase):
 		self.assertEqual(match.no_show_reports.filter(status="pending").count(), 1)
 		self.assertContains(response, "No-show reported")
 
-		self.client.force_login(team_a.user)
+		self.client.force_login(_captain_user(team_b))
 		response = self.client.get(reverse("dashboard"))
 		self.assertContains(response, "No-show notice")
 
 	def test_reschedule_request_by_reported_team_clears_pending_no_show(self):
 		tournament = self._create_tournament(fmt="round_robin", policy="forfeit")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
 		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
 		team_a = self._create_team(tournament, "Team A", username="team_a_reschedule", seed=1)
 		team_b = self._create_team(tournament, "Team B", username="team_b_reschedule", seed=2)
@@ -1675,14 +2202,14 @@ class WithdrawalPolicyTests(TestCase):
 		match.scheduled_end_time = timezone.now() + timedelta(minutes=10)
 		match.save(update_fields=["court", "scheduled_time", "scheduled_end_time"])
 
-		self.client.force_login(team_b.user)
+		self.client.force_login(_captain_user(team_b))
 		self.client.post(
 			reverse("report_no_show", kwargs={"pk": match.pk}),
 			{"no_show_team": str(team_a.pk)},
 			follow=True,
 		)
 
-		self.client.force_login(team_a.user)
+		self.client.force_login(_captain_user(team_a))
 		response = self.client.post(
 			reverse("request_reschedule", kwargs={"pk": match.pk}),
 			{
@@ -1707,7 +2234,7 @@ class WithdrawalPolicyTests(TestCase):
 		match.scheduled_end_time = timezone.now() + timedelta(minutes=10)
 		match.save(update_fields=["scheduled_time", "scheduled_end_time"])
 
-		self.client.force_login(team_b.user)
+		self.client.force_login(_captain_user(team_b))
 		self.client.post(
 			reverse("report_no_show", kwargs={"pk": match.pk}),
 			{"no_show_team": str(team_a.pk)},
@@ -1787,14 +2314,13 @@ class TournamentLifecycleTests(TestCase):
 			user = User.objects.create_user(
 				username=f"team_user_{i}", password="pass123"
 			)
-			team = Team.objects.create(
-				user=user,
-				tournament=tournament,
-				name=f"Team {i}",
-				seed=i,
+			team, _ = Team.objects.get_or_create(name=f"Team {i}")
+			participation, _ = TeamTournamentParticipation.objects.get_or_create(
+				team=team, tournament=tournament, defaults={"status": "active", "seed": i}
 			)
+			TeamMembership.objects.create(team=team, user=user, role="captain")
 			Player.objects.create(team=team, name=f"Player {i}")
-			team.preferred_courts.add(court)
+			TeamTournamentCourtPreference.objects.get_or_create(participation=participation, court=court)
 
 		# Step 5: Start tournament (generate fixtures)
 		response = self.client.post(
@@ -1837,12 +2363,11 @@ class TournamentLifecycleTests(TestCase):
 			user = User.objects.create_user(
 				username=f"team_player_{i}", password="pass123"
 			)
-			team = Team.objects.create(
-				user=user,
-				tournament=tournament,
-				name=f"Team {i}",
-				seed=i,
+			team, _ = Team.objects.get_or_create(name=f"Team {i}")
+			TeamTournamentParticipation.objects.get_or_create(
+				team=team, tournament=tournament, defaults={"status": "active", "seed": i}
 			)
+			TeamMembership.objects.create(team=team, user=user, role="captain")
 			teams_data.append((user, team))
 
 		generate_fixtures(tournament)
@@ -1878,9 +2403,10 @@ class TournamentLifecycleTests(TestCase):
 		self.assertEqual(match.score_team1, 3)
 		self.assertEqual(match.score_team2, 1)
 
-		# Step 3: Team user 2 (opponent) logs in and confirms the score
-		user2, team2 = teams_data[1]
-		self.client.force_login(user2)
+		# Step 3: Opponent logs in and confirms the score
+		opponent_team = match.team2 if match.team1 == team1 else match.team1
+		opponent_user = _captain_user(opponent_team)
+		self.client.force_login(opponent_user)
 
 		response = self.client.post(
 			reverse("confirm_score", kwargs={"pk": match.pk}),
@@ -1936,19 +2462,18 @@ class TournamentLifecycleTests(TestCase):
 			user = User.objects.create_user(
 				username=f"hybrid_team_{i}", password="pass123"
 			)
-			team = Team.objects.create(
-				user=user,
-				tournament=tournament,
-				name=f"Team {i}",
-				seed=i,
+			team, _ = Team.objects.get_or_create(name=f"Team {i}")
+			TeamTournamentParticipation.objects.get_or_create(
+				team=team, tournament=tournament, defaults={"status": "active", "seed": i}
 			)
+			TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
 			teams.append(team)
 
 		# Generate group stage fixtures
 		generate_fixtures(tournament)
 
 		# Verify groups were assigned
-		teams_with_groups = tournament.teams.filter(group__gt="")
+		teams_with_groups = tournament.team_participations.filter(group__gt="")
 		self.assertEqual(teams_with_groups.count(), 4, "All teams should be assigned to groups")
 
 		# Verify group stage matches were created
@@ -2026,12 +2551,11 @@ class TournamentLifecycleTests(TestCase):
 
 		# Add a team
 		user = User.objects.create_user(username="audit_test_team", password="pass123")
-		Team.objects.create(
-			user=user,
-			tournament=tournament,
-			name="Audit Test Team",
-			seed=1,
+		team, _ = Team.objects.get_or_create(name="Audit Test Team")
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": 1}
 		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
 
 		# Check audit log has entries
 		audit_entries = AuditLog.objects.filter(tournament=tournament)
@@ -2064,12 +2588,12 @@ class AdditionalFormatSupportTests(TestCase):
 	def _create_team(self, tournament, team_name, username=None, seed=0):
 		username = username or team_name.lower().replace(" ", "_")
 		user = User.objects.create_user(username=username, password="pass123")
-		return Team.objects.create(
-			user=user,
-			tournament=tournament,
-			name=team_name,
-			seed=seed,
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": seed}
 		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
+		return team
 
 	def test_new_format_choices_are_valid_in_form(self):
 		base = {
@@ -2103,8 +2627,8 @@ class AdditionalFormatSupportTests(TestCase):
 		self.assertEqual(tournament.matches.count(), 12)
 
 		# Ensure each pairing appears in both directions.
-		team1 = tournament.teams.get(name="Team 1")
-		team2 = tournament.teams.get(name="Team 2")
+		team1 = Team.objects.get(name="Team 1")
+		team2 = Team.objects.get(name="Team 2")
 		self.assertTrue(tournament.matches.filter(team1=team1, team2=team2).exists())
 		self.assertTrue(tournament.matches.filter(team1=team2, team2=team1).exists())
 
@@ -2171,7 +2695,12 @@ class TournamentCompletionTests(TestCase):
 	def _create_team(self, tournament, team_name, username=None, seed=0):
 		username = username or team_name.lower().replace(" ", "_") + "_comp"
 		user = User.objects.create_user(username=username, password="pass123")
-		return Team.objects.create(user=user, tournament=tournament, name=team_name, seed=seed)
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(
+			team=team, tournament=tournament, defaults={"status": "active", "seed": seed}
+		)
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
+		return team
 
 	def _confirm_match(self, match, s1, s2):
 		"""Directly confirm a match and advance winner."""
@@ -2353,8 +2882,9 @@ class TournamentCompletionTests(TestCase):
 		for i in range(1, 5):
 			team = self._create_team(t, f"Hyb{i}", seed=i)
 			# Assign groups
-			team.group = "A" if i <= 2 else "B"
-			team.save(update_fields=["group"])
+			participation = _participation(team, t)
+			participation.group = "A" if i <= 2 else "B"
+			participation.save(update_fields=["group"])
 
 		generate_fixtures(t)
 		self.assertTrue(
@@ -2443,7 +2973,7 @@ class TournamentCompletionTests(TestCase):
 		match.status = "upcoming"
 		match.save(update_fields=["status"])
 
-		self.client.force_login(teams[0].user)
+		self.client.force_login(_captain_user(teams[0]))
 		response = self.client.post(
 			reverse("submit_score", kwargs={"pk": match.pk}),
 			{"score_team1": 3, "score_team2": 1},
@@ -2531,8 +3061,9 @@ class ScoreDisputeWindowTests(TestCase):
 
 	def _create_team_with_membership(self, tournament, team_name, username):
 		user = User.objects.create_user(username=username, password="pass123")
-		team = Team.objects.create(user=user, tournament=tournament, name=team_name)
-		TeamMembership.objects.create(team=team, user=user, role="captain")
+		team, _ = Team.objects.get_or_create(name=team_name)
+		TeamTournamentParticipation.objects.get_or_create(team=team, tournament=tournament, defaults={"status": "active"})
+		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
 		return team
 
 	def _create_match(self, tournament, team1, team2, group=""):
@@ -2552,7 +3083,7 @@ class ScoreDisputeWindowTests(TestCase):
 		team2 = self._create_team_with_membership(t, "Beta", "beta_deadline")
 		match = self._create_match(t, team1, team2)
 
-		self.client.force_login(team1.user)
+		self.client.force_login(_captain_user(team1))
 		self.client.post(
 			reverse("submit_score", kwargs={"pk": match.pk}),
 			{"score_team1": 2, "score_team2": 1},
@@ -2561,7 +3092,7 @@ class ScoreDisputeWindowTests(TestCase):
 
 		match.refresh_from_db()
 		self.assertEqual(match.status, "pending_confirmation")
-		self.assertEqual(match.submitted_by, team1)
+		self.assertEqual(match.submitted_by, _captain_user(team1))
 		self.assertIsNotNone(match.dispute_deadline_at)
 		self.assertIsNotNone(match.score_submitted_at)
 
@@ -2573,12 +3104,12 @@ class ScoreDisputeWindowTests(TestCase):
 		match.status = "pending_confirmation"
 		match.score_team1 = 3
 		match.score_team2 = 2
-		match.submitted_by = team1
+		match.submitted_by = _captain_user(team1)
 		match.score_submitted_at = timezone.now() - timedelta(hours=1)
 		match.dispute_deadline_at = timezone.now() + timedelta(hours=2)
 		match.save()
 
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		response = self.client.get(reverse("dashboard"))
 		self.assertContains(response, "Score Dispute Window Open")
 		self.assertContains(response, f"Match #{match.match_number}")
@@ -2598,36 +3129,38 @@ class ScoreDisputeWindowTests(TestCase):
 		match.status = "pending_confirmation"
 		match.score_team1 = 1
 		match.score_team2 = 0
-		match.submitted_by = team1
+		match.submitted_by = _captain_user(team1)
 		match.score_submitted_at = timezone.now() - timedelta(hours=1)
 		match.dispute_deadline_at = timezone.now() + timedelta(hours=3)
 		match.save()
 
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		self.client.post(reverse("confirm_score", kwargs={"pk": match.pk}), follow=True)
 		match.refresh_from_db()
 		self.assertEqual(match.status, "confirmed")
-		self.assertEqual(match.confirmed_by, team2)
+		self.assertEqual(match.confirmed_by, _captain_user(team2))
 		self.assertIsNotNone(match.score_locked_at)
 
 	def test_critical_dispute_requires_resolution_notes(self):
 		t = self._create_tournament(fmt="hybrid", name="Critical Hybrid")
 		team1 = self._create_team_with_membership(t, "Eta", "eta_deadline")
 		team2 = self._create_team_with_membership(t, "Theta", "theta_deadline")
-		team1.group = "A"
-		team2.group = "A"
-		team1.save(update_fields=["group"])
-		team2.save(update_fields=["group"])
+		participation1 = _participation(team1, t)
+		participation2 = _participation(team2, t)
+		participation1.group = "A"
+		participation2.group = "A"
+		participation1.save(update_fields=["group"])
+		participation2.save(update_fields=["group"])
 		match = self._create_match(t, team1, team2, group="A")
 		match.status = "pending_confirmation"
 		match.score_team1 = 2
 		match.score_team2 = 1
-		match.submitted_by = team1
+		match.submitted_by = _captain_user(team1)
 		match.score_submitted_at = timezone.now()
 		match.dispute_deadline_at = timezone.now() + timedelta(hours=1)
 		match.save()
 
-		self.client.force_login(team2.user)
+		self.client.force_login(_captain_user(team2))
 		self.client.post(
 			reverse("dispute_score", kwargs={"pk": match.pk}),
 			{"dispute_notes": "Incorrect score"},
