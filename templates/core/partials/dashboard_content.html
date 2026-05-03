@@ -597,7 +597,12 @@
             </div>
         </div>
 
-        {% if is_team_full %}
+        {% if team_participation_status == 'pending' %}
+        <div class="alert" style="margin-bottom:1rem;background:#fff8e1;border:1px solid #f0ad4e;color:#7d5a00;">
+            ⚠ <strong>Registration Pending</strong> — your team needs <strong>{{ players_needed }}</strong> more player{{ players_needed|pluralize }} to complete registration for this tournament.
+            Share the tournament join page so teammates can find and join your team.
+        </div>
+        {% elif is_team_full %}
         <div class="alert alert-success" style="margin-bottom:1rem;">✅ Team roster is complete!</div>
         {% else %}
         <div class="alert alert-warning" style="margin-bottom:1rem;">

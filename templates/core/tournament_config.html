@@ -199,10 +199,11 @@
         </div>
         <div class="card-body">
             {% for p in team_participations %}
-            <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
+            <div class="mb-1" style="padding:0.5rem;border-radius:6px;{% if p.is_underfilled %}background:#fff8e1;border:1px solid #f0ad4e;{% else %}background:#f8f9fa;{% endif %}">
                 <div class="d-flex justify-between align-center">
                     <strong>{{ p.team.name }}</strong>
                     <div class="d-flex align-center" style="gap:0.5rem;">
+                        {% if p.is_underfilled %}<span class="badge" style="background:#f0ad4e;color:#fff;">⚠ Pending (forming)</span>{% endif %}
                         <span class="badge badge-{{ p.status }}">{{ p.get_status_display }}</span>
                         {% if tournament.status != 'active' and tournament.status != 'completed' %}
                         <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.team.name }} from this tournament?');">
@@ -225,8 +226,8 @@
                     Players: {% for player in p.team.players.all %}{{ player.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
                 </div>
                 {% endif %}
-                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
-                    Members: {{ p.member_count }}
+                <div style="font-size:0.8rem;margin-top:0.25rem;{% if p.is_underfilled %}color:#b8690a;font-weight:600;{% else %}color:#666;{% endif %}">
+                    Members: {{ p.member_count }} / {{ tournament.players_per_team }}{% if p.is_underfilled %} &mdash; needs {{ tournament.players_per_team|add:"-"|add:p.member_count }} more{% endif %}
                 </div>
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
                     Preferred courts: {% if p.preferred_court_names %}{{ p.preferred_court_names|join:", " }}{% else %}<span class="text-danger">Not set</span>{% endif %}
@@ -270,9 +271,19 @@
                 {% endif %}
 
                 {% if tournament.status == 'registration_open' %}
+                {% if underfilled_count > 0 %}
+                <span title="{{ underfilled_count }} team(s) still forming (incomplete roster)" style="font-size:0.8rem;color:#b8690a;font-weight:600;">⚠ {{ underfilled_count }} team{{ underfilled_count|pluralize }} forming</span>
+                {% endif %}
                 <form method="post" action="{% url 'close_registration' pk=tournament.pk %}">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-warning btn-sm">Close Registration</button>
+                    <button type="submit" class="btn btn-warning btn-sm"{% if underfilled_count > 0 %} onclick="return confirm('{{ underfilled_count }} team(s) are still forming and will be blocked. Resolve their rosters first, then try again.')"{% endif %}>Close Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'scheduled' %}
+                <form method="post" action="{% url 'open_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Re-open registration? The current draft schedule will need to be regenerated once you close registration again.')">Re-open Registration</button>
                 </form>
                 {% endif %}
 

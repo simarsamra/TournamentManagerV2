@@ -11,7 +11,7 @@
         </p>
         {% if tournament.expected_teams_count %}
         <p class="text-muted" style="margin:0.15rem 0 0;font-size:0.9rem;">
-            Registered:
+            Fully registered:
             {% if registration_mode == "individual" %}
                 {{ participant_list|length }}
             {% else %}
@@ -88,17 +88,19 @@
 {% else %}
     {% if team_list %}
     <p class="text-muted mb-1">
-        Each team needs <strong>{{ players_per_team }}</strong> player{{ players_per_team|pluralize }}. Full teams are greyed out.
+        Each team needs <strong>{{ players_per_team }}</strong> player{{ players_per_team|pluralize }}. Teams still forming their roster are shown in amber.
     </p>
     <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">
         {% for item in team_list %}
-        <div class="card {% if item.is_full %}opacity-muted{% endif %}" style="{% if item.is_full %}opacity:0.55;{% endif %}">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="card {% if item.is_full %}opacity-muted{% endif %}" style="{% if item.is_full %}opacity:0.55;{% elif item.participation_status == 'pending' %}border:1.5px solid #f0ad4e;{% endif %}">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;{% if item.participation_status == 'pending' %}background:#fff8e1;{% endif %}">
                 <strong>{{ item.team.name }}</strong>
                 {% if item.is_full %}
                 <span class="badge" style="background:var(--color-muted,#aaa);color:#fff;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Full</span>
                 {% elif item.is_user_member %}
                 <span class="badge badge-success" style="font-size:0.78rem;">Your Team</span>
+                {% elif item.participation_status == 'pending' %}
+                <span class="badge" style="background:#f0ad4e;color:#fff;border-radius:4px;padding:2px 8px;font-size:0.78rem;">⚠ Forming</span>
                 {% else %}
                 <span class="badge badge-info" style="font-size:0.78rem;">Open</span>
                 {% endif %}
@@ -107,6 +109,9 @@
                 <p class="mb-1">
                     Members: <strong>{{ item.member_count }} / {{ item.players_per_team }}</strong>
                 </p>
+                {% if item.participation_status == 'pending' and not item.is_user_member %}
+                <p class="mb-1" style="font-size:0.82rem;color:#b8690a;">Needs {{ item.players_per_team|add:"-"|add:item.member_count }} more to complete registration</p>
+                {% endif %}
                 {% if item.is_user_member %}
                     <a href="{% url 'team_detail' pk=item.team.pk %}" class="btn btn-outline btn-sm">View Team</a>
                 {% elif user_team %}

@@ -260,6 +260,7 @@ class Team(models.Model):
 
 class TeamTournamentParticipation(models.Model):
     STATUS_CHOICES = [
+        ("pending", "Pending (Forming)"),
         ("active", "Active"),
         ("withdrawn", "Withdrawn"),
     ]

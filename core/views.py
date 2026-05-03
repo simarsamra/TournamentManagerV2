@@ -1081,17 +1081,18 @@ def join_tournament_view(request, pk):
                 "is_self": reg.user_id == request.user.pk,
             })
     else:
-        teams = (
-            Team.objects.filter(
-                participations__tournament=tournament,
-                participations__status="active",
-                is_internal=False,
+        participations = (
+            TeamTournamentParticipation.objects.filter(
+                tournament=tournament,
+                status__in=["active", "pending"],
+                team__is_internal=False,
             )
-            .prefetch_related("memberships")
-            .distinct()
-            .order_by("name")
+            .select_related("team")
+            .prefetch_related("team__memberships")
+            .order_by("team__name")
         )
-        for team in teams:
+        for participation in participations:
+            team = participation.team
             count = team.memberships.count()
             is_full = count >= players_per_team
             is_user_member = existing_membership and existing_membership.team_id == team.pk
@@ -1101,6 +1102,7 @@ def join_tournament_view(request, pk):
                 "players_per_team": players_per_team,
                 "is_full": is_full,
                 "is_user_member": is_user_member,
+                "participation_status": participation.status,
             })
 
     return render(request, "core/join_tournament.html", {
@@ -1125,8 +1127,11 @@ def join_team_view(request, tournament_pk, team_pk):
         return redirect("join_tournament", pk=tournament_pk)
 
     team = get_object_or_404(Team, pk=team_pk)
-    # Verify the team actually participates in this tournament
-    if not TeamTournamentParticipation.objects.filter(team=team, tournament=tournament, status="active").exists():
+    # Verify the team participates in this tournament (pending or active)
+    participation = TeamTournamentParticipation.objects.filter(
+        team=team, tournament=tournament, status__in=["active", "pending"]
+    ).first()
+    if not participation:
         messages.error(request, "That team is not registered for this tournament.")
         return redirect("join_tournament", pk=tournament_pk)
 
@@ -1150,7 +1155,33 @@ def join_team_view(request, tournament_pk, team_pk):
         f"User '{request.user.username}' joined team '{team.name}'",
         tournament=tournament,
     )
-    messages.success(request, f"You have joined {team.name}!")
+
+    # Promote participation to active once roster is full
+    new_count = team.memberships.count()
+    required = max(1, tournament.players_per_team or 1)
+    if new_count >= required and participation.status == "pending":
+        TeamTournamentParticipation.objects.filter(pk=participation.pk).update(status="active")
+        log_action(
+            request,
+            "team_registration_completed",
+            f"Team '{team.name}' roster complete — registration active in '{tournament.name}'",
+            tournament=tournament,
+        )
+        messages.success(request, f"You joined {team.name}! The roster is now complete — your team is fully registered.")
+        # Auto-close if capacity is reached now that this team went active
+        if is_registration_capacity_reached(tournament) and tournament.status == "registration_open":
+            tournament.status = "ready"
+            tournament.save(update_fields=["status"])
+            log_action(
+                request,
+                "registration_auto_closed",
+                f"Registration auto-closed: expected {tournament.expected_teams_count} {tournament.participant_label_plural.lower()} reached",
+                tournament=tournament,
+            )
+    else:
+        still_needed = required - new_count
+        messages.success(request, f"You joined {team.name}! {still_needed} more player{'s' if still_needed != 1 else ''} needed to complete registration.")
+
     return redirect("dashboard")
 
 
@@ -1219,33 +1250,45 @@ def create_team_view(request, pk):
             if Team.objects.filter(name__iexact=team_name).exists():
                 form.add_error("team_name", "A team with that name already exists.")
             else:
+                required = max(1, tournament.players_per_team or 1)
+                # Single-player-per-team tournaments: captain alone completes the team → active
+                # Multi-player: start pending until full roster joins
+                initial_status = "active" if required == 1 else "pending"
                 team = Team.objects.create(
                     name=team_name,
                     department=form.cleaned_data.get("department", "").strip(),
                     sport_type=tournament.sport_type,
                 )
-                TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+                TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status=initial_status)
                 TeamMembership.objects.create(team=team, user=request.user, role="captain")
                 log_action(
                     request,
                     "team_created",
-                    f"Team '{team_name}' created by '{request.user.username}'",
+                    f"Team '{team_name}' created by '{request.user.username}' (status: {initial_status})",
                     tournament=tournament,
                 )
-                messages.success(request, f"Team '{team_name}' created!")
-                # Auto-close registration when limit is reached
-                if (
-                    is_registration_capacity_reached(tournament)
-                    and tournament.status == "registration_open"
-                ):
-                    tournament.status = "ready"
-                    tournament.save(update_fields=["status"])
-                    log_action(
+                if initial_status == "pending":
+                    still_needed = required - 1
+                    messages.success(
                         request,
-                        "registration_auto_closed",
-                        f"Registration auto-closed: expected {tournament.expected_teams_count} {tournament.participant_label_plural.lower()} reached",
-                        tournament=tournament,
+                        f"Team '{team_name}' created! Share it with your teammates — "
+                        f"you need {still_needed} more player{'s' if still_needed != 1 else ''} to complete registration."
                     )
+                else:
+                    messages.success(request, f"Team '{team_name}' created!")
+                    # Auto-close only when team goes active (players_per_team == 1)
+                    if (
+                        is_registration_capacity_reached(tournament)
+                        and tournament.status == "registration_open"
+                    ):
+                        tournament.status = "ready"
+                        tournament.save(update_fields=["status"])
+                        log_action(
+                            request,
+                            "registration_auto_closed",
+                            f"Registration auto-closed: expected {tournament.expected_teams_count} {tournament.participant_label_plural.lower()} reached",
+                            tournament=tournament,
+                        )
                 return redirect("dashboard")
     else:
         form = CreateTeamForm(tournament=tournament)
@@ -1570,6 +1613,7 @@ def dashboard_view(request):
             context["team_member_count"] = 1
             context["players_needed"] = 0
             context["is_team_full"] = True
+            context["team_participation_status"] = "active"
             context["registered_teams_count"] = active_participant_count(tournament)
             context["team_members"] = []
         else:
@@ -1581,6 +1625,10 @@ def dashboard_view(request):
             context["team_members"] = list(
                 team.memberships.select_related("user").order_by("role", "joined_at")
             )
+            team_part = TeamTournamentParticipation.objects.filter(
+                team=team, tournament=tournament
+            ).only("status").first()
+            context["team_participation_status"] = team_part.status if team_part else "active"
 
     if is_organizer:
         all_tournaments = _get_available_tournaments()
@@ -1670,6 +1718,10 @@ def tournament_config(request, pk):
             .select_related("court")
             .values_list("court__name", flat=True)
         )
+        # Flag pending (forming) teams — those whose roster is not yet complete
+        participation.is_underfilled = participation.status == "pending"
+
+    underfilled_count = sum(1 for p in team_participations if p.is_underfilled)
 
     # Determine whether to show the "Proceed to Knockout Phase" button
     show_proceed_knockout = False
@@ -1695,6 +1747,7 @@ def tournament_config(request, pk):
         "courts": tournament.courts.all(),
         "court_availabilities": CourtAvailability.objects.filter(court__tournament=tournament).select_related("court"),
         "team_participations": team_participations,
+        "underfilled_count": underfilled_count,
         "active_teams_count": active_teams_count,
         "remaining_spots": max(0, (tournament.expected_teams_count or 0) - active_teams_count),
         "time_slots": tournament.time_slots.select_related("court").all(),
@@ -2223,10 +2276,18 @@ def open_registration(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    reopening = tournament.status == "scheduled"
+    if reopening:
+        # Clear the draft schedule so it isn't stale after new registrations
+        deleted_count, _ = tournament.matches.all().delete()
+        log_action(request, "schedule_cleared", f"Draft schedule cleared ({deleted_count} matches) to re-open registration for '{tournament.name}'", tournament=tournament)
     tournament.status = "registration_open"
     tournament.save(update_fields=["status"])
-    log_action(request, "registration_opened", f"Registration opened for '{tournament.name}'", tournament=tournament)
-    messages.success(request, "Registration is now open.")
+    log_action(request, "registration_opened", f"Registration {'re-opened' if reopening else 'opened'} for '{tournament.name}'", tournament=tournament)
+    if reopening:
+        messages.success(request, "Registration re-opened. The previous draft schedule has been cleared — regenerate the schedule once you close registration again.")
+    else:
+        messages.success(request, "Registration is now open.")
     return redirect("tournament_config", pk=pk)
 
 
@@ -2236,6 +2297,61 @@ def close_registration(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+
+    errors = []
+
+    # Block on pending (incomplete) teams in team-mode
+    if tournament.registration_mode != "individual":
+        pending_qs = TeamTournamentParticipation.objects.filter(
+            tournament=tournament, status="pending"
+        ).select_related("team")
+        if pending_qs.exists():
+            names = ", ".join(f"'{p.team.name}'" for p in pending_qs[:5])
+            extra = f" (+{pending_qs.count() - 5} more)" if pending_qs.count() > 5 else ""
+            errors.append(
+                f"{pending_qs.count()} team(s) are still forming (incomplete roster): {names}{extra}. "
+                f"Each team needs {tournament.players_per_team} players. Remove incomplete teams or wait for their rosters to fill before closing registration."
+            )
+
+    active_count = active_participant_count(tournament)
+    if active_count < 2:
+        if tournament.registration_mode == "individual":
+            errors.append("Need at least 2 active participants before closing registration.")
+        else:
+            errors.append("Need at least 2 active teams before closing registration.")
+    if tournament.expected_teams_count and active_count != tournament.expected_teams_count:
+        if tournament.registration_mode == "individual":
+            errors.append(
+                f"Registered participants ({active_count}) must match the expected participant count ({tournament.expected_teams_count}) before closing registration."
+            )
+        else:
+            errors.append(
+                f"Registered teams ({active_count}) must match the expected team count ({tournament.expected_teams_count}) before closing registration."
+            )
+
+    if tournament.registration_mode != "individual":
+        required_players = max(1, tournament.players_per_team or 1)
+        roster_mismatch = []
+        for participation in TeamTournamentParticipation.objects.filter(
+            tournament=tournament,
+            status="active",
+            team__is_internal=False,
+        ).select_related("team"):
+            count = participation.team.memberships.count()
+            if count != required_players:
+                roster_mismatch.append((participation.team.name, count))
+        if roster_mismatch:
+            team_names = ", ".join(f"{name} ({count})" for name, count in roster_mismatch[:5])
+            errors.append(
+                f"Each team must have exactly {required_players} members before closing registration. "
+                f"Mismatched teams: {team_names}."
+            )
+
+    if errors:
+        for error in errors:
+            messages.error(request, error)
+        return redirect("tournament_config", pk=pk)
+
     tournament.status = "ready"
     tournament.save(update_fields=["status"])
     log_action(request, "registration_closed", f"Registration closed for '{tournament.name}'", tournament=tournament)
