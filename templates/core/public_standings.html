@@ -1,4 +1,5 @@
 {% load static %}
+{% load core_extras %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,7 +36,7 @@
         <div>
             <strong>Tournament Complete!</strong>
             {% if tournament.champion %}
-                Champion: <strong>{{ tournament.champion.name }}</strong>
+                Champion: <strong>{{ tournament_champion_label|default:tournament.champion.name }}</strong>
             {% endif %}
         </div>
     </div>
@@ -50,7 +51,7 @@
             {% for s in standings %}
             <tr>
                 <td><strong>{{ s.rank }}</strong></td>
-                <td>{{ s.team.name }}</td>
+                <td>{{ s.display_label|default:s.team.name }}</td>
                 <td>{{ s.played }}</td>
                 <td>{{ s.wins }}</td>
                 <td>{{ s.losses }}</td>
@@ -74,7 +75,7 @@
             <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
             <tbody>
             {% for s in st %}
-            <tr><td>{{ s.rank }}</td><td>{{ s.team.name }}</td><td>{{ s.played }}</td><td>{{ s.wins }}</td><td>{{ s.losses }}</td><td>{{ s.game_diff }}</td><td><strong>{{ s.points }}</strong></td></tr>
+            <tr><td>{{ s.rank }}</td><td>{{ s.display_label|default:s.team.name }}</td><td>{{ s.played }}</td><td>{{ s.wins }}</td><td>{{ s.losses }}</td><td>{{ s.game_diff }}</td><td><strong>{{ s.points }}</strong></td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -107,11 +108,11 @@
                     <div class="bracket-match-wrap">
                     <div class="bracket-match">
                         <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
-                            <span>{{ m.team1.name|default:"TBD" }}</span>
+                            <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
                             <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
                         </div>
                         <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
-                            <span>{{ m.team2.name|default:"TBD" }}</span>
+                            <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
                             <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
                         </div>
                     </div>

@@ -57,7 +57,7 @@
                         <td>{{ t.match_count }}</td>
                         <td>
                             {% if t.status == 'completed' and t.champion %}
-                            <span style="font-size:0.9rem;">🏆 {{ t.champion.name }}</span>
+                            <span style="font-size:0.9rem;">🏆 {{ t.champion_display_label|default:t.champion.name }}</span>
                             {% else %}
                             <span class="text-muted">—</span>
                             {% endif %}
@@ -125,7 +125,7 @@
         {% for m in critical_disputes %}
         <div class="alert alert-warning d-flex justify-between align-center mb-1">
             <span>
-                Match #{{ m.match_number }}: {{ m.team1.name|default:"TBD" }} vs {{ m.team2.name|default:"TBD" }}
+                Match #{{ m.match_number }}: {{ m.team1_label|default:m.team1.name|default:"TBD" }} vs {{ m.team2_label|default:m.team2.name|default:"TBD" }}
                 {% if m.disputed_by %}&middot; disputed by {{ m.disputed_by.name }}{% endif %}
             </span>
             <a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-warning btn-sm">Review</a>

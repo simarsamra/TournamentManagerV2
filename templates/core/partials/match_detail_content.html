@@ -39,12 +39,12 @@
         <div class="card-header">Match Info</div>
         <div class="card-body">
             <table style="width:100%">
-                <tr><td class="text-muted" style="width:35%">Teams</td><td><strong>{{ match.team1.name|default:"TBD" }}</strong> vs <strong>{{ match.team2.name|default:"TBD" }}</strong></td></tr>
+                <tr><td class="text-muted" style="width:35%">Teams</td><td><strong>{{ team1_label|default:"TBD" }}</strong> vs <strong>{{ team2_label|default:"TBD" }}</strong></td></tr>
                 <tr><td class="text-muted">Scheduled</td><td>{{ match.scheduled_time|date:"M d, Y H:i"|default:"Not scheduled" }}</td></tr>
                 <tr><td class="text-muted">Court</td><td>{{ match.court.name|default:"Not assigned" }}</td></tr>
                 <tr><td class="text-muted">Status</td><td><span class="badge badge-{{ match.status }}">{{ match.get_status_display }}</span></td></tr>
                 <tr><td class="text-muted">Score</td><td>{% if match.score_team1 is not None %}<strong>{{ match.score_team1 }} - {{ match.score_team2 }}</strong>{% else %}Not recorded{% endif %}</td></tr>
-                {% if match.winner %}<tr><td class="text-muted">Winner</td><td class="text-success"><strong>{{ match.winner.name }}</strong></td></tr>{% endif %}
+                {% if match.winner %}<tr><td class="text-muted">Winner</td><td class="text-success"><strong>{{ winner_label }}</strong></td></tr>{% endif %}
                 {% if match.submitted_by %}<tr><td class="text-muted">Submitted by</td><td>{{ match.submitted_by.name }}</td></tr>{% endif %}
                 {% if match.confirmed_by %}<tr><td class="text-muted">Confirmed by</td><td>{{ match.confirmed_by.name }}</td></tr>{% endif %}
                 {% if match.dispute_deadline_at %}<tr><td class="text-muted">Dispute deadline</td><td>{{ match.dispute_deadline_at|date:"M d, Y H:i" }}</td></tr>{% endif %}
@@ -79,11 +79,11 @@
                     {% csrf_token %}
                     <div class="grid grid-2">
                         <div class="form-group">
-                            <label>{{ match.team1.name }} Score</label>
+                            <label>{{ team1_label }} Score</label>
                             {{ score_form.score_team1 }}
                         </div>
                         <div class="form-group">
-                            <label>{{ match.team2.name }} Score</label>
+                            <label>{{ team2_label }} Score</label>
                             {{ score_form.score_team2 }}
                         </div>
                     </div>
@@ -134,11 +134,11 @@
                     {% csrf_token %}
                     <div class="grid grid-2">
                         <div class="form-group">
-                            <label>{{ match.team1.name }} Final Score</label>
+                            <label>{{ team1_label }} Final Score</label>
                             <input type="number" name="final_score_team1" value="{{ match.score_team1 }}" class="form-control" min="0" required>
                         </div>
                         <div class="form-group">
-                            <label>{{ match.team2.name }} Final Score</label>
+                            <label>{{ team2_label }} Final Score</label>
                             <input type="number" name="final_score_team2" value="{{ match.score_team2 }}" class="form-control" min="0" required>
                         </div>
                     </div>
@@ -182,13 +182,13 @@
                     {% csrf_token %}
                     <div class="grid grid-2">
                         <div class="form-group">
-                            <label>{{ match.team1.name }} Score</label>
+                            <label>{{ team1_label }} Score</label>
                             <input type="number" name="override_score_team1"
                                    value="{{ match.score_team1|default:'' }}"
                                    class="form-control" min="0" required>
                         </div>
                         <div class="form-group">
-                            <label>{{ match.team2.name }} Score</label>
+                            <label>{{ team2_label }} Score</label>
                             <input type="number" name="override_score_team2"
                                    value="{{ match.score_team2|default:'' }}"
                                    class="form-control" min="0" required>
@@ -227,12 +227,12 @@
                     <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="no_show_team" value="{{ match.team1.pk }}">
-                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ match.team1.name }} as no-show?')">{{ match.team1.name }} No-Show</button>
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ team1_label }} as no-show?')">{{ team1_label }} No-Show</button>
                     </form>
                     <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="no_show_team" value="{{ match.team2.pk }}">
-                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ match.team2.name }} as no-show?')">{{ match.team2.name }} No-Show</button>
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ team2_label }} as no-show?')">{{ team2_label }} No-Show</button>
                     </form>
                 </div>
             </div>

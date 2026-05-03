@@ -25,7 +25,6 @@ from .models import (
     RescheduleRequest, NoShowReport, OpenSlot, AuditLog, BackupRecord, Player, CourtAvailability,
     TeamMembership, TeamTournamentParticipation, TeamTournamentCourtPreference,
     TournamentIndividualRegistration,
-    TeamRegistration, IndividualRegistration, TournamentIndividualRegistration,
 )
 from .forms import (
     TournamentForm, CourtForm, TimeSlotForm, TeamRegistrationForm,
@@ -44,6 +43,7 @@ from .standings import calculate_standings, advance_winner, get_bracket_data, ch
 from .withdrawals import handle_withdrawal
 from .backup import create_backup, validate_backup, restore_backup, list_backups, delete_backup
 from .audit import log_action
+from .services.enrollment import active_participant_count, is_registration_capacity_reached
 
 DEFAULT_DISPUTE_WINDOW_HOURS = 24
 CRITICAL_STAGE_DISPUTE_WINDOW_HOURS = 12
@@ -297,6 +297,23 @@ def _team_display_label(tournament, team):
         if reg:
             return reg.display_name
     return team.name
+
+
+def _team_display_map(tournament, team_ids):
+    """Return {team_id: display_label} for efficient template rendering."""
+    valid_ids = [tid for tid in team_ids if tid]
+    if not valid_ids:
+        return {}
+    if tournament and tournament.registration_mode == "individual":
+        labels = dict(
+            TournamentIndividualRegistration.objects.filter(
+                tournament=tournament,
+                status="active",
+                shadow_team_id__in=valid_ids,
+            ).values_list("shadow_team_id", "display_name")
+        )
+        return labels
+    return dict(Team.objects.filter(pk__in=valid_ids).values_list("pk", "name"))
 
 
 def _is_organizer(user):
@@ -729,7 +746,7 @@ def _validate_tournament_ready(tournament):
                 roster_mismatch.append(f"{team.name} ({count})")
         if roster_mismatch:
             errors.append(
-                f"Each team must have exactly {required_players} members before starting. "
+                f"Each team must have enough members before starting (exactly {required_players} required). "
                 "Mismatched teams: " + ", ".join(roster_mismatch[:5]) + "."
             )
 
@@ -1014,10 +1031,7 @@ def join_tournament_list_view(request):
 
     tournament_list = []
     for t in open_tournaments:
-        if t.registration_mode == "individual":
-            entry_count = t.individual_registrations.filter(status="active").count()
-        else:
-            entry_count = t.team_participations.filter(status="active", team__is_internal=False).count()
+        entry_count = active_participant_count(t)
         tournament_list.append({
             "tournament": t,
             "already_joined": t.pk in user_tournament_ids,
@@ -1097,10 +1111,7 @@ def join_tournament_view(request, pk):
         "user_registration": user_registration,
         "players_per_team": players_per_team,
         "registration_mode": registration_mode,
-        "registration_full": bool(
-            tournament.expected_teams_count
-            and tournament.teams.filter(status="active").count() >= tournament.expected_teams_count
-        ),
+        "registration_full": is_registration_capacity_reached(tournament),
     })
 
 
@@ -1157,12 +1168,7 @@ def create_team_view(request, pk):
         return redirect("join_tournament", pk=pk)
 
     if tournament.expected_teams_count:
-        if tournament.registration_mode == "individual":
-            current_count = tournament.individual_registrations.filter(status="active").count()
-        else:
-            current_count = TeamTournamentParticipation.objects.filter(
-                tournament=tournament, status="active", team__is_internal=False
-            ).count()
+        current_count = active_participant_count(tournament)
         if current_count >= tournament.expected_teams_count:
             messages.error(
                 request,
@@ -1229,8 +1235,7 @@ def create_team_view(request, pk):
                 messages.success(request, f"Team '{team_name}' created!")
                 # Auto-close registration when limit is reached
                 if (
-                    tournament.expected_teams_count
-                    and tournament.teams.filter(status="active").count() >= tournament.expected_teams_count
+                    is_registration_capacity_reached(tournament)
                     and tournament.status == "registration_open"
                 ):
                     tournament.status = "ready"
@@ -1565,18 +1570,14 @@ def dashboard_view(request):
             context["team_member_count"] = 1
             context["players_needed"] = 0
             context["is_team_full"] = True
-            context["registered_teams_count"] = tournament.individual_registrations.filter(
-                status="active"
-            ).count()
+            context["registered_teams_count"] = active_participant_count(tournament)
             context["team_members"] = []
         else:
             member_count = team.memberships.count()
             context["team_member_count"] = member_count
             context["players_needed"] = max(0, tournament.players_per_team - member_count)
             context["is_team_full"] = member_count >= tournament.players_per_team
-            context["registered_teams_count"] = tournament.team_participations.filter(
-                team__is_internal=False
-            ).count()
+            context["registered_teams_count"] = active_participant_count(tournament)
             context["team_members"] = list(
                 team.memberships.select_related("user").order_by("role", "joined_at")
             )
@@ -1590,12 +1591,10 @@ def dashboard_view(request):
         ).count()
         context["completed_tournaments_count"] = all_tournaments.filter(status="completed").count()
     if tournament and is_organizer:
-        if tournament.registration_mode == "individual":
-            context["total_teams"] = tournament.individual_registrations.filter(status="active").count()
-            context["roster_label"] = "Participants"
-        else:
-            context["total_teams"] = tournament.team_participations.filter(team__is_internal=False).count()
-            context["roster_label"] = "Teams"
+        context["total_teams"] = active_participant_count(tournament)
+        context["roster_label"] = (
+            "Participants" if tournament.registration_mode == "individual" else "Teams"
+        )
         context["total_matches"] = tournament.matches.count()
         context["confirmed_matches"] = tournament.matches.filter(status="confirmed").count()
         context["pending_matches_count"] = tournament.matches.filter(status="pending_confirmation").count()
@@ -1603,6 +1602,12 @@ def dashboard_view(request):
         context["critical_disputes"] = tournament.matches.filter(status="disputed", critical_dispute=True).select_related(
             "team1", "team2", "disputed_by"
         )
+        for match in context["critical_disputes"]:
+            match.team1_label = _team_display_label(tournament, match.team1)
+            match.team2_label = _team_display_label(tournament, match.team2)
+        if context.get("all_tournaments"):
+            for t in context["all_tournaments"]:
+                t.champion_display_label = _team_display_label(t, t.champion) if t.champion else ""
     context.update(_tournament_context(request, tournament))
     return _render_refreshable_page(
         request,
@@ -1678,16 +1683,15 @@ def tournament_config(request, pk):
         show_proceed_knockout = group_qs.exists() and not pending.exists() and ko_tbd
 
     available_slots = count_available_slots(tournament)
-    active_count = (
-        tournament.individual_registrations.filter(status="active").count()
-        if tournament.registration_mode == "individual"
-        else TeamTournamentParticipation.objects.filter(tournament=tournament, status="active", team__is_internal=False).count()
-    )
+    active_count = active_participant_count(tournament)
     required_matches = estimate_required_matches(tournament, team_count=active_count)
     active_teams_count = active_count
 
     return render(request, "core/tournament_config.html", {
         "tournament": tournament,
+        "tournament_champion_label": (
+            _team_display_label(tournament, tournament.champion) if tournament.champion else ""
+        ),
         "courts": tournament.courts.all(),
         "court_availabilities": CourtAvailability.objects.filter(court__tournament=tournament).select_related("court"),
         "team_participations": team_participations,
@@ -1861,15 +1865,7 @@ def estimate_court_availability_end_date(request, pk):
             return JsonResponse({"status": "error", "message": "The selected number of matches does not fit in a single day from the chosen start time."}, status=400)
         daily_slots_per_court = matches_per_court_per_day
 
-    active_count = (
-        tournament.individual_registrations.filter(status="active").count()
-        if tournament.registration_mode == "individual"
-        else TeamTournamentParticipation.objects.filter(
-            tournament=tournament,
-            status="active",
-            team__is_internal=False,
-        ).count()
-    )
+    active_count = active_participant_count(tournament)
     team_count = active_count or tournament.expected_teams_count or 0
     if team_count < 2:
         return JsonResponse({"status": "error", "message": "Need at least 2 participants or teams in the tournament to estimate an end date. Add entries or set the expected count."}, status=400)
@@ -1929,7 +1925,7 @@ def add_court_availability(request, pk):
             end_time = match_slots[-1][1]
             matches_per_court_per_day = len(match_slots)
         else:
-            matches_per_court_per_day = form.cleaned_data.get("matches_per_court_per_day", 1)
+            matches_per_court_per_day = form.cleaned_data.get("matches_per_court_per_day") or 1
             if end_time is None:
                 inferred = _infer_end_time(start_time, matches_per_court_per_day, duration)
                 if inferred is None:
@@ -2055,7 +2051,7 @@ def _create_teams_from_data(tournament, team_data_list, request):
             continue
         # Enforce registration limit
         if tournament.expected_teams_count:
-            current_count = tournament.teams.filter(status="active").count()
+            current_count = active_participant_count(tournament)
             if current_count >= tournament.expected_teams_count:
                 messages.warning(
                     request,
@@ -2134,7 +2130,7 @@ def estimate_tournament_end_date(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
 
     # Determine team count: prefer actual active teams, fall back to expected count
-    team_count = tournament.teams.filter(status="active").count()
+    team_count = active_participant_count(tournament)
     if team_count < 2 and (tournament.expected_teams_count or 0) >= 2:
         team_count = tournament.expected_teams_count
 
@@ -2520,20 +2516,14 @@ def test_maker_view(request):
                         first_name=display_name,
                     )
                     created_users += 1
-                    # Create IndividualRegistration (new registration model)
-                    IndividualRegistration.objects.get_or_create(
-                        tournament=tournament,
-                        user=user,
-                        defaults={"status": "approved"},
-                    )
-                    created_regs += 1
-                    # Also create TournamentIndividualRegistration + shadow for match engine
+                    # Create the canonical registration record used by match/scheduling flows.
                     ind_reg = TournamentIndividualRegistration.objects.create(
                         tournament=tournament,
                         user=user,
                         display_name=display_name,
                         status="active",
                     )
+                    created_regs += 1
                     shadow = _ensure_shadow_team_for_registration(ind_reg, tournament.sport_type)
                     if shadow:
                         created_participations += 1
@@ -2541,7 +2531,7 @@ def test_maker_view(request):
                 members_per_team = max(1, int(request.POST.get("reg_members_per_team") or tournament.players_per_team or 1))
                 for idx in range(1, reg_count + 1):
                     team_name = f"{reg_prefix}{idx}"
-                    if TeamRegistration.objects.filter(tournament=tournament, team__name=team_name).exists():
+                    if TeamTournamentParticipation.objects.filter(tournament=tournament, team__name=team_name).exists():
                         continue
                     captain_username = _next_unique_username(f"{reg_username_prefix}{idx}p1")
                     captain = User.objects.create_user(
@@ -2557,21 +2547,14 @@ def test_maker_view(request):
                     if team_created:
                         created_teams += 1
                     TeamMembership.objects.get_or_create(team=team, user=captain, defaults={"role": "captain"})
-                    # Create TeamRegistration (the new registration model)
-                    TeamRegistration.objects.create(
-                        tournament=tournament,
-                        team=team,
-                        registered_by=captain,
-                        status="approved",
-                    )
-                    created_regs += 1
-                    # Create participation so team appears in scheduling
+                    # Create participation so team appears in scheduling.
                     _, part_created = TeamTournamentParticipation.objects.get_or_create(
                         team=team,
                         tournament=tournament,
                         defaults={"status": "active"},
                     )
                     if part_created:
+                        created_regs += 1
                         created_participations += 1
                     for member_idx in range(2, members_per_team + 1):
                         member_username = _next_unique_username(f"{reg_username_prefix}{idx}p{member_idx}")
@@ -2748,10 +2731,10 @@ def test_maker_view(request):
     roster_label = "Teams"
     if tournament:
         if tournament.registration_mode == "individual":
-            roster_count = tournament.individual_registrations.filter(status="active").count()
+            roster_count = active_participant_count(tournament)
             roster_label = "Participants"
         else:
-            roster_count = tournament.team_participations.filter(team__is_internal=False).count()
+            roster_count = active_participant_count(tournament)
             roster_label = "Teams"
     context = {
         "tournament": tournament,
@@ -2814,9 +2797,18 @@ def fixtures_view(request):
     teams = teams_qs.distinct()
     courts = tournament.courts.all()
     groups = sorted(set(tournament.team_participations.exclude(group="").values_list("group", flat=True)))
+    team_ids = {
+        m.team1_id for m in matches if m.team1_id
+    } | {
+        m.team2_id for m in matches if m.team2_id
+    } | {
+        m.winner_id for m in matches if m.winner_id
+    }
+    team_name_map = _team_display_map(tournament, team_ids)
     context = {
         "tournament": tournament,
         "matches": matches,
+        "team_name_map": team_name_map,
         "teams": teams,
         "courts": courts,
         "groups": groups,
@@ -2877,8 +2869,20 @@ def match_detail(request, pk):
     can_override_result = is_organizer and _can_override_match(match)
     reschedule_form = RescheduleForm(tournament=match.tournament)
     open_slot_choices = _build_open_slot_choices(match, reschedule_form.fields["open_slot"].queryset)
+    team_name_map = _team_display_map(
+        match.tournament,
+        [match.team1_id, match.team2_id, match.winner_id],
+    )
+
+    team1_label = team_name_map.get(match.team1_id, match.team1.name if match.team1 else "TBD")
+    team2_label = team_name_map.get(match.team2_id, match.team2.name if match.team2 else "TBD")
+    winner_label = team_name_map.get(match.winner_id, match.winner.name if match.winner else "")
+
     context = {
         "match": match,
+        "team1_label": team1_label,
+        "team2_label": team2_label,
+        "winner_label": winner_label,
         "team": team,
         "tournament": match.tournament,
         "is_participant": is_participant,
@@ -3328,7 +3332,10 @@ def standings_view(request):
                 ))
                 group_standings = {}
                 for g in groups:
-                    group_standings[g] = calculate_standings(tournament, group=g)
+                    group_rows = calculate_standings(tournament, group=g)
+                    for row in group_rows:
+                        row["display_label"] = _team_display_label(tournament, row["team"])
+                    group_standings[g] = group_rows
                 context["group_standings"] = group_standings
                 group_matches = tournament.matches.exclude(group="")
                 context["hybrid_group_complete"] = (
@@ -3339,9 +3346,26 @@ def standings_view(request):
                 if ko_matches.exists():
                     context["bracket"] = get_bracket_data(tournament)
             else:
-                context["standings"] = calculate_standings(tournament)
+                standings = calculate_standings(tournament)
+                for row in standings:
+                    row["display_label"] = _team_display_label(tournament, row["team"])
+                context["standings"] = standings
         if tournament.format in ("knockout", "double_elimination", "consolation"):
             context["bracket"] = get_bracket_data(tournament)
+
+        team_ids = set()
+        for round_matches in (context.get("bracket") or {}).values():
+            for match in round_matches:
+                if match.team1_id:
+                    team_ids.add(match.team1_id)
+                if match.team2_id:
+                    team_ids.add(match.team2_id)
+                if match.winner_id:
+                    team_ids.add(match.winner_id)
+        context["team_name_map"] = _team_display_map(tournament, team_ids)
+        context["tournament_champion_label"] = (
+            _team_display_label(tournament, tournament.champion) if tournament.champion else ""
+        )
     context.update(_tournament_context(request, tournament))
     return _render_refreshable_page(
         request,
@@ -3413,6 +3437,9 @@ def team_detail(request, pk):
     matches = Match.objects.filter(tournament=tournament).filter(
         Q(team1=team) | Q(team2=team)
     ).select_related("team1", "team2", "court", "winner").order_by("match_number")
+    for match in matches:
+        opponent = match.team2 if match.team1_id == team.pk else match.team1
+        match.opponent_display = _team_display_label(tournament, opponent) if opponent else "TBD"
     stats = {
         "played": matches.filter(status__in=["confirmed", "forfeited"]).count(),
         "wins": matches.filter(winner=team).count(),
@@ -3929,6 +3956,7 @@ def analytics_view(request):
 
         team_stats.append({
             "team": team, "played": played, "wins": wins, "losses": played - wins,
+            "display_label": _team_display_label(tournament, team),
             "win_rate": round(wins / played * 100, 1) if played > 0 else 0,
         })
     team_stats.sort(key=lambda x: x["win_rate"], reverse=True)
@@ -3947,6 +3975,7 @@ def analytics_view(request):
         participation = team.participations.filter(tournament=tournament).first()
         withdrawal_info.append({
             "team": team,
+            "display_label": _team_display_label(tournament, team),
             "affected_matches": affected,
             "withdrawn_at": participation.withdrawn_at if participation else None,
         })
@@ -3965,6 +3994,8 @@ def analytics_view(request):
             participations__status="active",
         ).distinct().order_by("name")
     )
+    for team in active_teams:
+        team.display_label = _team_display_label(tournament, team)
 
     # --- Head-to-head matchup card ---
     h2h_team1 = None
@@ -4022,6 +4053,9 @@ def analytics_view(request):
             "last_match": h2h_matches[0] if h2h_matches else None,
         }
 
+    h2h_team1_label = _team_display_label(tournament, h2h_team1) if h2h_team1 else ""
+    h2h_team2_label = _team_display_label(tournament, h2h_team2) if h2h_team2 else ""
+
     # --- Rolling form trend ---
     form_team = None
     form_team_id = request.GET.get("form_team")
@@ -4054,7 +4088,7 @@ def analytics_view(request):
                 result = "D"
             rolling_form_rows.append({
                 "match_number": m.match_number,
-                "opponent": opponent.name if opponent else "TBD",
+                "opponent": _team_display_label(tournament, opponent) if opponent else "TBD",
                 "result": result,
                 "sequence": idx,
                 "win_rate": round(wins / idx * 100, 1),
@@ -4098,7 +4132,7 @@ def analytics_view(request):
                         opponent_record["draws"] += 1
                     opponent_recent.append({
                         "match_number": m.match_number,
-                        "opponent": opp_match_opp.name if opp_match_opp else "TBD",
+                        "opponent": _team_display_label(tournament, opp_match_opp) if opp_match_opp else "TBD",
                         "result": opp_result,
                     })
 
@@ -4118,8 +4152,10 @@ def analytics_view(request):
                         h2h_record["draws"] += 1
             next_opponent_prep = {
                 "team": prep_team,
+                "team_label": _team_display_label(tournament, prep_team),
                 "match": prep_match,
                 "opponent": opponent,
+                "opponent_label": _team_display_label(tournament, opponent) if opponent else "",
                 "opponent_recent": opponent_recent,
                 "opponent_record": opponent_record,
                 "h2h": h2h_record,
@@ -4144,10 +4180,13 @@ def analytics_view(request):
             by_team_id = {}
             for row in base_rows:
                 row_copy = dict(row)
+                row_copy["display_label"] = _team_display_label(tournament, row["team"])
                 row_copy["point_change"] = 0
                 by_team_id[row["team"].pk] = row_copy
 
             for m in simulator_matches:
+                m.team1_label = _team_display_label(tournament, m.team1)
+                m.team2_label = _team_display_label(tournament, m.team2)
                 outcome = request.GET.get(f"sim_{m.pk}")
                 m.selected_outcome = outcome or ""
                 if outcome not in ("team1", "team2", "draw"):
@@ -4180,6 +4219,8 @@ def analytics_view(request):
         "analytics_teams": active_teams,
         "h2h_team1": h2h_team1,
         "h2h_team2": h2h_team2,
+        "h2h_team1_label": h2h_team1_label,
+        "h2h_team2_label": h2h_team2_label,
         "h2h_card": h2h_card,
         "form_team": form_team,
         "form_window": form_window,
@@ -4460,11 +4501,18 @@ def public_home(request):
     if tournament:
         _expire_pending_score_disputes(tournament)
         if tournament.format in ("round_robin", "double_round_robin"):
-            context["standings_snapshot"] = calculate_standings(tournament)[:5]
+            standings_snapshot = calculate_standings(tournament)[:5]
+            for row in standings_snapshot:
+                row["display_label"] = _team_display_label(tournament, row["team"])
+            context["standings_snapshot"] = standings_snapshot
         matches = tournament.matches.select_related("team1", "team2", "court", "winner").order_by(
             "scheduled_time", "match_number"
         )
-        context["upcoming_matches"] = list(matches.filter(status__in=["upcoming", "in_progress"])[:8])
+        upcoming_matches = list(matches.filter(status__in=["upcoming", "in_progress"])[:8])
+        for match in upcoming_matches:
+            match.team1_label = _team_display_label(tournament, match.team1)
+            match.team2_label = _team_display_label(tournament, match.team2)
+        context["upcoming_matches"] = upcoming_matches
 
     return render(request, "core/public_home.html", context)
 
@@ -4477,14 +4525,35 @@ def public_standings(request):
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
         if tournament.format == "hybrid":
             groups = sorted(set(tournament.team_participations.exclude(group="").values_list("group", flat=True)))
-            context["group_standings"] = {g: calculate_standings(tournament, group=g) for g in groups}
+            group_standings = {g: calculate_standings(tournament, group=g) for g in groups}
+            for rows in group_standings.values():
+                for row in rows:
+                    row["display_label"] = _team_display_label(tournament, row["team"])
+            context["group_standings"] = group_standings
             ko_matches = tournament.matches.filter(group="", bracket_type="winners")
             if ko_matches.exists():
                 context["bracket"] = get_bracket_data(tournament)
         else:
-            context["standings"] = calculate_standings(tournament)
+            standings = calculate_standings(tournament)
+            for row in standings:
+                row["display_label"] = _team_display_label(tournament, row["team"])
+            context["standings"] = standings
     if tournament.format in ("knockout", "double_elimination", "consolation"):
         context["bracket"] = get_bracket_data(tournament)
+
+    team_ids = set()
+    for round_matches in (context.get("bracket") or {}).values():
+        for match in round_matches:
+            if match.team1_id:
+                team_ids.add(match.team1_id)
+            if match.team2_id:
+                team_ids.add(match.team2_id)
+            if match.winner_id:
+                team_ids.add(match.winner_id)
+    context["team_name_map"] = _team_display_map(tournament, team_ids)
+    context["tournament_champion_label"] = (
+        _team_display_label(tournament, tournament.champion) if tournament.champion else ""
+    )
     return render(request, "core/public_standings.html", context)
 
 
@@ -4494,9 +4563,18 @@ def public_fixtures(request):
         return render(request, "core/public_fixtures.html", {"matches": [], **_public_tournament_context()})
     _expire_pending_score_disputes(tournament)
     matches = tournament.matches.select_related("team1", "team2", "court", "winner").order_by("scheduled_time", "match_number")
+    team_ids = {
+        m.team1_id for m in matches if m.team1_id
+    } | {
+        m.team2_id for m in matches if m.team2_id
+    } | {
+        m.winner_id for m in matches if m.winner_id
+    }
+    team_name_map = _team_display_map(tournament, team_ids)
     return render(request, "core/public_fixtures.html", {
         "tournament": tournament,
         "matches": matches,
+        "team_name_map": team_name_map,
         **_public_tournament_context(tournament),
     })
 

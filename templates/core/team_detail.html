@@ -215,7 +215,7 @@
             {% for m in matches %}
             <tr>
                 <td>{{ m.match_number }}</td>
-                <td>{% if m.team1 == team %}{{ m.team2.name|default:"TBD" }}{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
+                <td>{{ m.opponent_display|default:"TBD" }}</td>
                 <td>{% if m.score_team1 is not None %}{{ m.score_team1 }}-{{ m.score_team2 }}{% else %}-{% endif %}</td>
                 <td>
                     {% if m.winner == team %}<strong class="text-success">Won</strong>

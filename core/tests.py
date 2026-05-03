@@ -5,6 +5,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.db import models, IntegrityError
 from datetime import timedelta
+from io import StringIO
 
 from .models import (
     Team,
@@ -20,12 +21,16 @@ from .models import (
     TeamTournamentParticipation,
     TeamTournamentCourtPreference,
     TournamentIndividualRegistration,
+	TeamRegistration,
+	IndividualRegistration,
+	OrganizerProfile,
 )
 from .scheduling import generate_fixtures, count_available_slots
 from .standings import calculate_standings, advance_winner
 from .withdrawals import handle_withdrawal
 from .forms import TournamentForm
 from .scheduling import generate_consolation_if_ready
+from .services.enrollment import active_participant_count, is_registration_capacity_reached
 
 
 def _captain_user(team):
@@ -2249,6 +2254,158 @@ class WithdrawalPolicyTests(TestCase):
 		match.refresh_from_db()
 		self.assertEqual(match.status, "forfeited")
 		self.assertEqual(match.winner, team_b)
+
+
+class EnrollmentRefactorRegressionTests(TestCase):
+	def setUp(self):
+		self.organizer = User.objects.create_user(
+			username="phase2_org", password="pass123", is_staff=True
+		)
+		OrganizerProfile.objects.update_or_create(
+			user=self.organizer,
+			defaults={"verified": True, "org_name": "QA"},
+		)
+
+	def _mk_tournament(self, name, mode="team"):
+		return Tournament.objects.create(
+			name=name,
+			format="round_robin",
+			sport_type="table_tennis",
+			registration_mode=mode,
+			status="registration_open",
+			expected_teams_count=2,
+		)
+
+	def test_enrollment_service_count_and_capacity_for_both_modes(self):
+		team_tournament = self._mk_tournament("Svc Team", mode="team")
+		team = Team.objects.create(name="Svc Team A", sport_type=team_tournament.sport_type)
+		TeamTournamentParticipation.objects.create(
+			team=team,
+			tournament=team_tournament,
+			status="active",
+		)
+
+		self.assertEqual(active_participant_count(team_tournament), 1)
+		self.assertFalse(is_registration_capacity_reached(team_tournament))
+
+		individual_tournament = self._mk_tournament("Svc Individual", mode="individual")
+		u1 = User.objects.create_user(username="svc_i1", password="pass123")
+		u2 = User.objects.create_user(username="svc_i2", password="pass123")
+		TournamentIndividualRegistration.objects.create(
+			tournament=individual_tournament,
+			user=u1,
+			display_name="P1",
+			status="active",
+		)
+		TournamentIndividualRegistration.objects.create(
+			tournament=individual_tournament,
+			user=u2,
+			display_name="P2",
+			status="active",
+		)
+
+		self.assertEqual(active_participant_count(individual_tournament), 2)
+		self.assertTrue(is_registration_capacity_reached(individual_tournament))
+
+	def test_test_maker_register_open_tournament_avoids_legacy_registration_models(self):
+		team_tournament = self._mk_tournament("Legacy Team Flow", mode="team")
+		individual_tournament = self._mk_tournament("Legacy Individual Flow", mode="individual")
+
+		self.client.force_login(self.organizer)
+
+		session = self.client.session
+		session["selected_tournament_id"] = individual_tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "register_to_open_tournament",
+				"reg_count": "2",
+				"reg_prefix": "ind",
+				"reg_username_prefix": "ind_u",
+			},
+			follow=True,
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
+		self.assertEqual(IndividualRegistration.objects.filter(tournament=individual_tournament).count(), 0)
+
+		session = self.client.session
+		session["selected_tournament_id"] = team_tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "register_to_open_tournament",
+				"reg_count": "2",
+				"reg_prefix": "team",
+				"reg_username_prefix": "team_u",
+				"reg_members_per_team": "1",
+			},
+			follow=True,
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TeamTournamentParticipation.objects.filter(tournament=team_tournament).count(), 2)
+		self.assertEqual(TeamRegistration.objects.filter(tournament=team_tournament).count(), 0)
+
+	def test_audit_participant_integrity_reports_missing_shadow_and_legacy_rows(self):
+		tournament = self._mk_tournament("Audit Target", mode="individual")
+		user = User.objects.create_user(username="audit_u1", password="pass123")
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user,
+			display_name="Audit Player",
+			status="active",
+		)
+		IndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user,
+			status="approved",
+		)
+
+		out = StringIO()
+		call_command("audit_participant_integrity", tournament_id=tournament.pk, stdout=out)
+		output = out.getvalue()
+
+		self.assertIn("missing_shadow_team=1", output)
+		self.assertIn("legacy_individual_regs=1", output)
+
+	def test_reconcile_participant_integrity_applies_safe_sync_fixes(self):
+		tournament = self._mk_tournament("Reconcile Target", mode="individual")
+		user = User.objects.create_user(username="rec_u1", password="pass123")
+		shadow = Team.objects.create(name="rec_shadow", sport_type=tournament.sport_type, is_internal=False)
+		reg = TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user,
+			display_name="Recon Player",
+			shadow_team=shadow,
+			status="active",
+			group="A",
+			seed=7,
+		)
+		part = TeamTournamentParticipation.objects.create(
+			team=shadow,
+			tournament=tournament,
+			status="withdrawn",
+			group="B",
+			seed=2,
+		)
+
+		self.assertFalse(shadow.is_internal)
+		self.assertNotEqual(part.status, reg.status)
+
+		out = StringIO()
+		call_command("reconcile_participant_integrity", apply=True, tournament_id=tournament.pk, stdout=out)
+
+		shadow.refresh_from_db()
+		part.refresh_from_db()
+
+		self.assertTrue(shadow.is_internal)
+		self.assertEqual(part.status, "active")
+		self.assertEqual(part.group, "A")
+		self.assertEqual(part.seed, 7)
 
 
 class TournamentLifecycleTests(TestCase):

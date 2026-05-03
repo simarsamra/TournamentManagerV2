@@ -11,7 +11,13 @@
         </p>
         {% if tournament.expected_teams_count %}
         <p class="text-muted" style="margin:0.15rem 0 0;font-size:0.9rem;">
-            Registered: {{ participant_list|length|default:team_list|length }} / {{ tournament.expected_teams_count }} {{ tournament.participant_label_plural }}
+            Registered:
+            {% if registration_mode == "individual" %}
+                {{ participant_list|length }}
+            {% else %}
+                {{ team_list|length }}
+            {% endif %}
+            / {{ tournament.expected_teams_count }} {{ tournament.participant_label_plural }}
             {% if registration_full %}<span class="badge badge-withdrawn" style="margin-left:0.4rem;">Full</span>{% endif %}
         </p>
         {% endif %}

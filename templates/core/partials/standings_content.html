@@ -1,10 +1,11 @@
+{% load core_extras %}
 {% if tournament and tournament.status == 'completed' %}
 <div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;font-size:1.05rem;margin-bottom:1rem;">
     <span style="font-size:1.6rem;">🏆</span>
     <div>
         <strong>Tournament Complete!</strong>
         {% if tournament.champion %}
-            Champion: <strong>{{ tournament.champion.name }}</strong>
+            Champion: <strong>{{ tournament_champion_label|default:tournament.champion.name }}</strong>
         {% else %}
             No champion recorded.
         {% endif %}
@@ -36,11 +37,11 @@
                     <div class="bracket-match-wrap">
                     <div class="bracket-match">
                         <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
-                            <span>{{ m.team1.name|default:"TBD" }}</span>
+                            <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
                             <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
                         </div>
                         <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
-                            <span>{{ m.team2.name|default:"TBD" }}</span>
+                            <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
                             <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
                         </div>
                     </div>
@@ -88,7 +89,7 @@
             <tr>
                 <td><strong>{{ s.rank }}</strong></td>
                 <td>
-                    <a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.team.name }}</a>
+                    <a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.display_label|default:s.team.name }}</a>
                     {% if s.team.status == "withdrawn" %}<span class="badge badge-withdrawn">W</span>{% endif %}
                 </td>
                 <td>{{ s.played }}</td>
@@ -120,7 +121,7 @@
             {% for s in st %}
             <tr{% if s.rank <= tournament.teams_per_group_advance %} class="row-advance"{% endif %}>
                 <td><strong>{{ s.rank }}</strong></td>
-                <td><a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.team.name }}</a></td>
+                <td><a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.display_label|default:s.team.name }}</a></td>
                 <td>{{ s.played }}</td>
                 <td>{{ s.wins }}</td>
                 <td>{{ s.losses }}</td>
@@ -164,11 +165,11 @@
                 <div class="bracket-match-wrap">
                 <div class="bracket-match">
                     <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
-                        <span>{{ m.team1.name|default:"TBD" }}</span>
+                        <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
                         <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
                     </div>
                     <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
-                        <span>{{ m.team2.name|default:"TBD" }}</span>
+                        <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
                         <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
                     </div>
                 </div>

@@ -37,7 +37,7 @@
         <div class="card-header">{% if registration_mode == "individual" %}Create Participants{% else %}Create Teams + Members{% endif %}</div>
         <div class="card-body">
             {% if registration_mode == "individual" %}
-            <p class="text-muted mb-1">Creates N participant accounts with registrations and internal shadow competitors (no multi-member teams).</p>
+            <p class="text-muted mb-1">Creates N participant accounts with canonical tournament registrations (one competitor per account).</p>
             {% else %}
             <p class="text-muted mb-1">Creates N new teams in selected tournament and auto-creates captain/member accounts. Bypasses registration flow.</p>
             {% endif %}
@@ -83,7 +83,7 @@
             {% if tournament and tournament.status == "registration_open" %}
             <p class="text-muted mb-1">
                 Creates new {% if registration_mode == "individual" %}participant accounts and registers them{% else %}teams with captain/member accounts and registers them{% endif %}
-                via the registration system (<code>{% if registration_mode == "individual" %}IndividualRegistration{% else %}TeamRegistration{% endif %}</code> model, status=approved).
+                using the canonical tournament enrollment path ({% if registration_mode == "individual" %}<code>TournamentIndividualRegistration</code>{% else %}<code>TeamTournamentParticipation</code>{% endif %}).
             </p>
             <form method="post">
                 {% csrf_token %}

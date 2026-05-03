@@ -1,10 +1,11 @@
+{% load core_extras %}
 {% if tournament %}
 {% if tournament.status == 'completed' %}
 <div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;">
     <span style="font-size:1.4rem;">✅</span>
     <div>
         <strong>Tournament Complete</strong>
-        {% if tournament.champion %} — Champion: <strong>{{ tournament.champion.name }}</strong>{% endif %}
+        {% if tournament.champion %} — Champion: <strong>{{ team_name_map|dict_get:tournament.champion_id|default:tournament.champion.name }}</strong>{% endif %}
     </div>
 </div>
 {% endif %}
@@ -29,8 +30,8 @@
             <tr>
                 <td>{{ m.match_number }}</td>
                 {% if groups %}<td>{% if m.group %}{{ m.group }}{% else %}-{% endif %}</td>{% endif %}
-                <td>{% if m.winner == m.team1 %}<strong>{{ m.team1.name|default:"TBD" }}</strong>{% else %}{{ m.team1.name|default:"TBD" }}{% endif %}</td>
-                <td>{% if m.winner == m.team2 %}<strong>{{ m.team2.name|default:"TBD" }}</strong>{% else %}{{ m.team2.name|default:"TBD" }}{% endif %}</td>
+                <td>{% if m.winner == m.team1 %}<strong>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</strong>{% else %}{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}{% endif %}</td>
+                <td>{% if m.winner == m.team2 %}<strong>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</strong>{% else %}{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}{% endif %}</td>
                 <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
                 <td>{{ m.court.name|default:"-" }}</td>
                 <td>{% if m.score_team1 is not None %}{{ m.score_team1 }} - {{ m.score_team2 }}{% else %}-{% endif %}</td>

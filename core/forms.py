@@ -116,6 +116,7 @@ class CourtAvailabilityForm(forms.Form):
     )
     matches_per_court_per_day = forms.IntegerField(
         min_value=1,
+        required=False,
         initial=1,
         widget=forms.NumberInput(attrs={"class": "form-control"}),
         help_text="How many matches should be scheduled on each selected court on each chosen weekday.",

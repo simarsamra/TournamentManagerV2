@@ -9,7 +9,7 @@
     <div>
         <strong>Tournament Complete!</strong>
         {% if tournament.champion %}
-            Champion: <strong>{{ tournament.champion.name }}</strong>
+                    Champion: <strong>{{ tournament_champion_label|default:tournament.champion.name }}</strong>
         {% else %}
             No champion recorded.
         {% endif %}
