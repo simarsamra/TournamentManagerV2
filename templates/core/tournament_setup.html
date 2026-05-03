@@ -22,10 +22,17 @@
                     <small class="text-muted">This determines how matches are generated and how standings work.</small>
                 </div>
             </div>
-            <div class="form-group">
-                <label for="id_players_per_team">Players per Team</label>
-                {{ form.players_per_team }}
-                <small class="text-muted">Number of players required in each team (e.g., 2 for doubles, 5 for basketball).</small>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="id_players_per_team">Players per Team</label>
+                    {{ form.players_per_team }}
+                    <small class="text-muted">Set to 1 for individual tournaments (e.g., singles). Each "team" is treated as one participant.</small>
+                </div>
+                <div class="form-group">
+                    <label for="id_expected_teams_count">Expected Number of Participants</label>
+                    {{ form.expected_teams_count }}
+                    <small class="text-muted">Registration closes automatically when this limit is reached. Starting is also blocked until met.</small>
+                </div>
             </div>
             <div class="grid grid-2">
                 <div class="form-group">
@@ -34,9 +41,18 @@
                     <small class="text-muted">Automatic scheduling starts from this date.</small>
                 </div>
                 <div class="form-group">
-                    <label for="id_expected_teams_count">Expected Number of Teams</label>
-                    {{ form.expected_teams_count }}
-                    <small class="text-muted">Starting is blocked until registrations match this count.</small>
+                    <label for="id_default_match_duration">Match Duration (min)</label>
+                    {{ form.default_match_duration }}
+                </div>
+            </div>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="id_matches_per_court_per_day">Matches per Court per Day</label>
+                    {{ form.matches_per_court_per_day }}
+                    <small class="text-muted">Used for end-date estimation. Set to 0 to auto-derive from court availability windows.</small>
+                </div>
+                <div class="form-group">
+                    <label>Withdrawal Policy</label>{{ form.withdrawal_policy }}
                 </div>
             </div>
             <div class="grid grid-3">
@@ -56,14 +72,6 @@
                 </div>
                 <div class="form-group">
                     <label>Teams Advancing per Group</label>{{ form.teams_per_group_advance }}
-                </div>
-            </div>
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label>Withdrawal Policy</label>{{ form.withdrawal_policy }}
-                </div>
-                <div class="form-group">
-                    <label>Match Duration (min)</label>{{ form.default_match_duration }}
                 </div>
             </div>
             <button type="submit" class="btn btn-primary btn-lg">Create Tournament</button>

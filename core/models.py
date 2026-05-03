@@ -82,6 +82,11 @@ class Tournament(models.Model):
     default_match_duration = models.IntegerField(
         default=30, help_text="Minutes per match"
     )
+    matches_per_court_per_day = models.PositiveIntegerField(
+        default=0,
+        blank=True,
+        help_text="Maximum matches per court per day for scheduling (0 = no limit, derived from time slots)",
+    )
     champion = models.ForeignKey(
         "Team",
         null=True,
@@ -93,6 +98,16 @@ class Tournament(models.Model):
 
     def get_tiebreaker_order(self):
         return json.loads(self.tiebreaker_order)
+
+    @property
+    def participant_label(self):
+        """Return 'Player' when players_per_team == 1, otherwise 'Team'."""
+        return "Player" if self.players_per_team == 1 else "Team"
+
+    @property
+    def participant_label_plural(self):
+        """Return 'Players' when players_per_team == 1, otherwise 'Teams'."""
+        return "Players" if self.players_per_team == 1 else "Teams"
 
     def __str__(self):
         return f"{self.name} ({self.get_format_display()})"

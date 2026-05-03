@@ -19,7 +19,7 @@
 {% endif %}
 
 <h1 class="page-title">{{ tournament.name }} <span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span></h1>
-<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Format: {{ tournament.get_format_display }} | Players/Team: {{ tournament.players_per_team }} | Expected Teams: {{ tournament.expected_teams_count|default:"-" }} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
+<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Format: {{ tournament.get_format_display }} | Players/{{ tournament.participant_label }}: {{ tournament.players_per_team }} | Expected {{ tournament.participant_label_plural }}: {{ tournament.expected_teams_count|default:"-" }}{% if tournament.matches_per_court_per_day %} | Matches/Court/Day: {{ tournament.matches_per_court_per_day }}{% endif %} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
 
 <div class="grid grid-3">
     <!-- Courts -->
@@ -146,22 +146,48 @@
         </div>
     </div>
 
-    <!-- Teams -->
+    <!-- Teams / Participants -->
     <div class="card">
-        <div class="card-header">Teams ({{ teams.count }})</div>
+        <div class="card-header">
+            {{ tournament.participant_label_plural }} ({{ active_teams_count }}{% if tournament.expected_teams_count %}/{{ tournament.expected_teams_count }}{% endif %})
+            {% if tournament.expected_teams_count %}
+                {% if active_teams_count >= tournament.expected_teams_count %}
+                <span class="badge badge-withdrawn" style="margin-left:0.5rem;">Full</span>
+                {% else %}
+                <span class="badge badge-scheduled" style="margin-left:0.5rem;">{{ remaining_spots }} open</span>
+                {% endif %}
+            {% endif %}
+        </div>
         <div class="card-body">
             {% for t in teams %}
             <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
                 <div class="d-flex justify-between align-center">
-                    <strong>{{ t.name }}</strong>
-                    <span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span>
+                    <strong>
+                        {% if tournament.players_per_team == 1 %}
+                            {# For individual tournaments, show player name if available, else team name #}
+                            {% with player=t.players.first %}
+                                {% if player %}{{ player.name }}{% else %}{{ t.name }}{% endif %}
+                            {% endwith %}
+                        {% else %}
+                            {{ t.name }}
+                        {% endif %}
+                    </strong>
+                    <div class="d-flex" style="gap:0.35rem;align-items:center;">
+                        <span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span>
+                        {% if tournament.status != 'active' and tournament.status != 'completed' %}
+                        <form method="post" action="{% url 'organizer_remove_team' pk=t.pk %}" style="display:inline;" onsubmit="return confirm('Permanently remove {{ t.name }} and their account from this tournament? This cannot be undone.')">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.45rem;font-size:0.75rem;">✕ Remove</button>
+                        </form>
+                        {% endif %}
+                    </div>
                 </div>
-                {% if t.department %}
+                {% if tournament.players_per_team > 1 and t.department %}
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
                     Department: {{ t.department }}
                 </div>
                 {% endif %}
-                {% if t.players.all %}
+                {% if tournament.players_per_team > 1 and t.players.all %}
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
                     Players: {% for p in t.players.all %}{{ p.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
                 </div>
@@ -172,10 +198,10 @@
                 </div>
             </div>
             {% empty %}
-            <p class="text-muted">No teams registered yet.</p>
+            <p class="text-muted">No {{ tournament.participant_label_plural|lower }} registered yet.</p>
             {% endfor %}
             <hr style="margin:1rem 0;">
-            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Add Teams via Text</h4>
+            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Add {{ tournament.participant_label_plural }} via Text</h4>
             <form method="post" action="{% url 'add_teams_bulk' pk=tournament.pk %}" enctype="multipart/form-data">
                 {% csrf_token %}
                 <div class="form-group">
@@ -187,7 +213,7 @@
                     {{ bulk_team_file_form.file }}
                     <small class="text-muted">{{ bulk_team_file_form.file.help_text }}</small>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm">Add Teams</button>
+                <button type="submit" class="btn btn-primary btn-sm">Add {{ tournament.participant_label_plural }}</button>
             </form>
         </div>
     </div>
@@ -198,7 +224,7 @@
         <div class="d-flex justify-between align-center" style="gap:1rem; flex-wrap:wrap;">
             <div>
                 <strong>Workflow</strong><br>
-                <span class="text-muted">Status: {{ tournament.get_status_display }} • {{ teams.count }} teams • {{ courts.count }} courts</span>
+                <span class="text-muted">Status: {{ tournament.get_status_display }} • {{ active_teams_count }} {{ tournament.participant_label_plural|lower }}{% if tournament.expected_teams_count %} / {{ tournament.expected_teams_count }} expected{% endif %} • {{ courts.count }} courts</span>
             </div>
             <div class="d-flex" style="gap:0.5rem; flex-wrap:wrap;">
                 {% if tournament.status == 'setup' or tournament.status == 'ready' %}
@@ -242,7 +268,18 @@
                     <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Seed the top teams from group standings into the knockout bracket? This action cannot be undone.')">Proceed to Knockout Phase →</button>
                 </form>
                 {% endif %}
+
+                <!-- Estimate End Date button -->
+                {% if tournament.status != 'completed' %}
+                <button type="button" class="btn btn-outline btn-sm" id="btn-estimate-end-date" data-url="{% url 'estimate_tournament_end_date' pk=tournament.pk %}">📅 Estimate End Date</button>
+                {% endif %}
             </div>
+        </div>
+
+        <!-- End date estimation result panel (hidden until requested) -->
+        <div id="end-date-estimate-panel" style="display:none;margin-top:1rem;padding:0.75rem;background:#f0f8ff;border:1px solid #b8d9f8;border-radius:6px;">
+            <strong>End Date Estimate</strong>
+            <div id="end-date-estimate-content" style="margin-top:0.5rem;font-size:0.9rem;"></div>
         </div>
 
         <div class="mt-2" style="font-size:0.9rem;">
@@ -251,4 +288,38 @@
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    var btn = document.getElementById('btn-estimate-end-date');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+        var panel = document.getElementById('end-date-estimate-panel');
+        var content = document.getElementById('end-date-estimate-content');
+        content.textContent = 'Calculating…';
+        panel.style.display = 'block';
+        fetch(btn.dataset.url, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) {
+                    content.textContent = 'Error: ' + data.error;
+                    return;
+                }
+                content.innerHTML =
+                    '<dl style="display:grid;grid-template-columns:auto 1fr;gap:0.25rem 1rem;margin:0;">' +
+                    '<dt class="text-muted">Format</dt><dd style="margin:0;">' + data.format_display + '</dd>' +
+                    '<dt class="text-muted">' + data.participant_label_plural + '</dt><dd style="margin:0;">' + data.team_count + '</dd>' +
+                    '<dt class="text-muted">Required matches</dt><dd style="margin:0;">' + data.required_matches + '</dd>' +
+                    '<dt class="text-muted">Available courts</dt><dd style="margin:0;">' + data.court_count + '</dd>' +
+                    '<dt class="text-muted">Matches / court / day</dt><dd style="margin:0;">' + data.matches_per_court_per_day + '</dd>' +
+                    '<dt class="text-muted">Matches / day total</dt><dd style="margin:0;">' + data.matches_per_day + '</dd>' +
+                    '<dt class="text-muted">Days needed</dt><dd style="margin:0;">' + data.days_needed + '</dd>' +
+                    '<dt class="text-muted">Start date</dt><dd style="margin:0;">' + data.start_date + '</dd>' +
+                    '<dt style="font-weight:600;">Estimated end date</dt><dd style="margin:0;font-weight:600;color:#0a5e2c;">' + data.estimated_end_date + '</dd>' +
+                    '</dl>';
+            })
+            .catch(function () { content.textContent = 'Unable to calculate estimate. Please try again.'; });
+    });
+})();
+</script>
 {% endblock %}

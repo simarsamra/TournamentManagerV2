@@ -18,6 +18,12 @@
             <button type="submit" class="btn btn-danger" onclick="return confirm('Withdraw this team? This cannot be undone.')">Withdraw</button>
         </form>
         {% endif %}
+        {% if is_organizer and tournament.status != 'active' and tournament.status != 'completed' %}
+        <form method="post" action="{% url 'organizer_remove_team' pk=team.pk %}" style="display:inline" onsubmit="return confirm('Permanently remove {{ team.name }} from this tournament? This will delete the team and its captain account.')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">✕ Remove Team</button>
+        </form>
+        {% endif %}
     </div>
 </div>
 

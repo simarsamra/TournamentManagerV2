@@ -1,38 +1,58 @@
 {% extends "core/base.html" %}
-{% block title %}Teams{% endblock %}
-{% block page_header %}Teams{% endblock %}
+{% block title %}{{ tournament.participant_label_plural|default:"Teams" }}{% endblock %}
+{% block page_header %}{{ tournament.participant_label_plural|default:"Teams" }}{% endblock %}
 {% block content %}
-<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Teams</h1>
+<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}{{ tournament.participant_label_plural|default:"Teams" }}</h1>
 {% if tournament %}
 <div class="card">
     <div class="table-container">
     <table>
         <thead>
             <tr>
-                <th>Name</th>
-                <th>Department</th>
-                <th>Players</th>
+                <th>{{ tournament.participant_label }}</th>
+                {% if tournament.players_per_team > 1 %}<th>Department</th>{% endif %}
+                {% if tournament.players_per_team > 1 %}<th>Players</th>{% endif %}
                 {% if tournament.format == "hybrid" %}<th>Group</th>{% endif %}
                 <th>Status</th>
-                <th>Captain</th>
+                <th>Account</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
             {% for t in teams %}
             <tr>
-                <td><strong>{{ t.name }}</strong></td>
-                <td class="text-muted">{{ t.department|default:"-" }}</td>
+                <td>
+                    <strong>
+                        {% if tournament.players_per_team == 1 %}
+                            {% with player=t.players.first %}
+                                {% if player %}{{ player.name }}{% else %}{{ t.name }}{% endif %}
+                            {% endwith %}
+                        {% else %}
+                            {{ t.name }}
+                        {% endif %}
+                    </strong>
+                </td>
+                {% if tournament.players_per_team > 1 %}<td class="text-muted">{{ t.department|default:"-" }}</td>{% endif %}
+                {% if tournament.players_per_team > 1 %}
                 <td style="font-size:0.85rem;color:#666;">
                     {% for p in t.players.all %}{{ p.name }}{% if not forloop.last %}, {% endif %}{% empty %}-{% endfor %}
                 </td>
+                {% endif %}
                 {% if tournament.format == "hybrid" %}<td>{{ t.group|default:"-" }}</td>{% endif %}
                 <td><span class="badge badge-{{ t.status }}">{{ t.get_status_display }}</span></td>
                 <td class="text-muted">{{ t.user.username }}</td>
-                <td><a href="{% url 'team_detail' pk=t.pk %}" class="btn btn-outline btn-sm">View</a></td>
+                <td>
+                    <a href="{% url 'team_detail' pk=t.pk %}" class="btn btn-outline btn-sm">View</a>
+                    {% if is_organizer and tournament.status != 'active' and tournament.status != 'completed' %}
+                    <form method="post" action="{% url 'organizer_remove_team' pk=t.pk %}" style="display:inline;" onsubmit="return confirm('Remove {{ t.name }} from this tournament?')">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;">✕ Remove</button>
+                    </form>
+                    {% endif %}
+                </td>
             </tr>
             {% empty %}
-            <tr><td colspan="{% if tournament.format == "hybrid" %}8{% else %}7{% endif %}" class="text-center text-muted">No teams registered.</td></tr>
+            <tr><td colspan="{{ teams_colspan }}" class="text-center text-muted">No {{ tournament.participant_label_plural|lower }} registered.</td></tr>
             {% endfor %}
         </tbody>
     </table>

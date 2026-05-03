@@ -34,6 +34,7 @@ urlpatterns = [
     path("tournament/<int:pk>/start/", views.start_tournament, name="start_tournament"),
     path("tournament/<int:pk>/complete/", views.complete_tournament, name="complete_tournament"),
     path("tournament/<int:pk>/proceed-to-knockout/", views.proceed_to_knockout_view, name="proceed_to_knockout"),
+    path("tournament/<int:pk>/estimate-end-date/", views.estimate_tournament_end_date, name="estimate_tournament_end_date"),
     path("tournament/select/", views.select_tournament, name="select_tournament"),
     path("tournament/<int:pk>/delete/", views.delete_tournament, name="delete_tournament"),
 
@@ -59,6 +60,7 @@ urlpatterns = [
     path("teams/", views.teams_view, name="teams"),
     path("team/<int:pk>/", views.team_detail, name="team_detail"),
     path("team/<int:pk>/withdraw/", views.withdraw_team, name="withdraw_team"),
+    path("team/<int:pk>/remove/", views.organizer_remove_team, name="organizer_remove_team"),
     path("team/<int:pk>/preferences/", views.team_preferences, name="team_preferences"),
     path("team/<int:pk>/members/add/", views.manage_team_members, name="manage_team_members"),
     path("team/<int:pk>/members/<int:user_pk>/remove/", views.remove_team_member, name="remove_team_member"),
