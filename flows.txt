@@ -1,0 +1,627 @@
+================================================================================
+TOURNAMENT MANAGER — COMPLETE WORKFLOW REFERENCE
+Django App · No financial flows · Simple login auth
+================================================================================
+
+Actors in this document:
+  [A]  Admin         — Django superuser, manages the platform
+  [O]  Organizer     — Has OrganizerProfile, creates and runs tournaments
+  [C]  Captain       — TeamMembership.role = "captain", acts on behalf of team
+  [M]  Member        — TeamMembership.role = "member", active on a team
+  [I]  Individual    — Registered user, no team, enters solo tournaments
+  [U]  User          — Any authenticated user (base actor)
+
+================================================================================
+SECTION 1 — ACCOUNT & PROFILE FLOWS
+================================================================================
+
+1.1  Register an account
+     [U] Visits /register
+     [U] Enters username, email, display_name, password
+     App  Creates User, sets active_team = null
+     App  Redirects to profile setup
+     [U] Uploads avatar (optional), sets display_name
+     App  Account ready — user lands on dashboard
+
+1.2  Log in
+     [U] Visits /login
+     [U] Enters username + password (Django auth)
+     App  Authenticates, sets session
+     App  Redirects to dashboard (or next= param if redirected from a protected page)
+
+1.3  Log out
+     [U] Clicks log out
+     App  Clears session, redirects to /login
+
+1.4  Edit profile
+     [U] Visits /profile/edit
+     [U] Updates display_name, avatar, bio
+     App  Saves changes, shows success message
+
+1.5  View another user's public profile
+     [U] Visits /users/<username>/
+     App  Shows display_name, current team, tournament history, win/loss record
+
+1.6  Apply for an organizer account
+     [U] Visits /organizer/apply
+     [U] Submits org_name, description
+     App  Creates OrganizerProfile with verified=False
+     App  Notifies admin for approval
+
+1.7  Admin approves organizer
+     [A] Reviews pending organizer applications in Django admin
+     [A] Sets OrganizerProfile.verified = True
+     App  User can now access organizer dashboard and create tournaments
+
+1.8  Admin revokes organizer status
+     [A] Sets OrganizerProfile.verified = False
+     App  Organizer loses access to organizer tools
+     App  Existing tournaments remain but no new ones can be created
+
+
+================================================================================
+SECTION 2 — TEAM FLOWS
+================================================================================
+
+2.1  Create a team
+     [U] Visits /teams/create
+     [U] Enters team name, tag (short code, e.g. "NFC"), uploads logo (optional)
+     App  Validates name is unique
+     App  Creates Team (status=active), creates TeamMembership (role=captain)
+     App  Sets user.active_team = new team
+     App  Redirects to team dashboard
+
+2.2  Invite a member
+     [C] Visits /teams/<id>/invite
+     [C] Enters username or email of player to invite
+     App  Validates target user exists and has no active_team (or allows multi-team if app permits)
+     App  Creates TeamInvite record (status=pending)
+     App  Notifies target user
+
+2.3  Accept a team invite
+     [U] Sees invite notification in dashboard
+     [U] Clicks Accept
+     App  Creates TeamMembership (role=member)
+     App  Sets user.active_team = this team
+     App  Deletes or archives TeamInvite record
+     App  Notifies captain that user joined
+
+2.4  Decline a team invite
+     [U] Clicks Decline on invite notification
+     App  Marks TeamInvite status=declined
+     App  No membership created
+
+2.5  View team roster
+     [U] Visits /teams/<id>/
+     App  Lists all TeamMembership rows with role, joined_at
+     App  Shows pending invites (visible to captain only)
+
+2.6  Remove a member (captain action)
+     [C] Visits team roster, clicks Remove next to a member
+     App  Deletes TeamMembership row
+     App  Sets removed user's active_team = null
+     App  Logs action in AuditLog
+
+2.7  Promote member to captain
+     [C] Visits roster, clicks Promote next to a member
+     App  Changes their TeamMembership.role = "captain"
+     App  Changes current captain's role = "member"
+     App  Only one captain at a time enforced at model level
+
+2.8  Leave a team (member action)
+     [M] Visits /teams/<id>/, clicks Leave team
+     App  Deletes their TeamMembership row
+     App  Sets user.active_team = null
+
+2.9  Captain leaves / dissolves team
+     [C] Has no other members → clicks Disband team
+     App  Sets Team.status = disbanded
+     App  Clears active_team for all remaining members
+     App  Team remains in historical records but cannot register for new tournaments
+
+2.10 Transfer captaincy and leave
+     [C] Promotes a member to captain first (flow 2.7)
+     [C] Then leaves team (flow 2.8)
+     App  New captain is now responsible for the team
+
+2.11 View team's tournament history
+     [U] Visits /teams/<id>/history
+     App  Lists all TeamRegistration records with outcome, placement, tournament name
+
+
+================================================================================
+SECTION 3 — TOURNAMENT CREATION & SETUP FLOWS (ORGANIZER)
+================================================================================
+
+3.1  Create a tournament
+     [O] Visits /organizer/tournaments/create
+     [O] Fills in:
+           name, description, sport/game type
+           mode: team | individual | mixed
+           format: single_elimination | double_elimination | round_robin | swiss
+           max_participants (teams or individuals)
+           min_team_size / max_team_size (if mode=team)
+           registration_open_date, registration_close_date
+           start_date, end_date
+           visibility: public | private (invite link only)
+     App  Creates Tournament (status=draft, organizer=request.user.organizer_profile)
+
+3.2  Configure tournament rules
+     [O] Visits /organizer/tournaments/<id>/rules
+     [O] Enters ruleset as rich text
+     [O] Sets match format: best_of_1 | best_of_3 | best_of_5
+     [O] Sets result confirmation window (e.g. 24 hours before auto-escalation)
+     [O] Sets reschedule policy: allowed | not_allowed | organizer_approval_required
+     [O] Sets dispute policy: captain_only | any_member
+     App  Saves TournamentConfig attached to tournament
+
+3.3  Publish tournament
+     [O] Reviews tournament details on preview page
+     [O] Clicks Publish
+     App  Sets Tournament.status = published
+     App  Tournament now visible on public listing (if visibility=public)
+
+3.4  Open registration
+     [O] Visits tournament dashboard, clicks Open registration
+     App  Sets Tournament.registration_status = open
+     App  Participants can now register
+
+3.5  Close registration manually
+     [O] Clicks Close registration
+     App  Sets Tournament.registration_status = closed
+     App  No new registrations accepted
+
+3.6  Registration auto-closes
+     App  Scheduled task checks registration_close_date
+     App  Sets registration_status = closed when date passes or max_participants reached
+
+3.7  Review registrations
+     [O] Visits /organizer/tournaments/<id>/registrations
+     App  Lists all TeamRegistration / IndividualRegistration with status
+     [O] Can approve or reject individual registrations
+     App  Approved registrations become seeded participants
+
+3.8  Approve a registration
+     [O] Clicks Approve next to a pending registration
+     App  Sets registration.status = approved
+     App  Notifies team captain or individual
+
+3.9  Reject a registration
+     [O] Clicks Reject, optionally adds reason
+     App  Sets registration.status = rejected
+     App  Notifies team captain or individual with reason
+
+3.10 Seed participants
+     [O] Visits /organizer/tournaments/<id>/seed
+     [O] Drags participants to assign seeds (or uses auto-seed)
+     App  Saves TournamentParticipant.seed for each approved registration
+
+3.11 Generate bracket
+     [O] Clicks Generate bracket after seeding
+     App  Creates Match records based on format and seeds
+     App  Sets Tournament.status = bracket_generated
+     App  Bracket is visible to all participants
+
+3.12 Start tournament
+     [O] Clicks Start tournament
+     App  Sets Tournament.status = in_progress
+     App  First round matches become active
+
+3.13 Edit tournament details before start
+     [O] Can edit name, description, dates while status=draft or published
+     App  Locks format and mode fields once any registration is approved
+
+3.14 Cancel a tournament
+     [O] Visits tournament settings, clicks Cancel tournament, confirms
+     App  Sets Tournament.status = cancelled
+     App  Notifies all registered participants
+     App  Logs action
+
+3.15 Duplicate a tournament (template reuse)
+     [O] Visits a past tournament, clicks Duplicate
+     App  Creates new Tournament with same config, rules, format
+     App  Clears all registrations, matches, dates — organizer fills those in
+     App  Status = draft
+
+
+================================================================================
+SECTION 4 — REGISTRATION FLOWS (PARTICIPANT)
+================================================================================
+
+4.1  Browse tournaments
+     [U] Visits /tournaments/
+     App  Lists public tournaments with status, mode, registration_status, spots remaining
+     [U] Filters by mode (team/individual), status (open/upcoming/completed), game type
+
+4.2  View tournament detail
+     [U] Visits /tournaments/<id>/
+     App  Shows rules, format, schedule, participant list, bracket (if generated)
+
+4.3  Team registers for a tournament
+     [C] On tournament page, clicks Register team
+     App  Confirms user is captain of their active_team
+     App  Confirms tournament.mode = team or mixed
+     App  Confirms team not already registered
+     App  Confirms registration is open and spots remain
+     App  Shows roster with eligibility check per participant
+     [C] Reviews roster, confirms any warnings
+     [C] Agrees to ruleset on behalf of team
+     App  Creates TeamRegistration (status=pending)
+     App  Notifies all team members
+     App  Notifies organizer
+
+4.4  Individual registers for a tournament
+     [I] On tournament page, clicks Register
+     App  Confirms tournament.mode = individual or mixed
+     App  Confirms user not already registered
+     App  Confirms registration open and spots remain
+     [I] Agrees to ruleset
+     App  Creates IndividualRegistration (status=pending)
+
+4.5  Team withdraws from a tournament (before bracket)
+     [C] Visits /tournaments/<id>/my-registration
+     [C] Clicks Withdraw, confirms
+     App  Confirms Tournament.status is not in_progress or later
+     App  Sets TeamRegistration.status = withdrawn
+     App  Spot freed up if tournament has a waitlist
+     App  Notifies organizer
+
+4.6  Individual withdraws from a tournament (before bracket)
+     [I] Same as 4.5 but for IndividualRegistration
+
+4.7  Waitlist registration
+     App  When max_participants reached, subsequent registrations get status=waitlisted
+     App  If an approved team withdraws, first waitlisted registration is auto-promoted
+     App  Notifies newly promoted participant
+
+4.8  View my registrations
+     [U] Visits /dashboard/registrations
+     App  Lists all current and past registrations with status and tournament info
+
+
+================================================================================
+SECTION 5 — MATCH FLOWS (IN-TOURNAMENT)
+================================================================================
+
+5.1  View upcoming matches
+     [U] Visits /tournaments/<id>/bracket or /dashboard/matches
+     App  Shows all matches with scheduled time, opponent, status
+
+5.2  Submit a match result
+     [M or I] On match detail page, clicks Submit result
+     App  Confirms user is an active participant in this match
+     App  Confirms match.status = scheduled or in_progress
+     [U] Enters score for both sides
+     App  Records score, sets match.status = pending_confirmation
+     App  Records submitted_by = request.user
+     App  Notifies opposing participant(s)
+
+5.3  Confirm a match result
+     [Opposing M or I] Sees notification, visits match page
+     App  Confirms the acting user is on the opposing side
+     App  Confirms the acting user did NOT submit the result (no self-confirmation)
+     [U] Clicks Confirm
+     App  Sets match.status = confirmed
+     App  Records confirmed_by = request.user
+     App  Updates bracket (winner advances, loser eliminated or moves to losers bracket)
+     App  Logs action
+
+5.4  Result auto-confirms after timeout
+     App  Scheduled task checks matches in pending_confirmation state
+     App  If confirmation_window exceeded, auto-confirms and notifies organizer
+     App  Logs as auto-confirmed in AuditLog
+
+5.5  Dispute a match result
+     [Opposing M or I] On match page, clicks Dispute instead of Confirm
+     App  Confirms acting user is on the opposing side
+     [U] Enters dispute reason (required)
+     App  Sets match.status = disputed
+     App  Records disputed_by = request.user
+     App  Notifies organizer immediately
+     App  Pauses bracket advancement for this match
+
+5.6  Organizer resolves a dispute
+     [O] Visits /organizer/tournaments/<id>/disputes
+     [O] Reviews both sides, views submitted scores, reads dispute reason
+     [O] Can view match history and any uploaded evidence
+     [O] Enters final score OR declares walkover
+     [O] Clicks Resolve
+     App  Sets match.status = confirmed (with organizer_resolved=True flag)
+     App  Notifies both participants of outcome
+     App  Logs resolution with organizer identity
+
+5.7  Request a reschedule
+     [C or I] On match page, clicks Request reschedule
+     App  Confirms Tournament.reschedule_policy allows it
+     App  Confirms match has not started
+     [U] Proposes up to 3 alternative time slots
+     App  Creates RescheduleRequest (status=pending)
+     App  Notifies opposing captain or individual
+
+5.8  Respond to a reschedule request
+     [Opposing C or I] Views reschedule request notification
+     App  Confirms the acting user is on the opposing side
+     App  Confirms the acting user did NOT make the request
+     [U] Accepts one of the proposed slots OR declines
+     App  If accepted: updates Match.scheduled_time, notifies both sides, notifies organizer
+     App  If declined: RescheduleRequest.status = declined, notifies requester
+
+5.9  Organizer overrides match schedule
+     [O] Can change match scheduled_time directly from organizer dashboard
+     App  Notifies both participants
+
+5.10 Walkover / forfeit
+     [O] On match detail, clicks Award walkover
+     [O] Selects winning side, enters reason
+     App  Sets match.status = walkover, records winner
+     App  Advances bracket
+     App  Notifies both participants
+
+5.11 View match history
+     [U] Visits /tournaments/<id>/matches or /teams/<id>/history
+     App  Lists all matches with scores, status, submitted_by, confirmed_by
+
+
+================================================================================
+SECTION 6 — BRACKET & STANDINGS FLOWS
+================================================================================
+
+6.1  View live bracket
+     [U] Visits /tournaments/<id>/bracket
+     App  Renders full bracket with match statuses, scores, advancement lines
+     App  Highlights user's own team or self in bracket
+
+6.2  View round-robin standings
+     [U] Visits /tournaments/<id>/standings (for round_robin or swiss format)
+     App  Shows W/L/D record, points, tiebreaker stats per participant
+     App  Updates in real time as matches are confirmed
+
+6.3  View Swiss pairings
+     App  After each Swiss round, generates pairings based on current standings
+     [O] Reviews and approves pairings before round starts
+     App  Creates match records for new round
+
+6.4  Advance round (bracket tournaments)
+     App  When all matches in a round are confirmed, automatically creates next-round matches
+     App  Places winners into correct bracket positions
+     App  Notifies participants of their next match
+
+6.5  Third-place match
+     [O] Optionally enables third-place match in tournament config
+     App  Creates match between semi-final losers after both semis are confirmed
+
+6.6  Tournament concludes
+     App  When final match is confirmed, sets Tournament.status = completed
+     App  Renders final standings / bracket with winner highlighted
+     App  All participants can view final results permanently
+
+
+================================================================================
+SECTION 7 — ORGANIZER MANAGEMENT FLOWS (IN-TOURNAMENT)
+================================================================================
+
+7.1  Organizer dashboard overview
+     [O] Visits /organizer/tournaments/<id>/dashboard
+     App  Shows: registration count, match completion %, active disputes, upcoming matches
+
+7.2  Disqualify a team mid-tournament
+     [O] Visits registrations list, clicks Disqualify next to a team
+     [O] Enters reason
+     App  Sets TeamRegistration.status = disqualified
+     App  Awards walkover to their current opponent if match in progress
+     App  Removes them from future bracket positions
+     App  Notifies the team
+
+7.3  Add a substitute player to a team roster
+     [O] Visits team's tournament roster
+     [O] Approves a sub (if ruleset allows substitutions before bracket lock)
+     App  Adds user to tournament roster without changing TeamMembership
+     App  Logs action
+
+7.4  Edit a confirmed result (organizer override)
+     [O] On any confirmed match, clicks Edit result
+     [O] Changes score, enters reason for override
+     App  Updates match scores, records organizer override
+     App  Re-evaluates bracket if necessary (manual step flagged to organizer)
+     App  Notifies affected teams
+
+7.5  Pause tournament
+     [O] Clicks Pause on tournament dashboard
+     App  Sets Tournament.status = paused
+     App  No new match results can be submitted while paused
+     App  Notifies all participants
+
+7.6  Resume tournament
+     [O] Clicks Resume
+     App  Sets Tournament.status = in_progress
+     App  Participants notified
+
+7.7  View audit log
+     [O] Visits /organizer/tournaments/<id>/audit
+     App  Lists every action with actor, timestamp, action type, affected record
+     [O] Can filter by actor, action type, date range
+
+
+================================================================================
+SECTION 8 — NOTIFICATIONS & COMMUNICATION FLOWS
+================================================================================
+
+8.1  In-app notification delivery
+     App  On every key action, creates Notification record for relevant users
+     App  Notification bell in nav shows unread count
+     [U] Visits /notifications/ to see full list
+
+8.2  Notification types
+     - Team invite received
+     - Team invite accepted / declined
+     - Tournament registration approved / rejected
+     - Tournament registration promoted from waitlist
+     - Match scheduled (new match assigned)
+     - Match result submitted by opponent (action required)
+     - Match result confirmed
+     - Match result disputed (action required for both parties + organizer)
+     - Dispute resolved
+     - Reschedule request received (action required)
+     - Reschedule accepted / declined
+     - Tournament starting soon (e.g. 24h reminder)
+     - Tournament bracket published
+     - Tournament cancelled
+     - Disqualification notice
+     - Walkover awarded
+
+8.3  Mark notifications as read
+     [U] Clicks notification → marks as read, navigates to relevant page
+     [U] Clicks Mark all as read on /notifications/
+
+8.4  Organizer announces to all participants
+     [O] Visits /organizer/tournaments/<id>/announce
+     [O] Writes message
+     App  Creates Notification for all approved participants (teams + individuals)
+     App  Announcement also appears on tournament page as a pinned notice
+
+
+================================================================================
+SECTION 9 — SEARCH & DISCOVERY FLOWS
+================================================================================
+
+9.1  Search tournaments
+     [U] Uses search bar on /tournaments/
+     App  Filters by name, game type, status, registration_status, mode
+     App  Returns paginated results ordered by start_date
+
+9.2  Search users
+     [U] Uses /users/search?q=
+     App  Returns matching display_names and usernames
+     App  Shows current team and tournament participation count
+
+9.3  Search teams
+     [U] Uses /teams/search?q=
+     App  Returns matching team names and tags
+     App  Shows member count, active tournament count
+
+9.4  View all tournaments by organizer
+     [U] Visits /organizers/<id>/
+     App  Shows organizer profile and all their public tournaments
+
+
+================================================================================
+SECTION 10 — HISTORY & STATS FLOWS
+================================================================================
+
+10.1 User stats page
+     [U] Visits /users/<username>/stats
+     App  Shows:
+           Tournaments entered (total, by mode)
+           Win / loss / draw record (individual matches)
+           Tournament placements (1st, 2nd, 3rd, etc.)
+           Teams they have been part of
+
+10.2 Team stats page
+     [U] Visits /teams/<id>/stats
+     App  Shows:
+           Tournaments entered
+           Match W/L record
+           Best placements
+           Current roster with join dates
+
+10.3 Tournament results archive
+     [U] Visits /tournaments/<id>/results (after Tournament.status = completed)
+     App  Shows final bracket or standings, all scores, placements
+
+10.4 Organizer stats
+     [O] Visits /organizer/dashboard/stats
+     App  Shows:
+           Total tournaments run, total participants managed
+           Avg match dispute rate, avg registration fill rate
+           Active vs completed tournaments
+
+
+================================================================================
+SECTION 11 — ADMIN FLOWS (DJANGO ADMIN + CUSTOM)
+================================================================================
+
+11.1 Manage organizer applications
+     [A] Approves or rejects pending OrganizerProfile requests (flow 1.7)
+
+11.2 Delete or suspend a user account
+     [A] Sets User.is_active = False via Django admin
+     App  User cannot log in; their records are preserved
+
+11.3 Delete a tournament
+     [A] Hard-deletes Tournament and all related records (irreversible)
+     App  Use only for spam/test entries — completed tournaments should never be deleted
+
+11.4 Create a backup
+     [A] Visits /admin/backup/create
+     App  Dumps database to a timestamped file on disk
+
+11.5 Restore from backup
+     [A] Visits /admin/backup/restore
+     [A] Selects a backup file
+     App  Restores database — confirmation step required
+
+11.6 View site-wide audit log
+     [A] Visits /admin/audit/
+     App  Full audit log across all tournaments and users
+     [A] Filters by user, action type, date range
+
+11.7 Impersonate a user (debug)
+     [A] Visits /admin/impersonate/<user_id>/
+     App  Logs admin in as that user for debugging (session swap)
+     App  Logs the impersonation action with admin's identity
+
+
+================================================================================
+SECTION 12 — EDGE CASE & INTEGRITY FLOWS
+================================================================================
+
+12.1 Tie / draw result
+     [U] Submits score where both sides are equal
+     App  Accepts if tournament format allows draws (round_robin)
+     App  Rejects with error if format requires a winner (elimination)
+
+12.2 No-show / timeout
+     App  If match passes scheduled_time with no submission, flags as attention_required
+     App  Notifies organizer
+     [O] Awards walkover or rescheduled at their discretion
+
+12.3 Team falls below minimum roster size mid-tournament
+     App  Detects when a member leaves (flow 2.8) and team is in an active tournament
+     App  Flags warning to captain and organizer
+     [O] Decides to disqualify or grant grace period
+
+12.4 User tries to register for a team tournament without a team
+     App  Blocks registration, shows message: "You must be a team captain to register in team mode"
+
+12.5 User tries to register for an individual tournament while on a team
+     App  Allows it — individual registration is independent of team membership
+
+12.6 Captain registers team for tournament they are already in (duplicate prevention)
+     App  Checks unique_together(tournament, team)
+     App  Returns error: "Nova FC is already registered for this tournament"
+
+12.7 Organizer tries to generate bracket before closing registration
+     App  Shows warning: "Registration is still open — close it before generating the bracket"
+     App  Requires explicit confirmation or close-registration action first
+
+12.8 Bracket regeneration after disqualification
+     App  Flags to organizer that bracket may need adjustment
+     App  Does not auto-regenerate — organizer reviews and manually advances if needed
+
+12.9 User account deleted while team captain
+     [A] Deletes or deactivates user account
+     App  Sets TeamMembership to orphaned state, flags team as needing new captain
+     App  Notifies remaining members
+
+12.10 Concurrent result submissions (both teams submit at same time)
+      App  Accepts first submission received, sets match.status = pending_confirmation
+      App  Second submission is blocked with message:
+           "A result has already been submitted. Please confirm or dispute it."
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+Total flows documented: 80+
+Scope: Django tournament manager, no financial flows, simple session auth
+Actors: Admin, Organizer, Captain, Member, Individual, User
+================================================================================
