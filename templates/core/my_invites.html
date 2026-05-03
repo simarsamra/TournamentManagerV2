@@ -1,0 +1,46 @@
+{% extends "core/base.html" %}
+{% block title %}My Team Invites — Tournament Manager{% endblock %}
+{% block page_header %}📨 My Team Invites{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Pending Team Invites</h2></div>
+    {% if invites %}
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Team</th>
+                    <th>Invited By</th>
+                    <th>Received</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for invite in invites %}
+            <tr>
+                <td><a href="{% url 'team_detail' pk=invite.team.pk %}">{{ invite.team.name }}</a></td>
+                <td>{{ invite.invited_by.username }}</td>
+                <td class="text-muted">{{ invite.created_at|timesince }} ago</td>
+                <td>
+                    <form method="post" action="{% url 'accept_team_invite' pk=invite.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-sm">✓ Accept</button>
+                    </form>
+                    <form method="post" action="{% url 'decline_team_invite' pk=invite.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline btn-sm">✗ Decline</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body">
+        <p class="text-muted">You have no pending team invites.</p>
+        <a href="{% url 'teams' %}" class="btn btn-outline">Browse Teams</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

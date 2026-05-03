@@ -1,0 +1,90 @@
+{% extends "core/base.html" %}
+{% block title %}{{ profile_user.get_full_name|default:profile_user.username }} — Tournament Manager{% endblock %}
+{% block page_header %}👤 {{ profile_user.get_full_name|default:profile_user.username }}{% endblock %}
+{% block content %}
+<div class="grid" style="grid-template-columns:1fr 2fr;gap:1.5rem;align-items:start;">
+    <!-- Profile Card -->
+    <div class="card">
+        <div class="card-body" style="text-align:center;">
+            <div style="font-size:4rem;">👤</div>
+            <h2 style="margin:0.5rem 0 0;">{{ profile_user.get_full_name|default:profile_user.username }}</h2>
+            <p class="text-muted">@{{ profile_user.username }}</p>
+            {% if profile_user.email %}
+            <p class="text-muted" style="font-size:0.85rem;">{{ profile_user.email }}</p>
+            {% endif %}
+            <div style="display:flex;justify-content:center;gap:1.5rem;margin-top:1rem;">
+                <div>
+                    <div style="font-size:1.5rem;font-weight:700;color:var(--success,#27ae60);">{{ wins }}</div>
+                    <div class="text-muted" style="font-size:0.8rem;">Wins</div>
+                </div>
+                <div>
+                    <div style="font-size:1.5rem;font-weight:700;color:var(--danger,#e74c3c);">{{ losses }}</div>
+                    <div class="text-muted" style="font-size:0.8rem;">Losses</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div>
+        <!-- Teams -->
+        <div class="card" style="margin-bottom:1rem;">
+            <div class="card-header"><h3 class="card-title">Teams</h3></div>
+            {% if memberships %}
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Team</th><th>Role</th><th>Since</th></tr></thead>
+                    <tbody>
+                    {% for m in memberships %}
+                    <tr>
+                        <td><a href="{% url 'team_detail' pk=m.team.pk %}">{{ m.team.name }}</a></td>
+                        <td><span class="badge">{{ m.get_role_display }}</span></td>
+                        <td class="text-muted">{{ m.joined_at|date:"M j, Y" }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="card-body"><p class="text-muted">Not a member of any team.</p></div>
+            {% endif %}
+        </div>
+
+        <!-- Tournament History -->
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Tournament History</h3></div>
+            {% if participations %}
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Tournament</th><th>Team</th><th>Status</th></tr></thead>
+                    <tbody>
+                    {% for p in participations %}
+                    <tr>
+                        <td><a href="{% url 'tournament_public_detail' pk=p.tournament.pk %}">{{ p.tournament.name }}</a></td>
+                        <td>{{ p.team.name }}</td>
+                        <td><span class="badge">{{ p.get_status_display }}</span></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% elif individual_regs %}
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Tournament</th><th>Status</th></tr></thead>
+                    <tbody>
+                    {% for r in individual_regs %}
+                    <tr>
+                        <td><a href="{% url 'tournament_public_detail' pk=r.tournament.pk %}">{{ r.tournament.name }}</a></td>
+                        <td><span class="badge">{{ r.get_status_display }}</span></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="card-body"><p class="text-muted">No tournament history yet.</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

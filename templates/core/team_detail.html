@@ -9,6 +9,9 @@
         <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline">Preferences</a>
         {% endif %}
         {% if is_captain and not is_organizer %}
+        <a href="{% url 'team_invite' pk=team.pk %}" class="btn btn-outline">📨 Invite Member</a>
+        <a href="{% url 'team_history' pk=team.pk %}" class="btn btn-outline">📚 History</a>
+        <a href="{% url 'team_stats' pk=team.pk %}" class="btn btn-outline">📊 Stats</a>
         <a href="{% url 'transfer_captaincy' pk=team.pk %}" class="btn btn-outline">Transfer Captaincy</a>
         <form method="post" action="{% url 'delete_team' pk=team.pk %}" style="display:inline">
             {% csrf_token %}

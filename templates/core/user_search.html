@@ -1,0 +1,43 @@
+{% extends "core/base.html" %}
+{% block title %}Search Users{% endblock %}
+{% block page_header %}Search Users{% endblock %}
+{% block content %}
+<div class="card" style="max-width:800px;">
+    <div class="card-body">
+        <form method="get" action="" style="display:flex;gap:0.5rem;margin-bottom:1.5rem;">
+            <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search by username, email, or name…" style="flex:1;">
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+
+        {% if q %}
+        <p class="text-muted">{{ results|length }} result(s) for "<strong>{{ q }}</strong>"</p>
+        {% if results %}
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Username</th>
+                        <th>Team</th>
+                        <th>Tournaments</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr>
+                        <td><a href="/users/{{ r.username }}/">{{ r.display_name }}</a></td>
+                        <td>{{ r.username }}</td>
+                        <td>{{ r.team_name|default:"—" }}</td>
+                        <td>{{ r.participation_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No users found.</p>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

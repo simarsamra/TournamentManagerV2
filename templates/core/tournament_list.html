@@ -1,0 +1,86 @@
+{% extends "core/base.html" %}
+{% block title %}Tournaments — Tournament Manager{% endblock %}
+{% block page_header %}🏆 Browse Tournaments{% endblock %}
+{% block content %}
+<!-- Search / Filter Bar -->
+<div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-body">
+        <form method="get" style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end;">
+            <div class="form-group" style="margin:0;flex:1;min-width:180px;">
+                <label class="form-label">Search</label>
+                <input type="text" name="q" class="form-control" value="{{ search_q }}" placeholder="Tournament name…">
+            </div>
+            <div class="form-group" style="margin:0;">
+                <label class="form-label">Sport</label>
+                <select name="sport" class="form-select">
+                    <option value="">All Sports</option>
+                    {% for val, label in sport_choices %}
+                    <option value="{{ val }}" {% if sport_filter == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin:0;">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Statuses</option>
+                    {% for val, label in status_choices %}
+                    <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin:0;">
+                <label class="form-label">Mode</label>
+                <select name="mode" class="form-select">
+                    <option value="">All Modes</option>
+                    <option value="team" {% if mode_filter == 'team' %}selected{% endif %}>Team</option>
+                    <option value="individual" {% if mode_filter == 'individual' %}selected{% endif %}>Individual</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Filter</button>
+            {% if search_q or mode_filter or status_filter or sport_filter %}
+            <a href="{% url 'tournament_list' %}" class="btn btn-outline">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+{% if tournaments %}
+<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1.5rem;">
+{% for t in tournaments %}
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title" style="margin:0;">
+            <a href="{% url 'tournament_public_detail' pk=t.pk %}" style="text-decoration:none;color:inherit;">{{ t.name }}</a>
+        </h3>
+    </div>
+    <div class="card-body">
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+            <span class="badge">{{ t.get_format_display }}</span>
+            <span class="badge">{{ t.get_registration_mode_display }}</span>
+            <span class="badge {% if t.status == 'active' %}badge-success{% elif t.status == 'registration_open' %}badge-warning{% elif t.status == 'completed' %}badge-info{% endif %}">
+                {{ t.get_status_display }}
+            </span>
+        </div>
+        <div class="text-muted" style="font-size:0.85rem;">
+            {% if t.start_date %}<div>📅 Start: {{ t.start_date|date:"M j, Y" }}</div>{% endif %}
+            {% if t.end_date %}<div>📅 End: {{ t.end_date|date:"M j, Y" }}</div>{% endif %}
+            <div>🏟️ Sport: {{ t.get_sport_type_display }}</div>
+        </div>
+    </div>
+    <div style="padding:0.75rem 1rem;border-top:1px solid var(--border);">
+        <a href="{% url 'tournament_public_detail' pk=t.pk %}" class="btn btn-outline btn-sm">View Details</a>
+        {% if t.status == 'registration_open' %}
+        <a href="{% url 'join_tournament' pk=t.pk %}" class="btn btn-primary btn-sm" style="margin-left:0.5rem;">Register</a>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center;">
+        <p class="text-muted">No tournaments found{% if search_q or mode_filter or status_filter or sport_filter %} matching your filters{% endif %}.</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

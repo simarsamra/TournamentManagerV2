@@ -1,0 +1,87 @@
+{% extends "core/base.html" %}
+{% block title %}{{ team.name }} — Stats{% endblock %}
+{% block page_header %}Team Stats{% endblock %}
+{% block content %}
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline">← Back to Team</a>
+</div>
+
+<div class="card" style="max-width:800px;">
+    <div class="card-body">
+        <h2 style="margin-top:0;">{{ team.name }}</h2>
+        <h3>Match Record</h3>
+        <div style="display:flex;gap:2rem;margin-bottom:1rem;">
+            <div style="text-align:center;">
+                <div style="font-size:2rem;font-weight:700;color:var(--success,#27ae60);">{{ wins }}</div>
+                <div class="text-muted">Wins</div>
+            </div>
+            <div style="text-align:center;">
+                <div style="font-size:2rem;font-weight:700;color:var(--danger,#e74c3c);">{{ losses }}</div>
+                <div class="text-muted">Losses</div>
+            </div>
+            <div style="text-align:center;">
+                <div style="font-size:2rem;font-weight:700;color:var(--warning,#f39c12);">{{ draws }}</div>
+                <div class="text-muted">Draws</div>
+            </div>
+            <div style="text-align:center;">
+                <div style="font-size:2rem;font-weight:700;">{{ total }}</div>
+                <div class="text-muted">Total</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="max-width:800px;margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">Tournament Participations</h3>
+        {% if participation_data %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tournament</th>
+                    <th>Status</th>
+                    <th>Placement</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in participation_data %}
+                <tr>
+                    <td>{{ item.participation.tournament.name }}</td>
+                    <td>{{ item.participation.get_status_display }}</td>
+                    <td>{{ item.placement }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No tournament history.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" style="max-width:800px;margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">Roster</h3>
+        {% if roster %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Player</th>
+                    <th>Joined</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in roster %}
+                <tr>
+                    <td>{{ m.user.get_full_name|default:m.user.username }}</td>
+                    <td>{{ m.joined_at|date:"d M Y" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No roster members.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

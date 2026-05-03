@@ -1,0 +1,85 @@
+{% extends "core/base.html" %}
+{% block title %}My Registrations — Tournament Manager{% endblock %}
+{% block page_header %}📋 My Registrations{% endblock %}
+{% block content %}
+<!-- Team Registrations -->
+{% if team_participations %}
+<div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-header"><h2 class="card-title">Team Registrations</h2></div>
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tournament</th>
+                    <th>Team</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in team_participations %}
+            <tr>
+                <td><a href="{% url 'tournament_public_detail' pk=p.tournament.pk %}">{{ p.tournament.name }}</a></td>
+                <td><a href="{% url 'team_detail' pk=p.team.pk %}">{{ p.team.name }}</a></td>
+                <td>
+                    {% if p.status == 'active' %}<span class="badge badge-success">Active</span>
+                    {% elif p.status == 'withdrawn' %}<span class="badge badge-danger">Withdrawn</span>
+                    {% else %}<span class="badge">{{ p.get_status_display }}</span>{% endif %}
+                </td>
+                <td class="text-muted">{{ p.created_at|date:"M j, Y" }}</td>
+                <td>
+                    {% if p.tournament.status not in 'completed,cancelled' and p.status == 'active' %}
+                    <a href="{% url 'withdraw_team' pk=p.team.pk %}" class="btn btn-outline btn-sm">Withdraw</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Individual Registrations -->
+{% if individual_regs %}
+<div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-header"><h2 class="card-title">Individual Registrations</h2></div>
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tournament</th>
+                    <th>Display Name</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in individual_regs %}
+            <tr>
+                <td><a href="{% url 'tournament_public_detail' pk=r.tournament.pk %}">{{ r.tournament.name }}</a></td>
+                <td>{{ r.display_name }}</td>
+                <td>
+                    {% if r.status == 'active' %}<span class="badge badge-success">Active</span>
+                    {% elif r.status == 'withdrawn' %}<span class="badge badge-danger">Withdrawn</span>
+                    {% else %}<span class="badge">{{ r.get_status_display }}</span>{% endif %}
+                </td>
+                <td class="text-muted">{{ r.created_at|date:"M j, Y" }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if not team_participations and not individual_regs %}
+<div class="card">
+    <div class="card-body" style="text-align:center;">
+        <p class="text-muted">You haven't registered for any tournaments yet.</p>
+        <a href="{% url 'tournament_list' %}" class="btn btn-primary">Browse Tournaments</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

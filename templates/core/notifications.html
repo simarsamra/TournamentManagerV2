@@ -1,0 +1,52 @@
+{% extends "core/base.html" %}
+{% block title %}Notifications — Tournament Manager{% endblock %}
+{% block page_header %}🔔 Notifications{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 class="card-title">Notifications</h2>
+        {% if notifications %}
+        <form method="post" action="{% url 'mark_notifications_read' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline btn-sm">✓ Mark all as read</button>
+        </form>
+        {% endif %}
+    </div>
+    {% if notifications %}
+    <div class="table-container">
+        <table class="table">
+            <tbody>
+                {% for notif in notifications %}
+                <tr class="{% if not notif.is_read %}bg-highlight{% endif %}">
+                    <td style="width:36px;font-size:1.3rem;">
+                        {% if not notif.is_read %}<span style="color:var(--primary);">●</span>{% else %}○{% endif %}
+                    </td>
+                    <td>
+                        <div style="font-weight:{% if not notif.is_read %}600{% else %}normal{% endif %};">{{ notif.message }}</div>
+                        <div class="text-muted" style="font-size:0.8rem;">{{ notif.created_at|timesince }} ago</div>
+                    </td>
+                    <td style="text-align:right;">
+                        {% if notif.link %}
+                        <form method="post" action="{% url 'mark_notification_read' pk=notif.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline btn-sm">View</button>
+                        </form>
+                        {% else %}
+                        <form method="post" action="{% url 'mark_notification_read' pk=notif.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline btn-sm">Mark read</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body">
+        <p class="text-muted">You have no notifications.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

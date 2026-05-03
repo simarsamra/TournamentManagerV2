@@ -1,0 +1,106 @@
+{% extends "core/base.html" %}
+{% block title %}Registration Review — {{ tournament.name }} — Tournament Manager{% endblock %}
+{% block page_header %}📋 Registration Review — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <h2>{{ tournament.name }}</h2>
+    <span class="badge {% if tournament.status == 'registration_open' %}badge-warning{% elif tournament.status == 'active' %}badge-success{% endif %}">
+        {{ tournament.get_status_display }}
+    </span>
+</div>
+
+{% if tournament.registration_mode == 'individual' %}
+<!-- Individual Registrations -->
+<div class="card">
+    <div class="card-header"><h3 class="card-title">Individual Registrations</h3></div>
+    {% if registrations %}
+    <div class="table-container">
+        <table class="table">
+            <thead><tr><th>Name</th><th>Username</th><th>Status</th><th>Registered</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for r in registrations %}
+            <tr>
+                <td>{{ r.display_name }}</td>
+                <td class="text-muted">{{ r.user.username }}</td>
+                <td>
+                    {% if r.status == 'active' %}<span class="badge badge-success">Active</span>
+                    {% elif r.status == 'withdrawn' %}<span class="badge badge-danger">Withdrawn</span>
+                    {% else %}<span class="badge">{{ r.get_status_display }}</span>{% endif %}
+                </td>
+                <td class="text-muted">{{ r.created_at|date:"M j, Y" }}</td>
+                <td>
+                    {% if r.status == 'pending' %}
+                    <form method="post" action="{% url 'approve_registration' tournament_pk=tournament.pk reg_pk=r.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-sm">✓ Approve</button>
+                    </form>
+                    <form method="post" action="{% url 'reject_registration' tournament_pk=tournament.pk reg_pk=r.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="reason" value="">
+                        <button type="submit" class="btn btn-outline btn-sm">✗ Reject</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body"><p class="text-muted">No registrations yet.</p></div>
+    {% endif %}
+</div>
+
+{% else %}
+<!-- Team Registrations -->
+<div class="card">
+    <div class="card-header"><h3 class="card-title">Team Registrations</h3></div>
+    {% if team_regs %}
+    <div class="table-container">
+        <table class="table">
+            <thead><tr><th>Team</th><th>Members</th><th>Status</th><th>Registered</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for p in team_regs %}
+            <tr>
+                <td><a href="{% url 'team_detail' pk=p.team.pk %}">{{ p.team.name }}</a></td>
+                <td>{{ p.team.memberships.count }}</td>
+                <td>
+                    {% if p.status == 'active' %}<span class="badge badge-success">Active</span>
+                    {% elif p.status == 'withdrawn' %}<span class="badge badge-danger">Withdrawn</span>
+                    {% elif p.status == 'pending' %}<span class="badge badge-warning">Pending</span>
+                    {% else %}<span class="badge">{{ p.get_status_display }}</span>{% endif %}
+                </td>
+                <td class="text-muted">{{ p.created_at|date:"M j, Y" }}</td>
+                <td>
+                    {% if p.status == 'pending' %}
+                    <form method="post" action="{% url 'approve_registration' tournament_pk=tournament.pk reg_pk=p.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-sm">✓ Approve</button>
+                    </form>
+                    <form method="post" action="{% url 'reject_registration' tournament_pk=tournament.pk reg_pk=p.pk %}" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="reason" value="">
+                        <button type="submit" class="btn btn-outline btn-sm">✗ Reject</button>
+                    </form>
+                    {% endif %}
+                    {% if p.status == 'active' and tournament.status == 'active' %}
+                    <form method="post" action="{% url 'disqualify_team' tournament_pk=tournament.pk participation_pk=p.pk %}"
+                          onsubmit="return confirm('Disqualify this team? This will forfeit their remaining matches.');">
+                        {% csrf_token %}
+                        <input type="hidden" name="reason" value="Disqualified by organizer">
+                        <button type="submit" class="btn btn-outline btn-sm" style="color:var(--danger,#e74c3c);">🚫 Disqualify</button>
+                    </form>
+                    {% endif %}
+                    <a href="{% url 'tournament_team_sub' pk=tournament.pk participation_pk=p.pk %}" class="btn btn-outline btn-sm">👥 Subs</a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body"><p class="text-muted">No registrations yet.</p></div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

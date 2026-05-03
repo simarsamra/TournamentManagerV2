@@ -1,0 +1,23 @@
+{% extends "core/base.html" %}
+{% block title %}Announce — {{ tournament.name }} — Tournament Manager{% endblock %}
+{% block page_header %}📢 Announcement — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="card" style="max-width:600px;margin:0 auto;">
+    <div class="card-header"><h2 class="card-title">Send Announcement to All Participants</h2></div>
+    <div class="card-body">
+        <p class="text-muted">Your message will be sent as a notification to all currently registered participants of <strong>{{ tournament.name }}</strong>.</p>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label class="form-label">Message *</label>
+                <textarea name="message" class="form-control" rows="5" required
+                    placeholder="Write your announcement here…"></textarea>
+            </div>
+            <div style="display:flex;gap:1rem;margin-top:1.5rem;">
+                <button type="submit" class="btn btn-primary">📢 Send Announcement</button>
+                <a href="{% url 'tournament_public_detail' pk=tournament.pk %}" class="btn btn-outline">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

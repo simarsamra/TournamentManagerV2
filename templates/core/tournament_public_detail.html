@@ -1,0 +1,143 @@
+{% extends "core/base.html" %}
+{% block title %}{{ tournament.name }} — Tournament Manager{% endblock %}
+{% block page_header %}🏆 {{ tournament.name }}{% endblock %}
+{% block content %}
+<!-- Hero Banner -->
+<div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+        <div>
+            <h1 style="margin:0;">{{ tournament.name }}</h1>
+            <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;">
+                <span class="badge">{{ tournament.get_format_display }}</span>
+                <span class="badge">{{ tournament.get_registration_mode_display }}</span>
+                <span class="badge {% if tournament.status == 'active' %}badge-success{% elif tournament.status == 'registration_open' %}badge-warning{% elif tournament.status == 'completed' %}badge-info{% elif tournament.status == 'cancelled' %}badge-danger{% endif %}">
+                    {{ tournament.get_status_display }}
+                </span>
+                <span class="badge">{{ tournament.get_sport_type_display }}</span>
+            </div>
+        </div>
+        <div>
+            {% if tournament.status == 'registration_open' and not is_registered %}
+            <a href="{% url 'join_tournament' pk=tournament.pk %}" class="btn btn-primary">Register Now</a>
+            {% elif is_registered %}
+            <span class="badge badge-success" style="padding:0.5rem 1rem;">✓ Registered</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 2fr;gap:1.5rem;align-items:start;">
+    <!-- Details -->
+    <div>
+        <div class="card" style="margin-bottom:1rem;">
+            <div class="card-header"><h3 class="card-title">Details</h3></div>
+            <div class="card-body">
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr><td class="text-muted" style="padding:0.3rem 0;width:40%;">Format</td><td>{{ tournament.get_format_display }}</td></tr>
+                    <tr><td class="text-muted" style="padding:0.3rem 0;">Mode</td><td>{{ tournament.get_registration_mode_display }}</td></tr>
+                    <tr><td class="text-muted" style="padding:0.3rem 0;">Sport</td><td>{{ tournament.get_sport_type_display }}</td></tr>
+                    {% if tournament.start_date %}
+                    <tr><td class="text-muted" style="padding:0.3rem 0;">Start</td><td>{{ tournament.start_date|date:"M j, Y" }}</td></tr>
+                    {% endif %}
+                    {% if tournament.end_date %}
+                    <tr><td class="text-muted" style="padding:0.3rem 0;">End</td><td>{{ tournament.end_date|date:"M j, Y" }}</td></tr>
+                    {% endif %}
+                    <tr><td class="text-muted" style="padding:0.3rem 0;">Participants</td><td>{{ participant_count }}</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- Organizer actions -->
+        {% if user.is_authenticated and user.is_staff %}
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Organizer Actions</h3></div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:0.5rem;">
+                <a href="{% url 'registration_review' pk=tournament.pk %}" class="btn btn-outline btn-sm">📋 Manage Registrations</a>
+                <a href="{% url 'organizer_announce' pk=tournament.pk %}" class="btn btn-outline btn-sm">📢 Send Announcement</a>
+                {% if tournament.status == 'active' %}
+                <form method="post" action="{% url 'pause_tournament' pk=tournament.pk %}">{% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm" style="width:100%;">⏸ Pause Tournament</button>
+                </form>
+                {% elif tournament.status == 'paused' %}
+                <form method="post" action="{% url 'resume_tournament' pk=tournament.pk %}">{% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm" style="width:100%;">▶ Resume Tournament</button>
+                </form>
+                {% endif %}
+                {% if tournament.status != 'completed' and tournament.status != 'cancelled' %}
+                <form method="post" action="{% url 'cancel_tournament' pk=tournament.pk %}"
+                      onsubmit="return confirm('Cancel this tournament? All participants will be notified.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="confirm_cancel" value="CANCEL">
+                    <button type="submit" class="btn btn-outline btn-sm" style="width:100%;color:var(--danger,#e74c3c);">✕ Cancel Tournament</button>
+                </form>
+                {% endif %}
+                <form method="post" action="{% url 'duplicate_tournament' pk=tournament.pk %}">{% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm" style="width:100%;">📋 Duplicate Tournament</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Participants / Matches -->
+    <div>
+        <div class="card" style="margin-bottom:1rem;">
+            <div class="card-header"><h3 class="card-title">Participants ({{ participant_count }})</h3></div>
+            {% if participants %}
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>#</th><th>Name</th></tr></thead>
+                    <tbody>
+                    {% for p in participants %}
+                    <tr>
+                        <td class="text-muted">{{ forloop.counter }}</td>
+                        <td>
+                            {% if tournament.registration_mode == 'individual' %}
+                            {{ p.display_name }}
+                            {% else %}
+                            <a href="{% url 'team_detail' pk=p.team.pk %}">{{ p.team.name }}</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="card-body"><p class="text-muted">No participants yet.</p></div>
+            {% endif %}
+        </div>
+
+        {% if tournament.status == 'active' or tournament.status == 'completed' %}
+        {% if matches %}
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Matches</h3></div>
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Round</th><th>Match</th><th>Status</th><th>Score</th></tr></thead>
+                    <tbody>
+                    {% for m in matches %}
+                    <tr>
+                        <td>{{ m.round_number }}</td>
+                        <td>
+                            <a href="{% url 'match_detail' pk=m.pk %}">
+                                {{ m.team1.name }} vs {{ m.team2.name }}
+                            </a>
+                        </td>
+                        <td><span class="badge">{{ m.get_status_display }}</span></td>
+                        <td>
+                            {% if m.score_team1 is not None %}
+                            {{ m.score_team1 }} – {{ m.score_team2 }}
+                            {% else %}—{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

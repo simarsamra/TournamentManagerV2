@@ -1,0 +1,45 @@
+{% extends "core/base.html" %}
+{% block title %}Invite Member — {{ team.name }} — Tournament Manager{% endblock %}
+{% block page_header %}📨 Invite Member to {{ team.name }}{% endblock %}
+{% block content %}
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start;">
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Send Invite</h2></div>
+        <div class="card-body">
+            <p class="text-muted">Enter the username of the player you want to invite to <strong>{{ team.name }}</strong>.</p>
+            <form method="post">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label class="form-label">Username *</label>
+                    <input type="text" name="username" class="form-control" required placeholder="Enter username">
+                </div>
+                <div style="display:flex;gap:1rem;margin-top:1.5rem;">
+                    <button type="submit" class="btn btn-primary">Send Invite</button>
+                    <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline">Back to Team</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Pending Invites</h2></div>
+        {% if pending_invites %}
+        <div class="table-container">
+            <table class="table">
+                <thead><tr><th>Username</th><th>Sent</th></tr></thead>
+                <tbody>
+                {% for invite in pending_invites %}
+                <tr>
+                    <td>{{ invite.invited_user.username }}</td>
+                    <td class="text-muted">{{ invite.created_at|timesince }} ago</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body"><p class="text-muted">No pending invites.</p></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -57,7 +57,9 @@ class Tournament(models.Model):
             ("ready", "Ready for Scheduling"),
             ("scheduled", "Schedule Draft Ready"),
             ("active", "Active"),
+            ("paused", "Paused"),
             ("completed", "Completed"),
+            ("cancelled", "Cancelled"),
         ],
         default="setup",
     )
@@ -240,6 +242,11 @@ class CourtAvailability(models.Model):
 
 
 class Team(models.Model):
+    STATUS_CHOICES = [
+        ("active", "Active"),
+        ("disbanded", "Disbanded"),
+    ]
+
     name = models.CharField(max_length=100, unique=True)
     department = models.CharField(max_length=120, blank=True, default="")
     sport_type = models.CharField(
@@ -248,6 +255,7 @@ class Team(models.Model):
         default="other",
         blank=True,
     )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
     is_internal = models.BooleanField(
         default=False,
         db_index=True,
@@ -262,6 +270,7 @@ class TeamTournamentParticipation(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending (Forming)"),
         ("active", "Active"),
+        ("waitlisted", "Waitlisted"),
         ("withdrawn", "Withdrawn"),
     ]
 
@@ -370,6 +379,95 @@ class OrganizerProfile(models.Model):
         return f"{self.user.username} (Organizer)"
 
 
+class OrganizerApplication(models.Model):
+    """Pending application for an organizer account."""
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="organizer_application")
+    org_name = models.CharField(max_length=200)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_applications"
+    )
+
+    def __str__(self):
+        return f"{self.user.username} application ({self.status})"
+
+
+class TeamInvite(models.Model):
+    """Invitation for a user to join a team."""
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("accepted", "Accepted"),
+        ("declined", "Declined"),
+    ]
+
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="invites")
+    invited_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="team_invites_received")
+    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="team_invites_sent")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["team", "invited_user"]]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.team.name} invite → {self.invited_user.username} ({self.status})"
+
+
+class Notification(models.Model):
+    """In-app notification for a user."""
+    NOTIFICATION_TYPES = [
+        ("team_invite_received", "Team invite received"),
+        ("team_invite_accepted", "Team invite accepted"),
+        ("team_invite_declined", "Team invite declined"),
+        ("registration_approved", "Tournament registration approved"),
+        ("registration_rejected", "Tournament registration rejected"),
+        ("registration_promoted_from_waitlist", "Registration promoted from waitlist"),
+        ("match_result_submitted", "Match result submitted (action required)"),
+        ("match_result_confirmed", "Match result confirmed"),
+        ("match_result_disputed", "Match result disputed"),
+        ("dispute_resolved", "Dispute resolved"),
+        ("reschedule_requested", "Reschedule requested"),
+        ("reschedule_accepted", "Reschedule accepted"),
+        ("reschedule_declined", "Reschedule declined"),
+        ("tournament_starting_soon", "Tournament starting soon"),
+        ("bracket_published", "Tournament bracket published"),
+        ("tournament_cancelled", "Tournament cancelled"),
+        ("tournament_paused", "Tournament paused"),
+        ("tournament_resumed", "Tournament resumed"),
+        ("disqualified", "Disqualification notice"),
+        ("walkover_awarded", "Walkover awarded"),
+        ("organizer_announcement", "Organizer announcement"),
+        ("organizer_application_result", "Organizer application result"),
+        ("general", "General notification"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES)
+    message = models.TextField()
+    link = models.CharField(max_length=500, blank=True, default="")
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    tournament = models.ForeignKey(
+        "Tournament", on_delete=models.CASCADE, null=True, blank=True, related_name="notifications"
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"[{self.notification_type}] → {self.user.username}"
+
+
 class UserTeamAssignment(models.Model):
     """Tracks each user's active team. One per user."""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="team_assignment")
@@ -387,6 +485,7 @@ class TeamMembership(models.Model):
     ROLE_CHOICES = [
         ("captain", "Captain"),
         ("member", "Member"),
+        ("sub", "Substitute"),
     ]
 
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="memberships")

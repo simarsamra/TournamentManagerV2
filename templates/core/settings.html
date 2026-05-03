@@ -44,6 +44,31 @@
 <div class="card" style="max-width:700px; margin-top:1rem; border:1px solid #ef4444;">
     <div class="card-body">
         <h3 style="margin-top:0; color:#b91c1c;">Danger Zone</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+            {% if tournament.status == 'active' %}
+            <form method="post" action="{% url 'pause_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary">⏸ Pause Tournament</button>
+            </form>
+            {% elif tournament.status == 'paused' %}
+            <form method="post" action="{% url 'resume_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primary">▶ Resume Tournament</button>
+            </form>
+            {% endif %}
+            {% if tournament.status != 'completed' and tournament.status != 'cancelled' %}
+            <form method="post" action="{% url 'cancel_tournament' pk=tournament.pk %}"
+                  onsubmit="return confirm('Cancel this tournament? All participants will be notified.');">
+                {% csrf_token %}
+                <input type="hidden" name="confirm_cancel" value="CANCEL">
+                <button type="submit" class="btn btn-secondary" style="color:#b91c1c;">✕ Cancel Tournament</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{% url 'duplicate_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary">📋 Duplicate Tournament</button>
+            </form>
+        </div>
         <p class="text-muted">Delete this tournament and its related teams, matches, courts, and time slots.</p>
         <form method="post" action="{% url 'delete_tournament' pk=tournament.pk %}" onsubmit="return confirm('Delete this tournament permanently?');">
             {% csrf_token %}
@@ -70,7 +95,10 @@
                     {% for user_obj in users %}
                     <tr>
                         <td>{{ user_obj.username }}</td>
-                        <td>{% if user_obj.is_staff %}Organizer{% else %}User{% endif %}</td>
+                        <td>
+                            {% if user_obj.is_staff %}Organizer{% else %}User{% endif %}
+                            {% if not user_obj.is_active %}<span class="badge badge-danger" style="margin-left:4px;">Suspended</span>{% endif %}
+                        </td>
                         <td>
                             <div style="display:flex; gap:8px; flex-wrap:wrap;">
                                 <form method="post" action="{% url 'set_user_organizer' user_pk=user_obj.pk %}">
@@ -80,6 +108,18 @@
                                         {% if user_obj.is_staff %}Demote{% else %}Promote to Organizer{% endif %}
                                     </button>
                                 </form>
+                                <form method="post" action="{% url 'toggle_user_suspension' user_pk=user_obj.pk %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn {% if user_obj.is_active %}btn-warning{% else %}btn-success{% endif %}">
+                                        {% if user_obj.is_active %}Suspend{% else %}Unsuspend{% endif %}
+                                    </button>
+                                </form>
+                                {% if user.is_superuser %}
+                                <form method="post" action="{% url 'impersonate_user' user_pk=user_obj.pk %}" onsubmit="return confirm('Impersonate {{ user_obj.username|escapejs }}?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline">Impersonate</button>
+                                </form>
+                                {% endif %}
                                 <form method="post" action="{% url 'delete_user_account' user_pk=user_obj.pk %}" onsubmit="return confirm('Delete user account {{ user_obj.username|escapejs }}?');">
                                     {% csrf_token %}
                                     <button type="submit" class="btn btn-danger">Delete User</button>
@@ -95,5 +135,48 @@
 </div>
 {% else %}
 <p class="text-muted">No tournament configured.</p>
+{% endif %}
+
+{% if user.is_staff %}
+<div class="card" style="max-width:900px; margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">Organizer Applications</h3>
+        {% with pending_apps=organizer_applications %}
+        {% if pending_apps %}
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead><tr><th>Applicant</th><th>Organization</th><th>Applied</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                {% for app in pending_apps %}
+                <tr>
+                    <td>{{ app.user.username }}</td>
+                    <td>{{ app.org_name }}</td>
+                    <td class="text-muted">{{ app.created_at|date:"M j, Y" }}</td>
+                    <td><span class="badge {% if app.status == 'pending' %}badge-warning{% elif app.status == 'approved' %}badge-success{% else %}badge-danger{% endif %}">{{ app.get_status_display }}</span></td>
+                    <td>
+                        {% if app.status == 'pending' %}
+                        <form method="post" action="{% url 'review_organizer_application' pk=app.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve">
+                            <button type="submit" class="btn btn-primary btn-sm">✓ Approve</button>
+                        </form>
+                        <form method="post" action="{% url 'review_organizer_application' pk=app.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="reject">
+                            <button type="submit" class="btn btn-outline btn-sm">✗ Reject</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No organizer applications.</p>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
 {% endif %}
 {% endblock %}

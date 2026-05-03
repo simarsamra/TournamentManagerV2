@@ -5,6 +5,46 @@ from .standings import advance_winner
 from .audit import log_action
 
 
+def _promote_from_waitlist(tournament, request=None):
+    """Promote the oldest waitlisted participation to pending/active (4.7)."""
+    first_waitlisted = (
+        TeamTournamentParticipation.objects.filter(
+            tournament=tournament, status="waitlisted"
+        )
+        .order_by("created_at")
+        .first()
+    )
+    if not first_waitlisted:
+        return None
+
+    required = max(1, tournament.players_per_team or 1)
+    first_waitlisted.status = "active" if required == 1 else "pending"
+    first_waitlisted.save(update_fields=["status"])
+
+    # Notify team captain
+    from django.contrib.auth.models import User
+    captain_user = User.objects.filter(
+        memberships__team=first_waitlisted.team, memberships__role="captain"
+    ).first()
+    if captain_user:
+        from .views import _notify
+        _notify(
+            captain_user,
+            "registration_promoted_from_waitlist",
+            f"A spot opened up! Your team '{first_waitlisted.team.name}' has been promoted from the waitlist for '{tournament.name}'.",
+            link=f"/tournaments/{tournament.pk}/",
+            tournament=tournament,
+        )
+
+    log_action(
+        request,
+        "waitlist_promoted",
+        f"Team '{first_waitlisted.team.name}' promoted from waitlist for '{tournament.name}'",
+        tournament=tournament,
+    )
+    return first_waitlisted
+
+
 def handle_withdrawal(request, team, tournament):
     """Process a team withdrawal."""
     participation = TeamTournamentParticipation.objects.filter(
@@ -44,6 +84,8 @@ def handle_withdrawal(request, team, tournament):
             f"Team '{team.name}' withdrew before activation. Cancelled draft matches: {draft_matches.count()}",
             tournament=tournament,
         )
+        # Promote the first waitlisted team when a spot frees up (4.7)
+        _promote_from_waitlist(tournament, request)
         return
 
     policy = tournament.withdrawal_policy
@@ -104,6 +146,9 @@ def handle_withdrawal(request, team, tournament):
         f"Affected matches: {future_matches.count()}",
         tournament=tournament,
     )
+    # Promote the first waitlisted team when a spot frees up (4.7)
+    if tournament.status in ("registration_open", "ready", "scheduled"):
+        _promote_from_waitlist(tournament, request)
 
 
 def models_q_team(team):

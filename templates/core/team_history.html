@@ -1,0 +1,49 @@
+{% extends "core/base.html" %}
+{% block title %}Tournament History — {{ team.name }} — Tournament Manager{% endblock %}
+{% block page_header %}📚 {{ team.name }} — Tournament History{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 class="card-title">Tournament History</h2>
+        <a href="{% url 'team_detail' pk=team.pk %}" class="btn btn-outline btn-sm">← Back to Team</a>
+    </div>
+    {% if participations %}
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tournament</th>
+                    <th>Format</th>
+                    <th>Status</th>
+                    <th>Group</th>
+                    <th>Seed</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in participations %}
+            <tr>
+                <td><a href="{% url 'tournament_public_detail' pk=p.tournament.pk %}">{{ p.tournament.name }}</a></td>
+                <td class="text-muted">{{ p.tournament.get_format_display }}</td>
+                <td>
+                    {% if p.status == 'active' %}
+                    <span class="badge badge-success">Active</span>
+                    {% elif p.status == 'withdrawn' %}
+                    <span class="badge badge-danger">Withdrawn</span>
+                    {% else %}
+                    <span class="badge">{{ p.get_status_display }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ p.group|default:"—" }}</td>
+                <td>{{ p.seed|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body">
+        <p class="text-muted">{{ team.name }} has not participated in any tournaments yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

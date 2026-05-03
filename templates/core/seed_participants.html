@@ -1,0 +1,53 @@
+{% extends "core/base.html" %}
+{% block title %}Seed Participants — {{ tournament.name }}{% endblock %}
+{% block page_header %}Seed Participants{% endblock %}
+{% block content %}
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <a href="{% url 'tournament_config' pk=tournament.pk %}" class="btn btn-outline">← Back to Config</a>
+</div>
+
+<div class="card" style="max-width:700px;">
+    <div class="card-body">
+        <h2 style="margin-top:0;">{{ tournament.name }} — Seeds</h2>
+
+        {% if not participants %}
+        <p class="text-muted">No active participants to seed.</p>
+        {% else %}
+        <form method="post" action="" id="seed-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save" id="form-action">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Seed</th>
+                        <th>{% if is_individual %}Player{% else %}Team{% endif %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in participants %}
+                    <tr>
+                        <td style="width:100px;">
+                            <input type="number" name="seed_{{ p.pk }}" value="{{ p.seed }}" class="form-control" min="0" style="width:80px;">
+                        </td>
+                        <td>
+                            {% if is_individual %}
+                                {{ p.display_name }}
+                            {% else %}
+                                {{ p.team.name }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+                <button type="submit" class="btn btn-primary">Save Seeds</button>
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('form-action').value='auto_seed'; document.getElementById('seed-form').submit();">
+                    Auto-seed (1…N)
+                </button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

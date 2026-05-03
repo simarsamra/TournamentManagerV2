@@ -11,6 +11,12 @@
 </head>
 <body>
 {% if user.is_authenticated %}
+{% if request.session.impersonating_original_user_pk %}
+<div style="background:var(--warning,#f39c12);color:#000;padding:0.5rem 1rem;text-align:center;font-weight:600;z-index:9999;position:sticky;top:0;">
+    ⚠️ Impersonating <strong>{{ request.user.username }}</strong> —
+    <a href="{% url 'stop_impersonating' %}" style="color:#000;text-decoration:underline;">Stop Impersonating</a>
+</div>
+{% endif %}
 <div class="app-layout">
     <aside class="sidebar">
         <div class="sidebar-brand">
@@ -30,15 +36,22 @@
             <a href="{% url 'open_slots' %}" class="{% if request.resolver_match.url_name == 'open_slots' %}active{% endif %}">📅 Open Slots</a>
             {% if not user.is_staff %}
             <div class="sidebar-section">Tournaments</div>
+            <a href="{% url 'tournament_list' %}" class="{% if request.resolver_match.url_name == 'tournament_list' or request.resolver_match.url_name == 'tournament_public_detail' %}active{% endif %}">🌐 Browse Tournaments</a>
             <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}">🎯 Join a Tournament</a>
+            <a href="{% url 'my_registrations' %}" class="{% if request.resolver_match.url_name == 'my_registrations' %}active{% endif %}">📋 My Registrations</a>
+            <a href="{% url 'my_invites' %}" class="{% if request.resolver_match.url_name == 'my_invites' %}active{% endif %}">📨 Team Invites</a>
             {% if open_registration_tournaments %}
-            <a href="{% url 'join_tournament_list' %}" class="{% if request.resolver_match.url_name == 'join_tournament_list' or request.resolver_match.url_name == 'join_tournament' or request.resolver_match.url_name == 'create_team' %}active{% endif %}" style="margin-top:0.5rem;">➕ Open Registrations
+            <a href="{% url 'join_tournament_list' %}" style="margin-top:0.5rem;">➕ Open Registrations
                 <span style="font-size:0.7rem;background:var(--primary);color:#fff;border-radius:10px;padding:1px 7px;margin-left:0.3rem;vertical-align:middle;">{{ open_registration_tournaments|length }}</span>
             </a>
+            {% endif %}
+            {% if user_can_apply_organizer %}
+            <a href="{% url 'organizer_apply' %}" class="{% if request.resolver_match.url_name == 'organizer_apply' %}active{% endif %}">📝 Apply as Organizer</a>
             {% endif %}
             {% endif %}
             {% if user.is_staff %}
             <div class="sidebar-section">Admin</div>
+            <a href="{% url 'tournament_list' %}" class="{% if request.resolver_match.url_name == 'tournament_list' or request.resolver_match.url_name == 'tournament_public_detail' %}active{% endif %}">🌐 Tournament Listing</a>
             <a href="{% url 'tournament_setup' %}" class="{% if request.resolver_match.url_name == 'tournament_setup' %}active{% endif %}">⚙️ New Tournament</a>
             <a href="{% url 'backup' %}" class="{% if request.resolver_match.url_name == 'backup' %}active{% endif %}">💾 Backup</a>
             <a href="{% url 'test_maker' %}" class="{% if request.resolver_match.url_name == 'test_maker' %}active{% endif %}">🧪 Test Maker</a>
@@ -108,6 +121,12 @@
                 <span class="text-muted">Organizer: <strong>{{ user.username }}</strong></span>
                 {% endif %}
                 <a href="{% url 'profile' %}" class="btn btn-outline btn-sm">My Profile</a>
+                <a href="{% url 'notifications' %}" class="btn btn-outline btn-sm" title="Notifications" style="position:relative;">
+                    🔔
+                    {% if unread_notification_count %}
+                    <span style="position:absolute;top:-4px;right:-4px;background:var(--danger,#e74c3c);color:#fff;border-radius:50%;font-size:0.65rem;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:700;">{{ unread_notification_count }}</span>
+                    {% endif %}
+                </a>
                 <form method="post" action="{% url 'logout' %}" style="display:inline;">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline btn-sm">Logout</button>

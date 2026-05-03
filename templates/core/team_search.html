@@ -1,0 +1,41 @@
+{% extends "core/base.html" %}
+{% block title %}Search Teams{% endblock %}
+{% block page_header %}Search Teams{% endblock %}
+{% block content %}
+<div class="card" style="max-width:800px;">
+    <div class="card-body">
+        <form method="get" action="" style="display:flex;gap:0.5rem;margin-bottom:1.5rem;">
+            <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search by team name…" style="flex:1;">
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+
+        {% if q %}
+        <p class="text-muted">{{ results|length }} result(s) for "<strong>{{ q }}</strong>"</p>
+        {% if results %}
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Team Name</th>
+                        <th>Members</th>
+                        <th>Active Tournaments</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr>
+                        <td><a href="/team/{{ r.pk }}/">{{ r.name }}</a></td>
+                        <td>{{ r.member_count }}</td>
+                        <td>{{ r.active_tournament_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No teams found.</p>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

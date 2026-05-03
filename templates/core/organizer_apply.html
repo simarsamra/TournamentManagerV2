@@ -1,0 +1,40 @@
+{% extends "core/base.html" %}
+{% block title %}Apply for Organizer Account — Tournament Manager{% endblock %}
+{% block page_header %}📝 Apply for Organizer Account{% endblock %}
+{% block content %}
+<div class="card" style="max-width:600px;margin:0 auto;">
+    <div class="card-header"><h2 class="card-title">Apply for Organizer Account</h2></div>
+    <div class="card-body">
+        {% if existing %}
+        <div class="alert alert-{% if existing.status == 'pending' %}warning{% elif existing.status == 'approved' %}success{% else %}error{% endif %}">
+            Your application status: <strong>{{ existing.get_status_display }}</strong>
+            {% if existing.status == 'approved' %}— You are already an approved organizer!{% endif %}
+            {% if existing.status == 'pending' %}— Your application is under review.{% endif %}
+            {% if existing.status == 'rejected' %}— You may reapply below.{% endif %}
+        </div>
+        {% endif %}
+        {% if not existing or existing.status == 'rejected' %}
+        <p class="text-muted" style="margin-bottom:1.5rem;">
+            Apply to become a tournament organizer. Once approved, you'll be able to create and manage tournaments.
+        </p>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label class="form-label">Organization / Club Name *</label>
+                <input type="text" name="org_name" class="form-control" required
+                    value="{{ existing.org_name|default:'' }}" placeholder="e.g. City Sports Club">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description *</label>
+                <textarea name="description" class="form-control" rows="4" required
+                    placeholder="Tell us about yourself and the types of tournaments you'd like to organize.">{{ existing.description|default:'' }}</textarea>
+            </div>
+            <div style="display:flex;gap:1rem;margin-top:1.5rem;">
+                <button type="submit" class="btn btn-primary">Submit Application</button>
+                <a href="{% url 'dashboard' %}" class="btn btn-outline">Cancel</a>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
