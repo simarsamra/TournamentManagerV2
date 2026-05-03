@@ -1,28 +1,4 @@
-================================================================================
-GITHUB COPILOT PROMPT — COMPARE APP FLOWS AGAINST REFERENCE DOCUMENT
-================================================================================
-HOW TO USE THIS PROMPT
---------------------------------------------------------------------------------
-Before pasting this prompt into Copilot Chat:
 
-  1. Open these files in your editor tabs so Copilot has full context:
-       - models.py
-       - views.py
-       - urls.py
-       - forms.py (if exists)
-       - any templates you want checked
-
-  2. Paste the ENTIRE contents of tournament_manager_workflows.txt into the
-     prompt below where it says [PASTE REFERENCE DOCUMENT HERE].
-
-  3. Paste the ENTIRE output from the previous Copilot audit (the read-flows
-     prompt) where it says [PASTE YOUR APP AUDIT HERE].
-
-  4. Paste the full prompt into Copilot Chat panel — not inline completion.
-
-================================================================================
-PROMPT START — PASTE EVERYTHING BELOW INTO COPILOT CHAT
-================================================================================
 
 I have two documents I need you to compare precisely.
 
