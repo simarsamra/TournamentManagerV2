@@ -409,7 +409,7 @@
                             {{ s.rank }}
                         </span>
                     </td>
-                    <td><strong>{{ s.display_label|default:s.team.name }}</strong></td>
+                    <td><strong>{{ s.display_label|default:"TBD" }}</strong></td>
                     <td><strong style="color:#2563eb;">{{ s.points }}</strong></td>
                 </tr>
                 {% empty %}
@@ -428,9 +428,9 @@
                 <tr>
                     <td style="color:#94a3b8;font-size:.82rem;">{{ m.match_number }}</td>
                     <td>
-                        <strong>{{ m.team1_label|default:m.team1.name|default:"TBD" }}</strong>
+                        <strong>{{ m.team1_label|default:"TBD" }}</strong>
                         <span class="match-vs">vs</span>
-                        <strong>{{ m.team2_label|default:m.team2.name|default:"TBD" }}</strong>
+                        <strong>{{ m.team2_label|default:"TBD" }}</strong>
                     </td>
                     <td class="match-time">{{ m.scheduled_time|date:"M d, H:i"|default:"TBD" }}</td>
                 </tr>
