@@ -504,6 +504,11 @@ def _assign_schedule(tournament, matches_data):
 def _has_team_conflict(t1, t2, start, end, used_slots, pending_matches):
     """Check if either team is already scheduled at this time or on the same day."""
     target_day = timezone.localtime(start).date() if timezone.is_aware(start) else start.date()
+    target_team_ids = {tid for tid in (getattr(t1, "id", None), getattr(t2, "id", None)) if tid}
+
+    # Placeholder matches (TBD vs TBD) should not block each other by team conflict.
+    if not target_team_ids:
+        return False
 
     for m in pending_matches:
         if not m.scheduled_time:
@@ -514,7 +519,8 @@ def _has_team_conflict(t1, t2, start, end, used_slots, pending_matches):
             if timezone.is_aware(m.scheduled_time)
             else m.scheduled_time.date()
         )
-        same_team = m.team1 in (t1, t2) or m.team2 in (t1, t2)
+        match_team_ids = {tid for tid in (m.team1_id, m.team2_id) if tid}
+        same_team = bool(target_team_ids & match_team_ids)
         if not same_team:
             continue
 
@@ -823,18 +829,38 @@ def _assign_hybrid_knockout_schedule(tournament):
         prev_round_last_date = current_date - timedelta(days=1)
 
 
-def _assign_schedule_to_existing(tournament):
-    """Assign schedule to all upcoming matches of a tournament, respecting preferences."""
-    matches = list(tournament.matches.filter(status="upcoming").select_related(
-        "team1", "team2"
-    ).order_by("group", "round_number", "match_number"))
+def _assign_schedule_to_existing(tournament, knockout_only=False):
+    """Assign schedule to unscheduled upcoming matches, respecting existing assignments.
+
+    When knockout_only=True, only knockout/consolation rounds (group='') are scheduled.
+    """
+    matches_qs = tournament.matches.filter(
+        status="upcoming",
+        scheduled_time__isnull=True,
+    )
+    if knockout_only:
+        matches_qs = matches_qs.filter(group="", bracket_type__in=["winners", "losers", "consolation"])
+
+    matches = list(
+        matches_qs.select_related("team1", "team2").order_by("group", "round_number", "match_number")
+    )
     courts = list(tournament.courts.filter(is_available=True))
     if not courts or not matches:
         return
 
     slots = _build_slots(tournament, courts)
-    used_slots = set()
-    scheduled_matches = []
+    occupied_matches = list(
+        tournament.matches
+        .filter(scheduled_time__isnull=False)
+        .exclude(status__in=["cancelled", "bye"])
+        .select_related("team1", "team2")
+    )
+    used_slots = {
+        (m.scheduled_time, m.court_id)
+        for m in occupied_matches
+        if m.scheduled_time and m.court_id
+    }
+    scheduled_matches = occupied_matches[:]
 
     for match in matches:
         result = _find_preferred_slot(

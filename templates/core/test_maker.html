@@ -174,5 +174,21 @@
             </form>
         </div>
     </div>
+
+    <div class="card">
+        <div class="card-header">Dispute Window</div>
+        <div class="card-body">
+            <p class="text-muted mb-1">Current window: <strong>{{ dispute_window_minutes }} minute{{ dispute_window_minutes|pluralize }}</strong>. Changes take effect on the next score submission.</p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="set_dispute_window">
+                <div class="d-flex align-center" style="gap:0.5rem;">
+                    <input type="number" name="dispute_window_minutes" class="form-control" min="1" value="{{ dispute_window_minutes }}" style="width:100px;" required>
+                    <label style="margin:0;white-space:nowrap;">minutes</label>
+                    <button type="submit" class="btn btn-warning">Set Window</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}

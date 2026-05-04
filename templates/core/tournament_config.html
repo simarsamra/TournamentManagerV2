@@ -227,7 +227,7 @@
                 </div>
                 {% endif %}
                 <div style="font-size:0.8rem;margin-top:0.25rem;{% if p.is_underfilled %}color:#b8690a;font-weight:600;{% else %}color:#666;{% endif %}">
-                    Members: {{ p.member_count }} / {{ tournament.players_per_team }}{% if p.is_underfilled %} &mdash; needs {{ tournament.players_per_team|add:"-"|add:p.member_count }} more{% endif %}
+                    Members: {{ p.member_count }} / {{ tournament.players_per_team }}{% if p.is_underfilled %} &mdash; needs {{ p.players_needed }} more{% endif %}
                 </div>
                 <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
                     Preferred courts: {% if p.preferred_court_names %}{{ p.preferred_court_names|join:", " }}{% else %}<span class="text-danger">Not set</span>{% endif %}

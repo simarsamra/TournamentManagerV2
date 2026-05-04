@@ -116,7 +116,7 @@
                     <form method="post" action="{% url 'dispute_score' pk=match.pk %}">
                         {% csrf_token %}
                         <input type="text" name="dispute_notes" class="form-control" placeholder="Reason (optional)" style="display:inline;width:200px;">
-                        <button type="submit" class="btn btn-danger">✗ Dispute</button>
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to dispute this score? An organizer will need to review and resolve it manually.')">✗ Dispute</button>
                     </form>
                 </div>
             </div>

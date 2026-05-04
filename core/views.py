@@ -39,6 +39,7 @@ from .scheduling import (
     generate_consolation_if_ready,
     estimate_required_matches,
     count_available_slots,
+    _assign_schedule_to_existing,
 )
 from .standings import calculate_standings, advance_winner, get_bracket_data, check_group_stage_complete, _determine_champion
 from .withdrawals import handle_withdrawal
@@ -47,8 +48,8 @@ from .audit import log_action
 from .services.enrollment import active_participant_count, is_registration_capacity_reached
 
 SEARCH_RESULT_LIMIT = 30
-CRITICAL_STAGE_DISPUTE_WINDOW_HOURS = 12
-DEFAULT_DISPUTE_WINDOW_HOURS = 24
+CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES = 10
+DEFAULT_DISPUTE_WINDOW_MINUTES = 10
 CRITICAL_STAGE_MATCHES_THRESHOLD = 2
 
 
@@ -98,7 +99,22 @@ def _get_tournament(request=None):
                 request.session["selected_tournament_id"] = fallback.pk
             return fallback
         else:
-            # Non-organiser: prioritize active tournament they're enrolled in
+            # Non-organiser: explicit selection should win when user is enrolled.
+            selected_id = request.GET.get("tournament")
+            if selected_id:
+                t_obj = tournaments.filter(pk=selected_id).first()
+                if t_obj and _is_user_enrolled_in_tournament(request.user, t_obj):
+                    request.session["selected_tournament_id"] = t_obj.pk
+                    return t_obj
+
+            # Honour session selection if they have a membership there.
+            selected_id = request.session.get("selected_tournament_id")
+            if selected_id:
+                t_obj = tournaments.filter(pk=selected_id).first()
+                if t_obj and _is_user_enrolled_in_tournament(request.user, t_obj):
+                    return t_obj
+
+            # Fallback: first active tournament where the user is enrolled.
             active_tournaments = tournaments.filter(status="active")
             user_active = None
             for t in active_tournaments:
@@ -108,13 +124,6 @@ def _get_tournament(request=None):
             if user_active:
                 request.session["selected_tournament_id"] = user_active.pk
                 return user_active
-            
-            # Honour session selection if they have a membership there
-            selected_id = request.session.get("selected_tournament_id")
-            if selected_id:
-                t_obj = tournaments.filter(pk=selected_id).first()
-                if t_obj and _is_user_enrolled_in_tournament(request.user, t_obj):
-                    return t_obj
             
             # Fall back to the user's first team's most recent tournament
             team = _get_team(request.user)
@@ -619,11 +628,11 @@ def _is_critical_stage_match(match):
     return remaining_group_matches <= CRITICAL_STAGE_MATCHES_THRESHOLD
 
 
-def _dispute_window_hours_for_match(match):
+def _dispute_window_minutes_for_match(match):
     return (
-        CRITICAL_STAGE_DISPUTE_WINDOW_HOURS
+        CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES
         if _is_critical_stage_match(match)
-        else DEFAULT_DISPUTE_WINDOW_HOURS
+        else DEFAULT_DISPUTE_WINDOW_MINUTES
     )
 
 
@@ -670,6 +679,9 @@ def _lock_match_score(match, confirmed_by_user=None, lock_note=""):
         generate_consolation_if_ready(tournament)
     if tournament.format == "hybrid" and match.group:
         check_group_stage_complete(tournament)
+    # Fill dates/courts for newly unlocked knockout matches without reshuffling existing assignments.
+    if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
+        _assign_schedule_to_existing(tournament, knockout_only=True)
     _check_and_finalize_tournament(tournament)
     return True
 
@@ -954,6 +966,52 @@ def _check_roster_minimum(team):
                 )
 
 
+def _promote_team_participation_when_full(team, tournament=None, request=None):
+    """Promote pending participations to active when the roster has enough members."""
+    if team.is_internal:
+        return []
+
+    current_count = team.memberships.count()
+    pending_qs = TeamTournamentParticipation.objects.filter(team=team, status="pending").select_related("tournament")
+    if tournament is not None:
+        pending_qs = pending_qs.filter(tournament=tournament)
+
+    promoted_tournaments = []
+    for participation in pending_qs:
+        required = max(1, participation.tournament.players_per_team or 1)
+        if current_count < required:
+            continue
+
+        participation.status = "active"
+        participation.save(update_fields=["status"])
+        promoted_tournaments.append(participation.tournament)
+        log_action(
+            request,
+            "team_registration_completed",
+            f"Team '{team.name}' roster complete — registration active in '{participation.tournament.name}'",
+            tournament=participation.tournament,
+        )
+
+        if (
+            is_registration_capacity_reached(participation.tournament)
+            and participation.tournament.status == "registration_open"
+        ):
+            participation.tournament.status = "ready"
+            participation.tournament.save(update_fields=["status"])
+            log_action(
+                request,
+                "registration_auto_closed",
+                (
+                    f"Registration auto-closed: expected "
+                    f"{participation.tournament.expected_teams_count} "
+                    f"{participation.tournament.participant_label_plural.lower()} reached"
+                ),
+                tournament=participation.tournament,
+            )
+
+    return promoted_tournaments
+
+
 # -- Auth Views --
 
 def login_view(request):
@@ -1224,25 +1282,11 @@ def join_team_view(request, tournament_pk, team_pk):
     # Promote participation to active once roster is full
     new_count = team.memberships.count()
     required = max(1, tournament.players_per_team or 1)
-    if new_count >= required and participation.status == "pending":
-        TeamTournamentParticipation.objects.filter(pk=participation.pk).update(status="active")
-        log_action(
-            request,
-            "team_registration_completed",
-            f"Team '{team.name}' roster complete — registration active in '{tournament.name}'",
-            tournament=tournament,
-        )
+    promoted_tournament_ids = {
+        t.pk for t in _promote_team_participation_when_full(team, tournament=tournament, request=request)
+    }
+    if tournament.pk in promoted_tournament_ids:
         messages.success(request, f"You joined {team.name}! The roster is now complete — your team is fully registered.")
-        # Auto-close if capacity is reached now that this team went active
-        if is_registration_capacity_reached(tournament) and tournament.status == "registration_open":
-            tournament.status = "ready"
-            tournament.save(update_fields=["status"])
-            log_action(
-                request,
-                "registration_auto_closed",
-                f"Registration auto-closed: expected {tournament.expected_teams_count} {tournament.participant_label_plural.lower()} reached",
-                tournament=tournament,
-            )
     else:
         still_needed = required - new_count
         messages.success(request, f"You joined {team.name}! {still_needed} more player{'s' if still_needed != 1 else ''} needed to complete registration.")
@@ -1786,6 +1830,7 @@ def tournament_config(request, pk):
         .order_by("team__name")
     )
 
+    required_members = max(1, tournament.players_per_team or 1)
     for participation in team_participations:
         if participation.team.is_internal:
             reg = TournamentIndividualRegistration.objects.filter(
@@ -1794,13 +1839,22 @@ def tournament_config(request, pk):
             participation.member_count = 1 if reg else 0
         else:
             participation.member_count = participation.team.memberships.count()
+            if (
+                participation.status == "pending"
+                and participation.member_count >= required_members
+            ):
+                participation.status = "active"
+                participation.save(update_fields=["status"])
         participation.preferred_court_names = list(
             TeamTournamentCourtPreference.objects.filter(participation=participation)
             .select_related("court")
             .values_list("court__name", flat=True)
         )
-        # Flag pending (forming) teams — those whose roster is not yet complete
-        participation.is_underfilled = participation.status == "pending"
+        # Flag teams that are still pending and under the required roster size.
+        participation.players_needed = max(0, required_members - participation.member_count)
+        participation.is_underfilled = (
+            participation.status == "pending" and participation.member_count < required_members
+        )
 
     underfilled_count = sum(1 for p in team_participations if p.is_underfilled)
 
@@ -2919,6 +2973,24 @@ def test_maker_view(request):
             )
             messages.success(request, f"Randomly scheduled {updated} match(es).")
 
+        elif action == "set_dispute_window":
+            minutes_raw = request.POST.get("dispute_window_minutes", "")
+            try:
+                minutes = max(1, int(minutes_raw))
+            except (ValueError, TypeError):
+                messages.error(request, "Dispute window must be a valid number of minutes.")
+                return redirect("test_maker")
+            import core.views as _self
+            _self.DEFAULT_DISPUTE_WINDOW_MINUTES = minutes
+            _self.CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES = minutes
+            log_action(
+                request,
+                "test_maker_set_dispute_window",
+                f"Dispute window set to {minutes} minute(s) by {request.user.username}",
+                tournament=tournament,
+            )
+            messages.success(request, f"Dispute window updated to {minutes} minute(s) (takes effect on next score submission).")
+
         else:
             messages.error(request, "Unknown Test Maker action.")
 
@@ -2944,6 +3016,7 @@ def test_maker_view(request):
             tournament.matches.exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"]).count()
             if tournament else 0
         ),
+        "dispute_window_minutes": DEFAULT_DISPUTE_WINDOW_MINUTES,
         **_tournament_context(request, tournament),
     }
     return render(request, "core/test_maker.html", context)
@@ -3088,7 +3161,7 @@ def match_detail(request, pk):
         "can_dispute": can_dispute,
         "dispute_window_open": dispute_window_open,
         "is_critical_stage": is_critical_stage,
-        "dispute_window_hours": _dispute_window_hours_for_match(match),
+        "dispute_window_minutes": _dispute_window_minutes_for_match(match),
         "can_mark_no_show": can_mark_no_show,
         "can_report_no_show": can_report_no_show,
         "can_reschedule": can_reschedule,
@@ -3168,9 +3241,9 @@ def submit_score(request, pk):
             match.submitted_by = request.user
             match.confirmed_by = None
             submitted_at = timezone.now()
-            window_hours = _dispute_window_hours_for_match(match)
+            window_minutes = _dispute_window_minutes_for_match(match)
             match.score_submitted_at = submitted_at
-            match.dispute_deadline_at = submitted_at + timedelta(hours=window_hours)
+            match.dispute_deadline_at = submitted_at + timedelta(minutes=window_minutes)
             match.score_locked_at = None
             match.disputed_by = None
             match.critical_dispute = False
@@ -3203,12 +3276,12 @@ def submit_score(request, pk):
             if _is_critical_stage_match(match):
                 messages.success(
                     request,
-                    f"Score submitted. Opponent has {CRITICAL_STAGE_DISPUTE_WINDOW_HOURS} hours to dispute before auto-lock."
+                    f"Score submitted. Opponent has {CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES} minute(s) to dispute before auto-lock."
                 )
             else:
                 messages.success(
                     request,
-                    f"Score submitted. Opponent has {DEFAULT_DISPUTE_WINDOW_HOURS} hours to dispute before auto-lock."
+                    f"Score submitted. Opponent has {DEFAULT_DISPUTE_WINDOW_MINUTES} minute(s) to dispute before auto-lock."
                 )
     return redirect("match_detail", pk=pk)
 
@@ -3584,25 +3657,32 @@ def teams_view(request):
     tournament = _get_tournament(request)
     teams = []
     participant_list = []
+    is_organizer = _is_organizer(request.user)
     registration_mode = tournament.registration_mode if tournament else "team"
     if tournament:
         if tournament.registration_mode == "individual":
+            regs_qs = tournament.individual_registrations.filter(status="active")
+            if not is_organizer:
+                regs_qs = regs_qs.filter(user=request.user)
             participant_list = list(
-                tournament.individual_registrations.filter(status="active")
+                regs_qs
                 .select_related("user", "shadow_team")
                 .order_by("display_name", "id")
             )
         else:
-            teams = Team.objects.filter(
+            teams_qs = Team.objects.filter(
                 participations__tournament=tournament,
                 participations__status="active",
                 is_internal=False,
-            ).prefetch_related("players").distinct().order_by("name")
+            )
+            if not is_organizer:
+                teams_qs = teams_qs.filter(memberships__user=request.user)
+
+            teams = teams_qs.prefetch_related("players").distinct().order_by("name")
             for team in teams:
                 participation = team.participations.filter(tournament=tournament).first()
                 team.group = participation.group if participation else ""
 
-    is_organizer = _is_organizer(request.user)
     teams_colspan = 3  # Name, Status, Account/Actions
     if tournament and tournament.players_per_team > 1:
         teams_colspan += 2  # Department, Players
@@ -3712,6 +3792,7 @@ def manage_team_members(request, pk):
                     return redirect("team_detail", pk=pk)
 
                 TeamMembership.objects.create(team=team, user=existing_user, role="member")
+                _promote_team_participation_when_full(team, tournament=tournament, request=request)
                 log_action(
                     request,
                     "existing_team_member_added",
@@ -3731,6 +3812,7 @@ def manage_team_members(request, pk):
                     password=form.cleaned_data["password"],
                 )
                 TeamMembership.objects.create(team=team, user=new_user, role="member")
+                _promote_team_participation_when_full(team, tournament=tournament, request=request)
                 log_action(
                     request,
                     "team_member_added",
@@ -5230,6 +5312,7 @@ def accept_team_invite(request, pk):
         return redirect("team_detail", pk=team.pk)
 
     TeamMembership.objects.create(team=team, user=request.user, role="member")
+    _promote_team_participation_when_full(team, request=request)
 
     # Update active team
     from .models import UserTeamAssignment
