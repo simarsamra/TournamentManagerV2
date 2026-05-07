@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 from django.db import models, IntegrityError
-from datetime import timedelta
+from datetime import timedelta, date
 from io import StringIO
 
 from .models import (
@@ -241,6 +241,106 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(json_data["status"], "ok")
 		self.assertIn("Estimated end date", json_data["message"])
 		self.assertIn("per court per day", json_data["message"])
+
+	def test_add_court_availability_backfills_unscheduled_knockout_rounds(self):
+		tournament = self._create_tournament(fmt="knockout", name="Knockout Backfill")
+		tournament.start_date = date(2026, 5, 5)
+		tournament.end_date = date(2026, 5, 8)
+		tournament.save(update_fields=["start_date", "end_date"])
+
+		for idx in range(1, 17):
+			self._create_team(tournament, f"K Team {idx}", seed=idx)
+
+		courts = [
+			Court.objects.create(tournament=tournament, name=f"Court {idx}", is_available=True)
+			for idx in range(1, 4)
+		]
+		for court in courts:
+			for weekday in [1, 2, 3, 4]:  # Tue-Fri only; not enough slots for all rounds.
+				CourtAvailability.objects.create(
+					court=court,
+					weekday=weekday,
+					start_time="12:30",
+					end_time="13:00",
+					start_date=date(2026, 5, 5),
+					end_date=date(2026, 5, 8),
+					matches_per_court_per_day=1,
+					is_active=True,
+				)
+
+		generate_fixtures(tournament)
+		self.assertGreater(tournament.matches.filter(scheduled_time__isnull=True).count(), 0)
+
+		self.client.force_login(self.organizer)
+		response = self.client.post(
+			reverse("add_court_availability", kwargs={"pk": tournament.pk}),
+			{
+				"courts": [str(c.pk) for c in courts],
+				"weekdays": ["0"],
+				"start_time": "12:30",
+				"end_time": "13:00",
+				"start_date": "2026-05-11",
+				"end_date": "2026-05-11",
+				"matches_per_court_per_day": "1",
+				"is_active": "on",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(tournament.matches.filter(scheduled_time__isnull=True).count(), 0)
+
+	def test_estimate_tournament_end_date_knockout_includes_semifinal_and_final_rest_days(self):
+		tournament = self._create_tournament(fmt="knockout", name="Knockout Rest Estimate")
+		tournament.start_date = date(2026, 5, 4)
+		tournament.save(update_fields=["start_date"])
+
+		for idx in range(1, 9):
+			self._create_team(tournament, f"Rest Team {idx}", seed=idx)
+
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		for weekday in [0, 1, 2, 3, 4]:
+			CourtAvailability.objects.create(
+				court=court,
+				weekday=weekday,
+				start_time="09:00",
+				end_time="09:30",
+				start_date=date(2026, 5, 4),
+				end_date=date(2026, 5, 31),
+				matches_per_court_per_day=1,
+				is_active=True,
+			)
+
+		self.client.force_login(self.organizer)
+		response = self.client.get(reverse("estimate_tournament_end_date", kwargs={"pk": tournament.pk}))
+
+		self.assertEqual(response.status_code, 200)
+		json_data = response.json()
+		self.assertEqual(json_data["estimated_end_date"], "2026-05-14")
+
+	def test_estimate_court_availability_end_date_knockout_includes_semifinal_and_final_rest_days(self):
+		tournament = self._create_tournament(fmt="knockout", name="Availability Rest Estimate")
+		tournament.expected_teams_count = 8
+		tournament.save(update_fields=["expected_teams_count"])
+		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+
+		self.client.force_login(self.organizer)
+		response = self.client.post(
+			reverse("estimate_court_availability_end_date", kwargs={"pk": tournament.pk}),
+			{
+				"courts": [str(court.pk)],
+				"weekdays": ["0", "1", "2", "3", "4"],
+				"start_time": "09:00",
+				"end_time": "09:30",
+				"start_date": "2026-05-04",
+				"matches_per_court_per_day": "1",
+			},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		json_data = response.json()
+		self.assertEqual(json_data["status"], "ok")
+		self.assertEqual(json_data["estimated_end_date"], "2026-05-14")
 
 	def test_team_membership_supports_manager_role(self):
 		tournament = self._create_tournament(name="Role Model")
@@ -2349,6 +2449,81 @@ class EnrollmentRefactorRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(TeamTournamentParticipation.objects.filter(tournament=team_tournament).count(), 2)
 		self.assertEqual(TeamRegistration.objects.filter(tournament=team_tournament).count(), 0)
+
+	def test_test_maker_create_user_team_pool_reuses_existing_users(self):
+		tournament = self._mk_tournament("Pool Tournament", mode="team")
+		User.objects.create_user(username="pool_u_001", password="pass123")
+
+		self.client.force_login(self.organizer)
+		session = self.client.session
+		session["selected_tournament_id"] = tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "create_user_team_pool",
+				"pool_user_count": "4",
+				"pool_team_count": "2",
+				"pool_members_per_team": "2",
+				"pool_user_prefix": "pool_u_",
+				"pool_team_prefix": "pool_t_",
+				"pool_password": "pass123",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(User.objects.filter(username__startswith="pool_u_").count(), 4)
+		self.assertEqual(Team.objects.filter(name__startswith="pool_t_").count(), 2)
+		self.assertEqual(TeamMembership.objects.filter(team__name__startswith="pool_t_").count(), 4)
+
+	def test_test_maker_register_existing_to_open_tournament_uses_existing_rows(self):
+		team_tournament = self._mk_tournament("Existing Team Flow", mode="team")
+		individual_tournament = self._mk_tournament("Existing Individual Flow", mode="individual")
+		team_a = Team.objects.create(name="Existing A", sport_type=team_tournament.sport_type)
+		team_b = Team.objects.create(name="Existing B", sport_type=team_tournament.sport_type)
+		captain_a = User.objects.create_user(username="z_capt_a", password="pass123")
+		captain_b = User.objects.create_user(username="z_capt_b", password="pass123")
+		TeamMembership.objects.create(team=team_a, user=captain_a, role="captain")
+		TeamMembership.objects.create(team=team_b, user=captain_b, role="captain")
+
+		u1 = User.objects.create_user(username="a_existing_i1", password="pass123", first_name="Existing One")
+		u2 = User.objects.create_user(username="a_existing_i2", password="pass123", first_name="Existing Two")
+
+		self.client.force_login(self.organizer)
+
+		session = self.client.session
+		session["selected_tournament_id"] = team_tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "register_existing_to_open_tournament",
+				"existing_count": "2",
+			},
+			follow=True,
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TeamTournamentParticipation.objects.filter(tournament=team_tournament).count(), 2)
+
+		session = self.client.session
+		session["selected_tournament_id"] = individual_tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "register_existing_to_open_tournament",
+				"existing_count": "2",
+			},
+			follow=True,
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
+		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament, user__in=[u1, u2]).count(), 2)
+		self.assertEqual(IndividualRegistration.objects.filter(tournament=individual_tournament).count(), 0)
 
 	def test_audit_participant_integrity_reports_missing_shadow_and_legacy_rows(self):
 		tournament = self._mk_tournament("Audit Target", mode="individual")

@@ -1,11 +1,17 @@
 """Scheduling engine for generating tournament fixtures."""
 import math
 import itertools
+from collections import defaultdict
 from datetime import datetime, timedelta, time
 from django.db import models
 from django.db.models import F
 from django.utils import timezone
 from .models import Match, Court, TimeSlot, Team, CourtAvailability, TeamTournamentCourtPreference
+
+
+REST_DAYS_BEFORE_SEMIFINAL = 1
+REST_DAYS_BEFORE_FINAL = 1
+MAX_ESTIMATE_LOOKAHEAD_DAYS = 365 * 3
 
 
 def _active_teams(tournament):
@@ -124,6 +130,249 @@ def _bracket_seed_order(size):
     return [item for seed in half for item in (seed, size + 1 - seed)]
 
 
+def _knockout_round_match_counts(team_count):
+    """Return match counts per elimination round for the given team count."""
+    if team_count < 2:
+        return []
+
+    bracket_size = 1
+    while bracket_size < team_count:
+        bracket_size *= 2
+
+    round_counts = []
+    matches_in_round = bracket_size // 2
+    while matches_in_round >= 1:
+        round_counts.append(matches_in_round)
+        matches_in_round //= 2
+    return round_counts
+
+
+def _hybrid_group_and_advancer_counts(tournament, team_count):
+    """Return (group_stage_matches, advancing_slots) for hybrid format."""
+    num_groups = max(1, min(tournament.num_groups or 1, team_count))
+    base_size = team_count // num_groups
+    remainder = team_count % num_groups
+
+    group_matches = 0
+    advancers = 0
+    per_group_advance = max(1, tournament.teams_per_group_advance or 1)
+    for idx in range(num_groups):
+        size = base_size + (1 if idx < remainder else 0)
+        if size >= 2:
+            group_matches += size * (size - 1) // 2
+        advancers += min(size, per_group_advance)
+    return group_matches, advancers
+
+
+def _date_capacity_from_slots(slots):
+    """Collapse slot list into a date -> number of available slots map."""
+    capacity_by_date = defaultdict(int)
+    for start_t, _, _ in slots:
+        d = timezone.localtime(start_t).date() if timezone.is_aware(start_t) else start_t.date()
+        capacity_by_date[d] += 1
+    return dict(capacity_by_date)
+
+
+def _rest_days_before_round(round_num, final_round, semifinal_round,
+                            rest_before_semifinal=REST_DAYS_BEFORE_SEMIFINAL,
+                            rest_before_final=REST_DAYS_BEFORE_FINAL):
+    """Return required calendar-day rest before the given round starts."""
+    if round_num == final_round:
+        return max(0, rest_before_final)
+    if semifinal_round and round_num == semifinal_round:
+        return max(0, rest_before_semifinal)
+    return 0
+
+
+def _simulate_rounds_over_capacity(start_date, capacity_by_date, round_match_counts,
+                                   rest_before_semifinal=REST_DAYS_BEFORE_SEMIFINAL,
+                                   rest_before_final=REST_DAYS_BEFORE_FINAL):
+    """Simulate round-constrained completion date from daily capacity map."""
+    if not round_match_counts:
+        return start_date
+    if not capacity_by_date:
+        return None
+
+    final_round = len(round_match_counts)
+    semifinal_round = final_round - 1 if final_round >= 3 else None
+    prev_round_end = None
+
+    for idx, match_count in enumerate(round_match_counts, start=1):
+        if match_count <= 0:
+            continue
+
+        if prev_round_end is None:
+            earliest = start_date
+        else:
+            rest_days = _rest_days_before_round(
+                idx,
+                final_round,
+                semifinal_round,
+                rest_before_semifinal=rest_before_semifinal,
+                rest_before_final=rest_before_final,
+            )
+            earliest = prev_round_end + timedelta(days=1 + rest_days)
+
+        remaining = match_count
+        current_date = earliest
+        round_end = None
+
+        while remaining > 0:
+            if (current_date - start_date).days > MAX_ESTIMATE_LOOKAHEAD_DAYS:
+                return None
+            capacity = capacity_by_date.get(current_date, 0)
+            if capacity > 0:
+                remaining -= min(capacity, remaining)
+                round_end = current_date
+            current_date += timedelta(days=1)
+
+        if round_end is None:
+            return None
+        prev_round_end = round_end
+
+    return prev_round_end
+
+
+def estimate_completion_date(tournament, team_count=None, capacity_by_date=None, start_date=None):
+    """Estimate completion date with format-aware round dependencies.
+
+    Uses daily slot capacity and enforces elimination rest gaps before
+    semi-finals and finals.
+    """
+    n = team_count if team_count is not None else tournament.team_participations.filter(status="active").count()
+    if n < 2:
+        return start_date or tournament.start_date or timezone.localdate()
+
+    start = start_date or tournament.start_date or timezone.localdate()
+    if capacity_by_date is None:
+        courts = list(tournament.courts.filter(is_available=True))
+        if not courts:
+            return None
+        slots = _build_slots(tournament, courts)
+        capacity_by_date = _date_capacity_from_slots(slots)
+
+    if not capacity_by_date:
+        return None
+
+    fmt = tournament.format
+    if fmt in ("knockout", "consolation"):
+        return _simulate_rounds_over_capacity(
+            start,
+            capacity_by_date,
+            _knockout_round_match_counts(n),
+        )
+
+    if fmt == "hybrid":
+        group_matches, advancers = _hybrid_group_and_advancer_counts(tournament, n)
+        group_end = start
+        if group_matches > 0:
+            group_end = _simulate_rounds_over_capacity(
+                start,
+                capacity_by_date,
+                [group_matches],
+                rest_before_semifinal=0,
+                rest_before_final=0,
+            )
+            if group_end is None:
+                return None
+
+        if advancers < 2:
+            return group_end
+
+        knockout_start = group_end + timedelta(days=1)
+        return _simulate_rounds_over_capacity(
+            knockout_start,
+            capacity_by_date,
+            _knockout_round_match_counts(advancers),
+        )
+
+    required_matches = estimate_required_matches(tournament, team_count=n)
+    return _simulate_rounds_over_capacity(
+        start,
+        capacity_by_date,
+        [required_matches],
+        rest_before_semifinal=0,
+        rest_before_final=0,
+    )
+
+
+def _assign_round_based_schedule(tournament, matches, phase_start_date=None,
+                                 rest_before_semifinal=REST_DAYS_BEFORE_SEMIFINAL,
+                                 rest_before_final=REST_DAYS_BEFORE_FINAL):
+    """Assign schedule to elimination rounds while enforcing round rest gaps."""
+    courts = list(tournament.courts.filter(is_available=True))
+    if not courts:
+        return
+
+    slots = _build_slots(tournament, courts)
+    if not slots:
+        return
+
+    slots_by_date = defaultdict(list)
+    for start_t, end_t, court in slots:
+        d = timezone.localtime(start_t).date() if timezone.is_aware(start_t) else start_t.date()
+        slots_by_date[d].append((start_t, end_t, court))
+    for day in slots_by_date:
+        slots_by_date[day].sort(key=lambda item: (item[0], item[2].id))
+
+    rounds = defaultdict(list)
+    for match in matches:
+        if match.status == "bye":
+            continue
+        rounds[match.round_number].append(match)
+    if not rounds:
+        return
+
+    used_slots = set()
+    final_round = max(rounds.keys())
+    semifinal_round = final_round - 1 if final_round >= 3 else None
+    prev_round_last_date = None
+    phase_start = phase_start_date or tournament.start_date or timezone.localdate()
+
+    for round_num in sorted(rounds.keys()):
+        round_matches = rounds[round_num]
+        if prev_round_last_date is None:
+            current_date = phase_start
+        else:
+            rest_days = _rest_days_before_round(
+                round_num,
+                final_round,
+                semifinal_round,
+                rest_before_semifinal=rest_before_semifinal,
+                rest_before_final=rest_before_final,
+            )
+            current_date = prev_round_last_date + timedelta(days=1 + rest_days)
+
+        scheduled_dates = []
+        for match in round_matches:
+            target_date = current_date
+            slot = None
+            for _ in range(MAX_ESTIMATE_LOOKAHEAD_DAYS):
+                for candidate in slots_by_date.get(target_date, []):
+                    start_t, _, court = candidate
+                    slot_key = (start_t, court.id)
+                    if slot_key in used_slots:
+                        continue
+                    slot = candidate
+                    break
+                if slot:
+                    break
+                target_date += timedelta(days=1)
+
+            if slot:
+                start_t, end_t, court = slot
+                match.scheduled_time = start_t
+                match.scheduled_end_time = end_t
+                match.court = court
+                match.save(update_fields=["scheduled_time", "scheduled_end_time", "court"])
+                used_slots.add((start_t, court.id))
+                scheduled_dates.append(target_date)
+                current_date = target_date
+
+        if scheduled_dates:
+            prev_round_last_date = max(scheduled_dates)
+
+
 def generate_knockout(tournament, teams=None, start_match=1, bracket_type="winners",
                       round_offset=0, group=""):
     """Generate single-elimination bracket."""
@@ -211,7 +460,7 @@ def generate_knockout(tournament, teams=None, start_match=1, bracket_type="winne
                 next_match.team2 = prev_matches[i + 1].winner
             next_match.save(update_fields=["team1", "team2"])
 
-    _assign_schedule_to_matches(tournament, all_matches)
+    _assign_round_based_schedule(tournament, all_matches)
     return all_matches
 
 
@@ -274,7 +523,7 @@ def generate_knockout_placeholders(
             prev_matches[i + 1].save(update_fields=["next_match"])
 
     if schedule:
-        _assign_schedule_to_matches(tournament, all_matches)
+        _assign_round_based_schedule(tournament, all_matches)
     return all_matches
 
 
@@ -780,53 +1029,11 @@ def _assign_hybrid_knockout_schedule(tournament):
     else:
         last_group_date = tournament.start_date or timezone.localdate()
 
-    # Build a dict of date -> first available slot on that date
-    slots = _build_slots(tournament, courts)
-    slots_by_date = {}
-    for start_t, end_t, court in slots:
-        d = timezone.localtime(start_t).date() if timezone.is_aware(start_t) else start_t.date()
-        if d not in slots_by_date:
-            slots_by_date[d] = (start_t, end_t, court)
-
-    # Identify the final round (highest round number in knockout)
-    final_round = max(m.round_number for m in ko_matches)
-
-    # Group matches by round
-    rounds = {}
-    for m in ko_matches:
-        rounds.setdefault(m.round_number, []).append(m)
-
-    prev_round_last_date = last_group_date
-
-    for round_num in sorted(rounds.keys()):
-        round_matches = rounds[round_num]
-        is_final_round = (round_num == final_round) and len(rounds) > 1
-
-        # 1-day rest gap before the final; 1-day advance for all other rounds
-        gap = 2 if is_final_round else 1
-        current_date = prev_round_last_date + timedelta(days=gap)
-
-        for match in round_matches:
-            # Find the first available court slot on or after current_date
-            target_date = current_date
-            slot = None
-            for _ in range(90):  # Search up to 90 days ahead
-                if target_date in slots_by_date:
-                    slot = slots_by_date[target_date]
-                    break
-                target_date += timedelta(days=1)
-
-            if slot:
-                start_t, end_t, court = slot
-                match.scheduled_time = start_t
-                match.scheduled_end_time = end_t
-                match.court = court
-                match.save(update_fields=["scheduled_time", "scheduled_end_time", "court"])
-                current_date = target_date + timedelta(days=1)
-            else:
-                current_date += timedelta(days=1)
-
-        prev_round_last_date = current_date - timedelta(days=1)
+    _assign_round_based_schedule(
+        tournament,
+        ko_matches,
+        phase_start_date=last_group_date + timedelta(days=1),
+    )
 
 
 def _assign_schedule_to_existing(tournament, knockout_only=False):

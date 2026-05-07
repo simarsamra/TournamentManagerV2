@@ -38,6 +38,7 @@ from .scheduling import (
     generate_fixtures,
     generate_consolation_if_ready,
     estimate_required_matches,
+    estimate_completion_date,
     count_available_slots,
     _assign_schedule_to_existing,
 )
@@ -432,32 +433,20 @@ def _safe_page_param(request, default=1):
 
 
 def _auto_end_date(tournament):
-    """Return an auto-computed end_date based on total matches, courts, and match duration.
-
-    Assumes an 8-hour working day per court. Returns None if start_date is absent.
-    """
-    import math
+    """Return an auto-computed end_date using format-aware schedule simulation."""
     start = tournament.start_date
     if not start:
         return None
+
     if tournament.pk:
-        team_count = tournament.expected_teams_count or tournament.team_participations.filter(
-            status="active", team__is_internal=False
-        ).count()
+        team_count = active_participant_count(tournament) or tournament.expected_teams_count or 0
     else:
         team_count = tournament.expected_teams_count or 0
-    total_matches = estimate_required_matches(tournament, team_count)
-    if total_matches <= 0:
+    if team_count < 2:
         return start
-    if tournament.pk:
-        courts = max(1, tournament.courts.filter(is_available=True).count())
-    else:
-        courts = 1
-    duration = max(5, tournament.default_match_duration or 30)
-    matches_per_court_per_day = max(1, 480 // duration)   # 8-hour day
-    matches_per_day = matches_per_court_per_day * courts
-    days_needed = math.ceil(total_matches / matches_per_day)
-    return start + timedelta(days=max(0, days_needed - 1))
+
+    estimated_end = estimate_completion_date(tournament, team_count=team_count, start_date=start)
+    return estimated_end or start
 
 
 def _is_partial_refresh(request):
@@ -2020,6 +2009,17 @@ def _estimate_availability_end_date(start_date, weekdays, daily_slots, required_
     return None
 
 
+def _build_capacity_by_date(start_date, weekdays, daily_capacity, max_days=365 * 2):
+    """Build a date->capacity map for recurring weekday availability."""
+    capacity = {}
+    current = start_date
+    for _ in range(max_days + 1):
+        if current.weekday() in weekdays:
+            capacity[current] = daily_capacity
+        current += timedelta(days=1)
+    return capacity
+
+
 @login_required
 @require_POST
 def estimate_court_availability_end_date(request, pk):
@@ -2063,7 +2063,16 @@ def estimate_court_availability_end_date(request, pk):
     if weekly_slots <= 0:
         return JsonResponse({"status": "error", "message": "The selected schedule does not produce any available slots."}, status=400)
 
-    estimated_end_date = _estimate_availability_end_date(start_date, weekdays, daily_slots_per_court * len(courts), required_matches)
+    estimated_end_date = estimate_completion_date(
+        tournament,
+        team_count=team_count,
+        capacity_by_date=_build_capacity_by_date(
+            start_date,
+            weekdays,
+            daily_slots_per_court * len(courts),
+        ),
+        start_date=start_date,
+    )
     if not estimated_end_date:
         return JsonResponse({"status": "error", "message": "Could not estimate an end date from the selected availability. Try a longer daily window or more weekdays."}, status=400)
 
@@ -2173,6 +2182,9 @@ def add_court_availability(request, pk):
             messages.warning(request, f"Skipped {skipped_count} duplicate entr{'y' if skipped_count == 1 else 'ies'}.")
         if not created_count and not skipped_count:
             messages.warning(request, "No court availability was added.")
+
+        if created_count and tournament.matches.exists():
+            _assign_schedule_to_existing(tournament, knockout_only=True)
     else:
         for errs in form.errors.values():
             for err in errs:
@@ -2208,6 +2220,8 @@ def add_timeslot(request, pk):
             details += f" on {court.name}"
         log_action(request, "timeslot_added", details, tournament=tournament)
         messages.success(request, "Time slot added.")
+        if tournament.matches.exists():
+            _assign_schedule_to_existing(tournament, knockout_only=True)
     return redirect("tournament_config", pk=pk)
 
 
@@ -2358,11 +2372,19 @@ def estimate_tournament_end_date(request, pk):
         if not matches_per_court_per_day:
             matches_per_court_per_day = 4  # sensible default: 4 matches per court per day
 
-    matches_per_day = max(1, matches_per_court_per_day * max(1, court_count))
-    days_needed = math.ceil(required_matches / matches_per_day)
-
     start = tournament.start_date or timezone.localdate()
-    estimated_end = start + timedelta(days=days_needed - 1)
+    if court_count > 0:
+        estimated_end = estimate_completion_date(tournament, team_count=team_count, start_date=start)
+    else:
+        estimated_end = None
+
+    if not estimated_end:
+        matches_per_day = max(1, matches_per_court_per_day * max(1, court_count))
+        days_needed = math.ceil(required_matches / matches_per_day)
+        estimated_end = start + timedelta(days=days_needed - 1)
+    else:
+        days_needed = max(1, (estimated_end - start).days + 1)
+        matches_per_day = max(1, matches_per_court_per_day * max(1, court_count))
 
     return JsonResponse({
         "team_count": team_count,
@@ -2597,11 +2619,11 @@ def test_maker_view(request):
 
     tournament = _get_tournament(request)
     if request.method == "POST":
-        if not tournament:
+        action = (request.POST.get("action") or "").strip()
+        actions_without_tournament = {"create_user_team_pool"}
+        if not tournament and action not in actions_without_tournament:
             messages.error(request, "No tournament selected. Create/select a tournament first.")
             return redirect("test_maker")
-
-        action = (request.POST.get("action") or "").strip()
 
         def _next_unique_username(base_username):
             if not User.objects.filter(username=base_username).exists():
@@ -2611,7 +2633,110 @@ def test_maker_view(request):
                 suffix += 1
             return f"{base_username}_{suffix}"
 
-        if action == "create_test_teams":
+        def _next_unique_display_name(base_name, tournament_obj):
+            if not tournament_obj.individual_registrations.filter(display_name__iexact=base_name).exists():
+                return base_name
+            suffix = 1
+            while tournament_obj.individual_registrations.filter(
+                display_name__iexact=f"{base_name}_{suffix}"
+            ).exists():
+                suffix += 1
+            return f"{base_name}_{suffix}"
+
+        if action == "create_user_team_pool":
+            user_count_raw = request.POST.get("pool_user_count", "50")
+            team_count_raw = request.POST.get("pool_team_count", "25")
+            members_raw = request.POST.get("pool_members_per_team", "2")
+            user_prefix = (request.POST.get("pool_user_prefix") or "tm_user_").strip() or "tm_user_"
+            team_prefix = (request.POST.get("pool_team_prefix") or "tm_team_").strip() or "tm_team_"
+            pool_password = request.POST.get("pool_password") or "pass123"
+
+            try:
+                user_count = max(1, int(user_count_raw))
+                team_count = max(0, int(team_count_raw))
+                members_per_team = max(1, int(members_raw))
+            except ValueError:
+                messages.error(request, "Pool counts and members per team must be valid numbers.")
+                return redirect("test_maker")
+
+            created_users = 0
+            reused_users = 0
+            created_teams = 0
+            created_memberships = 0
+
+            pool_users = []
+            user_width = max(3, len(str(max(user_count, team_count * members_per_team))))
+            for idx in range(1, user_count + 1):
+                username = f"{user_prefix}{idx:0{user_width}d}"
+                user = User.objects.filter(username=username).first()
+                if user is None:
+                    user = User.objects.create_user(
+                        username=username,
+                        password=pool_password,
+                        first_name=f"U{idx:0{user_width}d}",
+                    )
+                    created_users += 1
+                else:
+                    reused_users += 1
+                pool_users.append(user)
+
+            required_members = team_count * members_per_team
+            next_user_idx = len(pool_users) + 1
+            while len(pool_users) < required_members:
+                username = _next_unique_username(f"{user_prefix}{next_user_idx:0{user_width}d}")
+                user = User.objects.create_user(
+                    username=username,
+                    password=pool_password,
+                    first_name=f"U{next_user_idx:0{user_width}d}",
+                )
+                created_users += 1
+                pool_users.append(user)
+                next_user_idx += 1
+
+            if tournament:
+                sport_type = tournament.sport_type
+            else:
+                sport_type = "football"
+
+            team_width = max(3, len(str(max(1, team_count))))
+            for idx in range(1, team_count + 1):
+                team_name = f"{team_prefix}{idx:0{team_width}d}"
+                team, team_created = Team.objects.get_or_create(
+                    name=team_name,
+                    defaults={"sport_type": sport_type, "is_internal": False},
+                )
+                if team_created:
+                    created_teams += 1
+
+                start = (idx - 1) * members_per_team
+                members = pool_users[start:start + members_per_team]
+                for member_idx, user in enumerate(members, start=1):
+                    role = "captain" if member_idx == 1 else "member"
+                    membership, membership_created = TeamMembership.objects.get_or_create(
+                        team=team,
+                        user=user,
+                        defaults={"role": role},
+                    )
+                    if not membership_created and member_idx == 1 and membership.role != "captain":
+                        membership.role = "captain"
+                        membership.save(update_fields=["role"])
+                    if membership_created:
+                        created_memberships += 1
+                    Player.objects.get_or_create(team=team, name=user.username)
+
+            summary = (
+                f"Pool ready: {created_users} user(s) created, {reused_users} reused, "
+                f"{created_teams} team(s) created, {created_memberships} membership(s) created."
+            )
+            log_action(
+                request,
+                "test_maker_create_user_team_pool",
+                summary,
+                tournament=tournament,
+            )
+            messages.success(request, summary)
+
+        elif action == "create_test_teams":
             team_count_raw = request.POST.get("team_count", "10")
             members_raw = request.POST.get("members_per_team") or str(tournament.players_per_team or 2)
             team_prefix = (request.POST.get("team_prefix") or "team").strip() or "team"
@@ -2767,7 +2892,6 @@ def test_maker_view(request):
                         first_name=display_name,
                     )
                     created_users += 1
-                    # Create the canonical registration record used by match/scheduling flows.
                     ind_reg = TournamentIndividualRegistration.objects.create(
                         tournament=tournament,
                         user=user,
@@ -2798,7 +2922,6 @@ def test_maker_view(request):
                     if team_created:
                         created_teams += 1
                     TeamMembership.objects.get_or_create(team=team, user=captain, defaults={"role": "captain"})
-                    # Create participation so team appears in scheduling.
                     _, part_created = TeamTournamentParticipation.objects.get_or_create(
                         team=team,
                         tournament=tournament,
@@ -2828,6 +2951,71 @@ def test_maker_view(request):
                     f"{created_users} user(s), {created_participations} participation(s)."
                 )
             log_action(request, "test_maker_register_to_open", summary, tournament=tournament)
+            messages.success(request, summary)
+
+        elif action == "register_existing_to_open_tournament":
+            if tournament.status != "registration_open":
+                messages.error(request, "Tournament must have status 'Registration Open' to use this action.")
+                return redirect("test_maker")
+
+            existing_count_raw = request.POST.get("existing_count", "5")
+            try:
+                existing_count = max(1, int(existing_count_raw))
+            except ValueError:
+                messages.error(request, "Count must be a valid number.")
+                return redirect("test_maker")
+
+            registered = 0
+            skipped = 0
+            created_shadows = 0
+
+            if tournament.registration_mode == "individual":
+                candidates = list(
+                    User.objects.exclude(
+                        individual_registrations__tournament=tournament
+                    ).order_by("username", "id")[:existing_count]
+                )
+                for user in candidates:
+                    base_name = (user.first_name or user.username or "participant").strip()[:100] or "participant"
+                    display_name = _next_unique_display_name(base_name, tournament)[:100]
+                    ind_reg = TournamentIndividualRegistration.objects.create(
+                        tournament=tournament,
+                        user=user,
+                        display_name=display_name,
+                        status="active",
+                    )
+                    registered += 1
+                    shadow = _ensure_shadow_team_for_registration(ind_reg, tournament.sport_type)
+                    if shadow:
+                        created_shadows += 1
+                skipped = max(0, existing_count - len(candidates))
+                summary = (
+                    f"Registered {registered} existing user(s) as individuals; "
+                    f"created {created_shadows} shadow competitor(s)."
+                )
+            else:
+                candidates = list(
+                    Team.objects.filter(is_internal=False)
+                    .exclude(participations__tournament=tournament)
+                    .order_by("name", "id")[:existing_count]
+                )
+                for team in candidates:
+                    _, created = TeamTournamentParticipation.objects.get_or_create(
+                        team=team,
+                        tournament=tournament,
+                        defaults={"status": "active"},
+                    )
+                    if created:
+                        registered += 1
+                    else:
+                        skipped += 1
+                skipped += max(0, existing_count - len(candidates))
+                summary = f"Registered {registered} existing team(s) to tournament."
+
+            if skipped > 0:
+                summary = f"{summary} Skipped {skipped} slot(s) due to unavailable candidates."
+
+            log_action(request, "test_maker_register_existing", summary, tournament=tournament)
             messages.success(request, summary)
 
         elif action == "randomize_court_preferences":
@@ -3005,6 +3193,17 @@ def test_maker_view(request):
         else:
             roster_count = active_participant_count(tournament)
             roster_label = "Teams"
+    available_existing_users = 0
+    available_existing_teams = Team.objects.filter(is_internal=False).count()
+    if tournament:
+        if tournament.registration_mode == "individual":
+            available_existing_users = User.objects.exclude(
+                individual_registrations__tournament=tournament
+            ).count()
+        available_existing_teams = Team.objects.filter(is_internal=False).exclude(
+            participations__tournament=tournament
+        ).count()
+
     context = {
         "tournament": tournament,
         "registration_mode": tournament.registration_mode if tournament else "team",
@@ -3016,6 +3215,8 @@ def test_maker_view(request):
             tournament.matches.exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"]).count()
             if tournament else 0
         ),
+        "available_existing_users": available_existing_users,
+        "available_existing_teams": available_existing_teams,
         "dispute_window_minutes": DEFAULT_DISPUTE_WINDOW_MINUTES,
         **_tournament_context(request, tournament),
     }

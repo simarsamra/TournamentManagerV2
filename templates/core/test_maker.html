@@ -78,7 +78,49 @@
     </div>
 
     <div class="card">
-        <div class="card-header">Register {% if registration_mode == "individual" %}Individuals{% else %}Teams{% endif %} to Open Tournament</div>
+        <div class="card-header">Reusable User + Team Pool</div>
+        <div class="card-body">
+            <p class="text-muted mb-1">Creates or reuses a shared pool (example: 50 users and 25 teams using those users) so Test Maker can register first N without creating fresh accounts each time.</p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_user_team_pool">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>Number of users</label>
+                        <input type="number" name="pool_user_count" class="form-control" min="1" value="50" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Number of teams</label>
+                        <input type="number" name="pool_team_count" class="form-control" min="0" value="25" required>
+                    </div>
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>Members per team</label>
+                        <input type="number" name="pool_members_per_team" class="form-control" min="1" value="2" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Default password (for newly created users)</label>
+                        <input type="text" name="pool_password" class="form-control" value="pass123" required>
+                    </div>
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>User prefix</label>
+                        <input type="text" name="pool_user_prefix" class="form-control" value="tm_user_" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Team prefix</label>
+                        <input type="text" name="pool_team_prefix" class="form-control" value="tm_team_" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Create or Reuse Pool</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Register NEW {% if registration_mode == "individual" %}Individuals{% else %}Teams{% endif %} to Open Tournament</div>
         <div class="card-body">
             {% if tournament and tournament.status == "registration_open" %}
             <p class="text-muted mb-1">
@@ -114,7 +156,38 @@
                     <label>Default password</label>
                     <input type="text" name="reg_password" class="form-control" value="pass123" required>
                 </div>
-                <button type="submit" class="btn btn-success">Register {% if registration_mode == "individual" %}Test Individuals{% else %}Test Teams{% endif %}</button>
+                <button type="submit" class="btn btn-success">Register NEW {% if registration_mode == "individual" %}Individuals{% else %}Teams{% endif %}</button>
+            </form>
+            {% else %}
+            <p class="text-muted mb-1">
+                Tournament must be in <strong>Registration Open</strong> status to use this action.
+                {% if tournament %}<span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span>{% endif %}
+            </p>
+            <button type="button" class="btn btn-outline" disabled>Unavailable — Not Open for Registration</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Register FIRST N Existing {% if registration_mode == "individual" %}Users{% else %}Teams{% endif %}</div>
+        <div class="card-body">
+            {% if tournament and tournament.status == "registration_open" %}
+            <p class="text-muted mb-1">
+                Reuses existing {% if registration_mode == "individual" %}user accounts{% else %}teams{% endif %} and registers the first N not already in this tournament.
+                {% if registration_mode == "individual" %}
+                Available users: <strong>{{ available_existing_users }}</strong>.
+                {% else %}
+                Available teams: <strong>{{ available_existing_teams }}</strong>.
+                {% endif %}
+            </p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="register_existing_to_open_tournament">
+                <div class="form-group">
+                    <label>How many to register</label>
+                    <input type="number" name="existing_count" class="form-control" min="1" value="10" required>
+                </div>
+                <button type="submit" class="btn btn-success">Register FIRST N Existing</button>
             </form>
             {% else %}
             <p class="text-muted mb-1">
