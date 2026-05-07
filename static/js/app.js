@@ -273,11 +273,32 @@ document.addEventListener('DOMContentLoaded', function() {
             return true;
         }
         var active = document.activeElement;
-        return !!(
+        var hasActiveControl = !!(
             active &&
             section.contains(active) &&
             ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(active.tagName)
         );
+        if (hasActiveControl) {
+            return true;
+        }
+
+        var rescheduleForm = section.querySelector('[data-reschedule-form="1"]');
+        if (!rescheduleForm) {
+            return false;
+        }
+
+        var hasSelectedSlot = !!rescheduleForm.querySelector('input[name$="open_slot"]:checked');
+        if (hasSelectedSlot) {
+            return true;
+        }
+
+        var hasManualInput = Array.from(
+            rescheduleForm.querySelectorAll('input[type="date"], input[type="time"], input[type="text"], textarea, select')
+        ).some(function(field) {
+            var value = (field.value || '').trim();
+            return value.length > 0;
+        });
+        return hasManualInput;
     };
 
     // Auto-fill end date when estimate succeeds

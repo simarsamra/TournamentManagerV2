@@ -1,14 +1,16 @@
 {% include "core/partials/flash_messages_oob.html" %}
-{% if reschedule_requests %}
+{% if reschedule_request_rows %}
 <div class="card mb-2 card-warning">
     <div class="card-header">🔄 Reschedule Requests</div>
     <div class="card-body">
         <div class="table-container">
         <table>
-            <tr><th>Requested By</th><th>New Time</th><th>Court</th><th>Reason</th><th>Status</th><th></th></tr>
-            {% for rr in reschedule_requests %}
+            <tr><th>Requested By</th><th>Team</th><th>New Time</th><th>Court</th><th>Reason</th><th>Status</th><th></th></tr>
+            {% for row in reschedule_request_rows %}
+            {% with rr=row.request %}
             <tr>
-                <td>{{ rr.requested_by.get_full_name|default:rr.requested_by.username }}</td>
+                <td>{{ row.requested_by_label }}</td>
+                <td>{{ row.requested_team_label }}</td>
                 <td>{{ rr.new_time|date:"M d, H:i" }}</td>
                 <td>{{ rr.new_court.name|default:"-" }}</td>
                 <td>{{ rr.reason|default:"-" }}</td>
@@ -30,6 +32,7 @@
                     {% endif %}
                 </td>
             </tr>
+            {% endwith %}
             {% endfor %}
         </table>
         </div>
@@ -255,6 +258,7 @@
             <div class="card-header">Request Reschedule</div>
             <div class="card-body">
                 <form method="post" action="{% url 'request_reschedule' pk=match.pk %}"
+                                            data-reschedule-form="1"
                       hx-post="{% url 'request_reschedule' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                     {% csrf_token %}
                     <div class="form-group">

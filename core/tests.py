@@ -1528,6 +1528,92 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(response, court_x.name)
 		self.assertContains(response, court_z.name)
 
+	def test_match_detail_reschedule_uses_display_names_for_individual_mode(self):
+		tournament = self._create_tournament(name="Individual Slot Context")
+		tournament.registration_mode = "individual"
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["registration_mode", "status", "started_at"])
+		primary_court = Court.objects.create(tournament=tournament, name="Primary", is_available=True)
+		court_x = Court.objects.create(tournament=tournament, name="Court X", is_available=True)
+
+		user1 = User.objects.create_user(username="individual_slot_a", password="pass123")
+		user2 = User.objects.create_user(username="individual_slot_b", password="pass123")
+		user3 = User.objects.create_user(username="individual_slot_c", password="pass123")
+
+		shadow1 = Team.objects.create(name="__tm_shadow_alpha", sport_type=tournament.sport_type, is_internal=True)
+		shadow2 = Team.objects.create(name="__tm_shadow_beta", sport_type=tournament.sport_type, is_internal=True)
+		shadow3 = Team.objects.create(name="__tm_shadow_gamma", sport_type=tournament.sport_type, is_internal=True)
+
+		for seed, shadow in enumerate([shadow1, shadow2, shadow3], start=1):
+			TeamTournamentParticipation.objects.create(team=shadow, tournament=tournament, status="active", seed=seed)
+
+		TeamMembership.objects.create(team=shadow1, user=user1, role="captain")
+		TeamMembership.objects.create(team=shadow2, user=user2, role="captain")
+		TeamMembership.objects.create(team=shadow3, user=user3, role="captain")
+
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user1,
+			display_name="Player A",
+			shadow_team=shadow1,
+			status="active",
+		)
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user2,
+			display_name="Player B",
+			shadow_team=shadow2,
+			status="active",
+		)
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user3,
+			display_name="Player C",
+			shadow_team=shadow3,
+			status="active",
+		)
+
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=401,
+			team1=shadow1,
+			team2=shadow2,
+			court=primary_court,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		slot_start = timezone.now() + timedelta(days=3, hours=2)
+		Match.objects.create(
+			tournament=tournament,
+			match_number=402,
+			team1=shadow1,
+			team2=shadow3,
+			court=court_x,
+			scheduled_time=slot_start - timedelta(hours=1),
+			scheduled_end_time=slot_start - timedelta(minutes=30),
+			status="upcoming",
+		)
+		OpenSlot.objects.create(
+			tournament=tournament,
+			court=primary_court,
+			start_time=slot_start,
+			end_time=slot_start + timedelta(minutes=30),
+			reason="Individual mode review",
+		)
+
+		self.client.force_login(user1)
+		response = self.client.get(reverse("match_detail", kwargs={"pk": match.pk}))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Player A")
+		self.assertContains(response, "Player B")
+		self.assertContains(response, "Player C")
+		self.assertNotContains(response, "__tm_shadow_alpha")
+		self.assertNotContains(response, "__tm_shadow_beta")
+		self.assertNotContains(response, "__tm_shadow_gamma")
+
 	def test_reschedule_request_hides_self_actions_and_shows_requester_username(self):
 		tournament = self._create_tournament(name="Reschedule Request UI")
 		tournament.status = "active"
@@ -1560,6 +1646,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertContains(response, "team009_captain")
+		self.assertContains(response, "<th>Team</th>", html=False)
 		self.assertNotContains(response, "Approve")
 		self.assertNotContains(response, "Reject")
 
