@@ -849,6 +849,7 @@ def _build_open_slot_choices(match, slots):
         return []
 
     teams = [team for team in (match.team1, match.team2) if team]
+    team_ids_for_labels = {team.pk for team in teams}
     slot_dates = {timezone.localtime(slot.start_time).date() for slot in slots}
     schedule_by_team_day = defaultdict(list)
 
@@ -880,6 +881,8 @@ def _build_open_slot_choices(match, slots):
             for team in teams:
                 if related_match.team1_id == team.pk or related_match.team2_id == team.pk:
                     opponent = related_match.get_opponent(team)
+                    if opponent:
+                        team_ids_for_labels.add(opponent.pk)
                     schedule_by_team_day[(team.pk, match_day)].append({
                         "match_number": related_match.match_number,
                         "time_label": (
@@ -887,15 +890,22 @@ def _build_open_slot_choices(match, slots):
                             if local_end else local_start.strftime("%H:%M")
                         ),
                         "court_name": related_match.court.name if related_match.court else "TBD court",
-                        "opponent_name": opponent.name if opponent else "TBD",
+                        "opponent_name": opponent.pk if opponent else None,
                     })
+
+    team_name_map = _team_display_map(match.tournament, team_ids_for_labels)
+
+    for entries in schedule_by_team_day.values():
+        for entry in entries:
+            opponent_id = entry.pop("opponent_name", None)
+            entry["opponent_name"] = team_name_map.get(opponent_id, "TBD")
 
     return [
         {
             "slot": slot,
             "team_schedules": [
                 {
-                    "team_name": team.name,
+                    "team_name": team_name_map.get(team.pk, team.name),
                     "matches": schedule_by_team_day.get(
                         (team.pk, timezone.localtime(slot.start_time).date()),
                         [],
@@ -3484,6 +3494,21 @@ def match_detail(request, pk):
     can_override_result = is_organizer and _can_override_match(match)
     reschedule_form = RescheduleForm(tournament=match.tournament)
     open_slot_choices = _build_open_slot_choices(match, reschedule_form.fields["open_slot"].queryset)
+    reschedule_requests = list(
+        match.reschedule_requests.select_related("requested_by", "new_court").order_by("-created_at")
+    )
+    reschedule_request_rows = []
+    for rr in reschedule_requests:
+        requested_by_label = rr.requested_by.get_full_name().strip() or rr.requested_by.username
+        requester_team = _get_team(rr.requested_by, match.tournament)
+        requested_team_label = _team_display_label(match.tournament, requester_team) if requester_team else "-"
+        reschedule_request_rows.append(
+            {
+                "request": rr,
+                "requested_by_label": requested_by_label,
+                "requested_team_label": requested_team_label,
+            }
+        )
     team_name_map = _team_display_map(
         match.tournament,
         [match.team1_id, match.team2_id, match.winner_id],
@@ -3515,7 +3540,7 @@ def match_detail(request, pk):
         "score_form": ScoreSubmitForm(),
         "reschedule_form": reschedule_form,
         "open_slot_choices": open_slot_choices,
-        "reschedule_requests": match.reschedule_requests.order_by("-created_at"),
+        "reschedule_request_rows": reschedule_request_rows,
         "is_organizer": is_organizer,
         **_tournament_context(request, match.tournament),
     }
