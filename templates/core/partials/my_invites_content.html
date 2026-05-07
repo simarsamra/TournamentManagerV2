@@ -15,7 +15,7 @@
             <tbody>
             {% for invite in invites %}
             <tr>
-                <td><a href="{% url 'team_detail' pk=invite.team.pk %}">{{ invite.team.name }}</a></td>
+                <td><a href="{% url 'team_detail' pk=invite.team.pk %}" hx-boost="false">{{ invite.team.name }}</a></td>
                 <td>{{ invite.invited_by.username }}</td>
                 <td class="text-muted">{{ invite.created_at|timesince }} ago</td>
                 <td>
@@ -36,7 +36,7 @@
     {% else %}
     <div class="card-body">
         <p class="text-muted">You have no pending team invites.</p>
-        <a href="{% url 'teams' %}" class="btn btn-outline">Browse Teams</a>
+        <a href="{% url 'teams' %}" class="btn btn-outline" hx-boost="false">Browse Teams</a>
     </div>
     {% endif %}
 </div>

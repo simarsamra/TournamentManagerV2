@@ -337,7 +337,7 @@
 
         <div class="mt-2" style="font-size:0.9rem;">
             <strong>Registration link:</strong>
-            <a href="{% url 'tournament_register' pk=tournament.pk %}">{% url 'tournament_register' pk=tournament.pk %}</a>
+            <a href="{% url 'tournament_register' pk=tournament.pk %}" hx-boost="false">{% url 'tournament_register' pk=tournament.pk %}</a>
         </div>
     </div>
 </div>

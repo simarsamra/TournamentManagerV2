@@ -3,13 +3,13 @@
     <h1 class="page-title" style="margin-bottom:0">{{ team_heading_label }}</h1>
     <div class="d-flex gap-1">
         {% if is_captain or is_organizer %}
-        <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline">Preferences</a>
+        <a href="{% url 'team_preferences' pk=team.pk %}" class="btn btn-outline" hx-boost="false">Preferences</a>
         {% endif %}
         {% if is_captain and not is_organizer %}
-        <a href="{% url 'team_invite' pk=team.pk %}" class="btn btn-outline">📨 Invite Member</a>
-        <a href="{% url 'team_history' pk=team.pk %}" class="btn btn-outline">📚 History</a>
-        <a href="{% url 'team_stats' pk=team.pk %}" class="btn btn-outline">📊 Stats</a>
-        <a href="{% url 'transfer_captaincy' pk=team.pk %}" class="btn btn-outline">Transfer Captaincy</a>
+        <a href="{% url 'team_invite' pk=team.pk %}" class="btn btn-outline" hx-boost="false">📨 Invite Member</a>
+        <a href="{% url 'team_history' pk=team.pk %}" class="btn btn-outline" hx-boost="false">📚 History</a>
+        <a href="{% url 'team_stats' pk=team.pk %}" class="btn btn-outline" hx-boost="false">📊 Stats</a>
+        <a href="{% url 'transfer_captaincy' pk=team.pk %}" class="btn btn-outline" hx-boost="false">Transfer Captaincy</a>
         <form method="post" action="{% url 'delete_team' pk=team.pk %}" style="display:inline">
             {% csrf_token %}
             <input type="hidden" name="confirm_delete" value="yes">
@@ -219,7 +219,7 @@
                 </td>
                 <td><span class="badge badge-{{ m.status }}">{{ m.get_status_display }}</span></td>
                 <td>{{ m.scheduled_time|date:"M d, H:i"|default:"-" }}</td>
-                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm">View</a></td>
+                <td><a href="{% url 'match_detail' pk=m.pk %}" class="btn btn-outline btn-sm" hx-boost="false">View</a></td>
             </tr>
             {% endfor %}
         </tbody>

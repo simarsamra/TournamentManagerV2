@@ -59,7 +59,7 @@
             <tbody>
             {% for p in team_regs %}
             <tr>
-                <td><a href="{% url 'team_detail' pk=p.team.pk %}">{{ p.team.name }}</a></td>
+                <td><a href="{% url 'team_detail' pk=p.team.pk %}" hx-boost="false">{{ p.team.name }}</a></td>
                 <td>{{ p.team.memberships.count }}</td>
                 <td>
                     {% if p.status == 'active' %}<span class="badge badge-success">Active</span>
@@ -88,7 +88,7 @@
                         <button type="submit" class="btn btn-outline btn-sm" style="color:var(--danger,#e74c3c);">🚫 Disqualify</button>
                     </form>
                     {% endif %}
-                    <a href="{% url 'tournament_team_sub' pk=tournament.pk participation_pk=p.pk %}" class="btn btn-outline btn-sm">👥 Subs</a>
+                    <a href="{% url 'tournament_team_sub' pk=tournament.pk participation_pk=p.pk %}" class="btn btn-outline btn-sm" hx-boost="false">👥 Subs</a>
                 </td>
             </tr>
             {% endfor %}

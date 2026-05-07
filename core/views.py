@@ -5031,7 +5031,9 @@ def compute_end_date_view(request, pk):
         messages.success(request, f"End date computed and set to {computed.strftime('%B %d, %Y')}.")
     else:
         messages.error(request, "Could not compute end date — make sure a start date is set.")
-    return _htmx_or_redirect(request, settings_view, "settings")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("settings")})
+    return redirect("settings")
 
 
 # -- User Management --
@@ -5066,7 +5068,9 @@ def set_user_organizer(request, user_pk):
     detail = f"User '{target.username}' role updated to {'organizer' if make_organizer else 'user'}."
     log_action(request, action, detail)
     messages.success(request, detail)
-    return _htmx_or_redirect(request, settings_view, "settings")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("settings")})
+    return redirect("settings")
 
 
 @login_required
@@ -5093,7 +5097,9 @@ def delete_user_account(request, user_pk):
     target.delete()
     log_action(request, "user_deleted", f"User '{username}' account deleted.")
     messages.success(request, f"User '{username}' deleted.")
-    return _htmx_or_redirect(request, settings_view, "settings")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("settings")})
+    return redirect("settings")
 
 
 # -- Public Views --
@@ -5573,7 +5579,9 @@ def review_organizer_application(request, pk):
     else:
         messages.error(request, "Invalid action.")
 
-    return _htmx_or_redirect(request, settings_view, "settings")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("settings")})
+    return redirect("settings")
 
 
 # =============================================================================
@@ -5712,7 +5720,7 @@ def decline_team_invite(request, pk):
     log_action(request, "team_invite_declined", f"User '{request.user.username}' declined invite to '{invite.team.name}'")
     messages.info(request, f"You declined the invite to join {invite.team.name}.")
     if _is_htmx_request(request):
-        return _htmx_or_redirect(request, my_invites_view, "my_invites")
+        return my_invites_view(request)
     return redirect("notifications")
 
 
@@ -6502,7 +6510,9 @@ def toggle_user_suspension(request, user_pk):
         log_action(request, "user_unsuspended", f"User '{target.username}' unsuspended")
         messages.success(request, f"User '{target.username}' has been unsuspended.")
 
-    return _htmx_or_redirect(request, settings_view, "settings")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("settings")})
+    return redirect("settings")
 
 
 # =============================================================================

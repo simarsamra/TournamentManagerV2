@@ -42,7 +42,7 @@
                 {% endif %}
                 <div style="display:flex;gap:0.75rem;margin-top:1rem;">
                     <button type="submit" class="btn btn-primary">{% if tournament.registration_mode == 'individual' %}Register{% else %}Create Team{% endif %}</button>
-                    <a href="{% url 'join_tournament' pk=tournament.pk %}" class="btn btn-outline">Cancel</a>
+                    <a href="{% url 'join_tournament' pk=tournament.pk %}" class="btn btn-outline" hx-boost="false">Cancel</a>
                 </div>
             </form>
         </div>

@@ -22,18 +22,18 @@
     <div style="display:flex;gap:0.75rem;align-items:center;">
         {% if registration_mode == "individual" %}
             {% if not user_registration and not registration_full %}
-            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary">+ Register as Participant</a>
+            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary" hx-boost="false">+ Register as Participant</a>
             {% endif %}
         {% else %}
             {% if not user_team and not registration_full %}
-            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary">+ Create New {{ tournament.participant_label }}</a>
+            <a href="{% url 'create_team' pk=tournament.pk %}" class="btn btn-primary" hx-boost="false">+ Create New {{ tournament.participant_label }}</a>
             <form method="post" action="{% url 'enter_existing_team' pk=tournament.pk %}" style="display:inline;">
                 {% csrf_token %}
                 <button type="submit" class="btn btn-outline">Enter Existing Team</button>
             </form>
             {% endif %}
         {% endif %}
-        <a href="{% url 'join_tournament_list' %}" class="btn btn-outline btn-sm">← Back</a>
+        <a href="{% url 'join_tournament_list' %}" class="btn btn-outline btn-sm" hx-boost="false">← Back</a>
     </div>
 </div>
 
@@ -50,7 +50,7 @@
 {% elif user_team %}
 <div class="alert alert-success">
     You are in <strong>{{ user_team.name }}</strong> for this tournament. 
-    <a href="{% url 'team_detail' pk=user_team.pk %}">View your team →</a>
+    <a href="{% url 'team_detail' pk=user_team.pk %}" hx-boost="false">View your team →</a>
 </div>
 {% endif %}
 
@@ -78,7 +78,7 @@
     <div class="alert alert-warning">
         No participants yet.
         {% if not user_registration %}
-        <a href="{% url 'create_team' pk=tournament.pk %}">Be the first to register!</a>
+        <a href="{% url 'create_team' pk=tournament.pk %}" hx-boost="false">Be the first to register!</a>
         {% endif %}
     </div>
     {% endif %}
@@ -110,7 +110,7 @@
                 <p class="mb-1" style="font-size:0.82rem;color:#b8690a;">Needs {{ item.players_per_team|add:"-"|add:item.member_count }} more to complete registration</p>
                 {% endif %}
                 {% if item.is_user_member %}
-                    <a href="{% url 'team_detail' pk=item.team.pk %}" class="btn btn-outline btn-sm">View Team</a>
+                    <a href="{% url 'team_detail' pk=item.team.pk %}" class="btn btn-outline btn-sm" hx-boost="false">View Team</a>
                 {% elif user_team %}
                     <button class="btn btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">Join</button>
                 {% elif item.is_full %}
@@ -129,7 +129,7 @@
     <div class="alert alert-warning">
         No teams yet.
         {% if not user_team %}
-        <a href="{% url 'create_team' pk=tournament.pk %}">Be the first to create one!</a>
+        <a href="{% url 'create_team' pk=tournament.pk %}" hx-boost="false">Be the first to create one!</a>
         {% endif %}
     </div>
     {% endif %}
