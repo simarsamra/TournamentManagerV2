@@ -3,7 +3,11 @@
 {% block page_header %}Open Slots{% endblock %}
 {% block content %}
 <h1 class="page-title">Open Slots</h1>
-<div id="open-slots-live-region" data-auto-refresh="true" data-refresh-interval="10000">
+<div id="open-slots-live-region"
+     hx-get="{% url 'open_slots' %}?partial=1"
+     hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#open-slots-live-region"
+     hx-swap="innerHTML">
     {% include "core/partials/open_slots_content.html" %}
 </div>
 {% endblock %}

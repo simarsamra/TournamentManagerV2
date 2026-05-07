@@ -3,7 +3,11 @@
 {% block page_header %}Standings{% endblock %}
 {% block content %}
 <h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Standings</h1>
-<div id="standings-live-region" data-auto-refresh="true" data-refresh-interval="15000">
+<div id="standings-live-region"
+     hx-get="{% url 'standings' %}?partial=1"
+     hx-trigger="every 15s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#standings-live-region"
+     hx-swap="innerHTML">
     {% include "core/partials/standings_content.html" %}
 </div>
 {% endblock %}

@@ -3,7 +3,11 @@
 {% block page_header %}Match Detail{% endblock %}
 {% block content %}
 <h1 class="page-title">Match #{{ match.match_number }}</h1>
-<div id="match-detail-live-region" data-auto-refresh="true" data-refresh-interval="10000">
+<div id="match-detail-live-region"
+     hx-get="{% url 'match_detail' pk=match.pk %}?partial=1"
+     hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#match-detail-live-region"
+     hx-swap="innerHTML">
     {% include "core/partials/match_detail_content.html" %}
 </div>
 {% endblock %}

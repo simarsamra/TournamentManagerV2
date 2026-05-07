@@ -24,6 +24,7 @@ from .models import (
 	TeamRegistration,
 	IndividualRegistration,
 	OrganizerProfile,
+	Notification,
 )
 from .scheduling import generate_fixtures, count_available_slots
 from .standings import calculate_standings, advance_winner
@@ -1327,6 +1328,20 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(response, "Tournament Overview")
 		self.assertNotContains(response, "<!DOCTYPE html>")
 
+	def test_dashboard_htmx_request_returns_section_only(self):
+		tournament = self._create_tournament(name="Live Dashboard HTMX")
+		self._create_team(tournament, "Alpha Live HTMX", username="alpha_live_dashboard_htmx")
+		self.client.force_login(self.organizer)
+
+		response = self.client.get(
+			reverse("dashboard"),
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Tournament Overview")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
 	def test_match_detail_partial_refresh_returns_section_only(self):
 		tournament = self._create_tournament(name="Live Match Detail")
 		tournament.status = "active"
@@ -1357,6 +1372,31 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(response, "Match Info")
 		self.assertContains(response, "Request Reschedule")
 		self.assertNotContains(response, "<!DOCTYPE html>")
+
+	def test_notifications_htmx_and_mark_read_return_partial(self):
+		self.client.force_login(self.organizer)
+		Notification.objects.create(
+			user=self.organizer,
+			message="Check this alert",
+			is_read=False,
+		)
+
+		response = self.client.get(
+			reverse("notifications"),
+			HTTP_HX_REQUEST="true",
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Notifications")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
+		notif = Notification.objects.filter(user=self.organizer).first()
+		post_response = self.client.post(
+			reverse("mark_notification_read", kwargs={"pk": notif.pk}),
+			HTTP_HX_REQUEST="true",
+		)
+		self.assertEqual(post_response.status_code, 200)
+		self.assertContains(post_response, "notification-badge-wrapper")
+		self.assertNotContains(post_response, "<!DOCTYPE html>")
 
 	def test_match_detail_reschedule_shows_same_day_context_for_both_teams(self):
 		tournament = self._create_tournament(name="Same Day Slot Context")

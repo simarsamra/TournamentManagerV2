@@ -451,10 +451,16 @@ def _auto_end_date(tournament):
 
 
 def _is_partial_refresh(request):
+    if _is_htmx_request(request):
+        return True
     return (
         request.GET.get("partial") == "1"
         and request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
     )
+
+
+def _is_htmx_request(request):
+    return request.headers.get("HX-Request", "").lower() == "true"
 
 
 def _resolve_individual_team_name(user, requested_name=""):
@@ -3309,6 +3315,12 @@ def fixtures_view(request):
 
 # -- Match Detail & Score Submission --
 
+def _redirect_to_match_detail(request, match_pk):
+    if _is_htmx_request(request):
+        return match_detail(request, pk=match_pk)
+    return redirect("match_detail", pk=match_pk)
+
+
 @login_required
 def match_detail(request, pk):
     match = get_object_or_404(
@@ -3409,22 +3421,22 @@ def submit_score(request, pk):
     is_participant = team and (match.team1 == team or match.team2 == team)
     if not is_organizer and not is_participant:
         messages.error(request, "You are not a participant in this match.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.tournament.status == "paused" and not is_organizer:
         messages.error(request, "The tournament is currently paused. Score submission is not allowed.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     # Organizers can submit scores in both active and paused; participants only when active
     allowed_tournament_statuses = ("active", "paused") if is_organizer else ("active",)
     if match.tournament.status not in allowed_tournament_statuses:
         messages.error(request, "Scores can only be submitted once the tournament has started.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.tournament.status == "completed":
         messages.error(request, "This tournament has already been completed.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     allowed_statuses = ("upcoming", "in_progress", "pending_confirmation", "disputed") if is_organizer else ("upcoming", "in_progress")
     if match.status not in allowed_statuses:
         messages.error(request, "Score cannot be submitted for this match.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     form = ScoreSubmitForm(request.POST)
     if form.is_valid():
         match.score_team1 = form.cleaned_data["score_team1"]
@@ -3435,7 +3447,7 @@ def submit_score(request, pk):
         )
         if is_elimination and match.score_team1 == match.score_team2:
             messages.error(request, "Draws are not allowed in elimination matches.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         if is_organizer:
             match.submitted_by = None
             match.confirmed_by = None
@@ -3500,7 +3512,9 @@ def submit_score(request, pk):
                     request,
                     f"Score submitted. Opponent has {DEFAULT_DISPUTE_WINDOW_MINUTES} minute(s) to dispute before auto-lock."
                 )
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -3513,26 +3527,28 @@ def confirm_score(request, pk):
     team = _get_team(request.user, match.tournament)
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not is_organizer:
         if not team or match.submitted_by == request.user:
             messages.error(request, "Cannot confirm your own submission.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         if not _is_within_dispute_window(match):
             messages.error(request, "The dispute window has expired and the score is now locked.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         if match.team1 != team and match.team2 != team:
             messages.error(request, "You are not a participant in this match.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
     tournament = match.tournament
     if not _lock_match_score(match, confirmed_by_user=request.user):
         messages.error(request, "Draws are not allowed in elimination matches.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     log_action(request, "score_confirmed",
                f"Score confirmed for {match}: {match.score_team1}-{match.score_team2}",
                tournament=tournament)
     messages.success(request, "Score locked. Match marked done.")
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -3544,13 +3560,13 @@ def dispute_score(request, pk):
     team = _get_team(request.user, match.tournament)
     if not team or match.submitted_by == request.user:
         messages.error(request, "Cannot dispute your own submission.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not _is_within_dispute_window(match):
         messages.error(request, "Dispute window has expired; score is locked.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     dispute_note = request.POST.get("dispute_notes", "").strip()
     match.status = "disputed"
     match.disputed_by = request.user
@@ -3565,7 +3581,9 @@ def dispute_score(request, pk):
         messages.warning(request, "Critical-stage dispute filed. Organizers will review with priority.")
     else:
         messages.warning(request, "Score has been disputed. An organizer will review.")
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -3573,37 +3591,37 @@ def dispute_score(request, pk):
 def resolve_dispute(request, pk):
     if not _is_organizer(request.user):
         messages.error(request, "Only organizers can resolve disputes.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     match = get_object_or_404(Match, pk=pk)
     score1 = request.POST.get("final_score_team1")
     score2 = request.POST.get("final_score_team2")
     resolution_notes = request.POST.get("resolution_notes", "").strip()
     if match.critical_dispute and not resolution_notes:
         messages.error(request, "Critical-stage disputes require resolution notes.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if score1 is not None and score2 is not None:
         try:
             final_score1 = int(score1)
             final_score2 = int(score2)
         except (TypeError, ValueError):
             messages.error(request, "Scores must be valid whole numbers.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         if final_score1 < 0 or final_score2 < 0:
             messages.error(request, "Scores cannot be negative.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         tournament = match.tournament
         is_elimination = tournament.format in ("knockout", "double_elimination", "consolation") or (
             tournament.format == "hybrid" and not match.group
         )
         if is_elimination and final_score1 == final_score2:
             messages.error(request, "Draws are not allowed in elimination matches.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
 
         match.score_team1 = final_score1
         match.score_team2 = final_score2
         if not _lock_match_score(match, confirmed_by_user=None):
             messages.error(request, "Draws are not allowed in elimination matches.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         match.dispute_resolution_notes = resolution_notes
         match.dispute_resolved_at = timezone.now()
         match.notes += f"\nResolved by organizer."
@@ -3614,7 +3632,9 @@ def resolve_dispute(request, pk):
                    f"Dispute resolved for {match}: {match.score_team1}-{match.score_team2}",
                    tournament=tournament)
         messages.success(request, "Dispute resolved. Match marked done.")
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -3623,11 +3643,11 @@ def override_match_result(request, pk):
     """Organizer override of a completed/forfeited RR or hybrid group-stage match result."""
     if not _is_organizer(request.user):
         messages.error(request, "Only organizers can override match results.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     match = get_object_or_404(Match, pk=pk)
     if not _can_override_match(match):
         messages.error(request, "This match cannot be overridden. It may be a knockout match or the knockout phase has already started.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     score1 = request.POST.get("override_score_team1", "").strip()
     score2 = request.POST.get("override_score_team2", "").strip()
@@ -3637,10 +3657,10 @@ def override_match_result(request, pk):
         s1, s2 = int(score1), int(score2)
     except (TypeError, ValueError):
         messages.error(request, "Scores must be valid whole numbers.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if s1 < 0 or s2 < 0:
         messages.error(request, "Scores cannot be negative.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     old_status = match.get_status_display()
     old_score = f"{match.score_team1}-{match.score_team2}" if match.score_team1 is not None else "N/A"
@@ -3676,7 +3696,9 @@ def override_match_result(request, pk):
         tournament=match.tournament,
     )
     messages.success(request, f"Match result updated to {s1}–{s2}.")
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 # -- Rescheduling --
@@ -3689,16 +3711,16 @@ def request_reschedule(request, pk):
     team = _get_team(request.user, match.tournament)
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "Not a participant.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not _is_captain(request.user, team) and not _is_organizer(request.user):
         messages.error(request, "Only the team captain can request rescheduling.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.tournament.status != "active":
         messages.error(request, "Rescheduling is not available until the tournament has started.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.status not in ("upcoming",):
         messages.error(request, "Only upcoming matches can be rescheduled.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     form = RescheduleForm(request.POST, tournament=match.tournament)
     if form.is_valid():
         open_slot = form.cleaned_data.get("open_slot")
@@ -3722,7 +3744,7 @@ def request_reschedule(request, pk):
         ).exclude(pk=match.pk)
         if conflicts.exists():
             messages.error(request, "The selected slot has a conflict.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
 
         overlapping_team_conflicts = Match.objects.filter(
             tournament=match.tournament,
@@ -3734,7 +3756,7 @@ def request_reschedule(request, pk):
         ).exclude(pk=match.pk)
         if overlapping_team_conflicts.exists():
             messages.error(request, "A team in this match already has another match scheduled at that time.")
-            return redirect("match_detail", pk=pk)
+            return _redirect_to_match_detail(request, pk)
         RescheduleRequest.objects.create(
             match=match, requested_by=request.user, new_time=new_dt,
             new_court=new_court, reason=form.cleaned_data.get("reason", ""),
@@ -3754,7 +3776,9 @@ def request_reschedule(request, pk):
         for errs in form.errors.values():
             for err in errs:
                 messages.error(request, err)
-    return redirect("match_detail", pk=pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -3765,13 +3789,13 @@ def respond_reschedule(request, pk):
     match = rr.match
     if not team or rr.requested_by == request.user:
         messages.error(request, "Cannot respond to your own request.")
-        return redirect("match_detail", pk=match.pk)
+        return _redirect_to_match_detail(request, match.pk)
     if match.team1 != team and match.team2 != team:
         messages.error(request, "Not a participant.")
-        return redirect("match_detail", pk=match.pk)
+        return _redirect_to_match_detail(request, match.pk)
     if not _is_captain(request.user, team) and not _is_organizer(request.user):
         messages.error(request, "Only the team captain can approve or reject reschedule requests.")
-        return redirect("match_detail", pk=match.pk)
+        return _redirect_to_match_detail(request, match.pk)
     action = request.POST.get("action")
     if action == "approve":
         rr.status = "approved"
@@ -3806,7 +3830,9 @@ def respond_reschedule(request, pk):
         log_action(request, "reschedule_rejected", f"Reschedule rejected for {match}",
                    tournament=match.tournament)
         messages.info(request, "Reschedule rejected.")
-    return redirect("match_detail", pk=match.pk)
+    if _is_htmx_request(request):
+        return match_detail(request, pk=match.pk)
+    return _redirect_to_match_detail(request, match.pk)
 
 
 # -- Standings --
@@ -4244,25 +4270,25 @@ def report_no_show(request, pk):
     team = _get_team(request.user, match.tournament)
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "Only participating teams can report a no-show.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not _is_captain(request.user, team) and not _is_organizer(request.user):
         messages.error(request, "Only the team captain can report a no-show.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.status not in ("upcoming", "in_progress"):
         messages.error(request, "No-shows can only be reported for active or upcoming matches.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not match.scheduled_time or match.scheduled_time > timezone.now():
         messages.error(request, "No-shows can only be reported after the scheduled match time has passed.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if match.no_show_reports.filter(status="pending").exists():
         messages.warning(request, "A no-show notice is already pending for this match.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     no_show_team_id = request.POST.get("no_show_team")
     opponent = match.get_opponent(team)
     if not opponent or str(opponent.pk) != str(no_show_team_id):
         messages.error(request, "You can only report your opponent as a no-show.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     NoShowReport.objects.create(
         match=match,
@@ -4279,7 +4305,7 @@ def report_no_show(request, pk):
         tournament=match.tournament,
     )
     messages.warning(request, f"No-show reported. {opponent.name} has 24 hours to request a reschedule.")
-    return redirect("match_detail", pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -4287,15 +4313,15 @@ def report_no_show(request, pk):
 def mark_no_show(request, pk):
     if not _is_organizer(request.user):
         messages.error(request, "Only organizers can mark no-shows.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     match = get_object_or_404(Match, pk=pk)
     if match.status not in ("upcoming", "in_progress", "pending_confirmation"):
         messages.error(request, "No-show can only be recorded for active/upcoming matches.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
     if not match.scheduled_time or match.scheduled_time > timezone.now():
         messages.error(request, "No-show can only be recorded after the scheduled match time has passed.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     no_show_team_id = request.POST.get("no_show_team")
     if str(match.team1_id) == str(no_show_team_id):
@@ -4306,11 +4332,11 @@ def mark_no_show(request, pk):
         winner = match.team1
     else:
         messages.error(request, "Invalid team selected for no-show.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     if not winner:
         messages.error(request, "Cannot mark no-show: opponent not assigned.")
-        return redirect("match_detail", pk=pk)
+        return _redirect_to_match_detail(request, pk)
 
     pending_report = match.no_show_reports.filter(status="pending").first()
     _finalize_no_show_match(
@@ -4331,7 +4357,7 @@ def mark_no_show(request, pk):
         tournament=tournament,
     )
     messages.success(request, f"No-show recorded. {winner.name} wins by forfeit.")
-    return redirect("match_detail", pk=pk)
+    return _redirect_to_match_detail(request, pk)
 
 
 @login_required
@@ -5263,11 +5289,17 @@ def notifications_view(request):
     notifications = Notification.objects.filter(user=request.user).order_by("-created_at")[:100]
     unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
     tournament = _get_tournament(request)
-    return render(request, "core/notifications.html", {
+    context = {
         "notifications": notifications,
         "unread_count": unread_count,
         **_tournament_context(request, tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/notifications.html",
+        "core/partials/notifications_content.html",
+        context,
+    )
 
 
 @login_required
@@ -5275,6 +5307,8 @@ def notifications_view(request):
 def mark_notifications_read(request):
     """Mark all notifications as read (8.3)."""
     Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+    if _is_htmx_request(request):
+        return notifications_view(request)
     return redirect("notifications")
 
 
@@ -5286,7 +5320,11 @@ def mark_notification_read(request, pk):
     notif.is_read = True
     notif.save(update_fields=["is_read"])
     if notif.link:
+        if _is_htmx_request(request):
+            return HttpResponse(status=204, headers={"HX-Redirect": notif.link})
         return redirect(notif.link)
+    if _is_htmx_request(request):
+        return notifications_view(request)
     return redirect("notifications")
 
 
