@@ -1833,6 +1833,111 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=_captain_user(team10)).exists())
 		self.assertFalse(any("already has another match scheduled on that day" in str(m).lower() for m in response.context["messages"]))
 
+	def test_request_reschedule_allows_individual_participant_without_captain_role(self):
+		tournament = self._create_tournament(name="Individual Reschedule Permission")
+		tournament.registration_mode = "individual"
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["registration_mode", "status", "started_at"])
+
+		court_a = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		court_b = Court.objects.create(tournament=tournament, name="Court B", is_available=True)
+
+		player1 = User.objects.create_user(username="individual_reschedule_p1", password="pass123")
+		player2 = User.objects.create_user(username="individual_reschedule_p2", password="pass123")
+
+		shadow1 = Team.objects.create(name="__tm_shadow_ind_rs_1", sport_type=tournament.sport_type, is_internal=True)
+		shadow2 = Team.objects.create(name="__tm_shadow_ind_rs_2", sport_type=tournament.sport_type, is_internal=True)
+
+		TeamTournamentParticipation.objects.create(team=shadow1, tournament=tournament, status="active", seed=1)
+		TeamTournamentParticipation.objects.create(team=shadow2, tournament=tournament, status="active", seed=2)
+
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=player1,
+			display_name="Ind Player 1",
+			shadow_team=shadow1,
+			status="active",
+		)
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=player2,
+			display_name="Ind Player 2",
+			shadow_team=shadow2,
+			status="active",
+		)
+
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=71,
+			team1=shadow1,
+			team2=shadow2,
+			court=court_a,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		slot = OpenSlot.objects.create(
+			tournament=tournament,
+			court=court_b,
+			start_time=timezone.now() + timedelta(days=3),
+			end_time=timezone.now() + timedelta(days=3, minutes=30),
+			reason="Individual free slot",
+		)
+
+		self.client.force_login(player1)
+		response = self.client.post(
+			reverse("request_reschedule", kwargs={"pk": match.pk}),
+			{"open_slot": str(slot.pk), "reason": "Need to move"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(RescheduleRequest.objects.filter(match=match, requested_by=player1).exists())
+
+	def test_request_reschedule_team_tournament_requires_captain(self):
+		tournament = self._create_tournament(name="Team Captain Reschedule Gate")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
+
+		court_a = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
+		court_b = Court.objects.create(tournament=tournament, name="Court B", is_available=True)
+
+		team1 = self._create_team(tournament, "Gate Team 1", username="gate_team1_captain")
+		team2 = self._create_team(tournament, "Gate Team 2", username="gate_team2_captain")
+		non_captain = User.objects.create_user(username="gate_team1_member", password="pass123")
+		TeamMembership.objects.create(team=team1, user=non_captain, role="member")
+
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=72,
+			team1=team1,
+			team2=team2,
+			court=court_a,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		slot = OpenSlot.objects.create(
+			tournament=tournament,
+			court=court_b,
+			start_time=timezone.now() + timedelta(days=3),
+			end_time=timezone.now() + timedelta(days=3, minutes=30),
+			reason="Team free slot",
+		)
+
+		self.client.force_login(non_captain)
+		response = self.client.post(
+			reverse("request_reschedule", kwargs={"pk": match.pk}),
+			{"open_slot": str(slot.pk), "reason": "Trying as member"},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertFalse(RescheduleRequest.objects.filter(match=match, requested_by=non_captain).exists())
+		self.assertTrue(any("team captain" in str(m).lower() for m in response.context["messages"]))
+
 	def test_knockout_disallows_draw_on_confirm(self):
 		tournament = self._create_tournament(fmt="knockout")
 		team1 = self._create_team(tournament, "Red", seed=1)

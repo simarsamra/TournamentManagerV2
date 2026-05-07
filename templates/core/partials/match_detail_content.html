@@ -253,10 +253,15 @@
         </div>
         {% endif %}
 
-        {% if can_reschedule and match.status == "upcoming" and match.tournament.status == "active" %}
+        {% if is_participant and match.status == "upcoming" and match.tournament.status == "active" %}
         <div class="card">
             <div class="card-header">Request Reschedule</div>
             <div class="card-body">
+                {% if not can_reschedule %}
+                <div class="alert alert-info mb-1">
+                    Only the team captain can submit a reschedule request, but you can still review available dates below.
+                </div>
+                {% endif %}
                 <form method="post" action="{% url 'request_reschedule' pk=match.pk %}"
                                             data-reschedule-form="1"
                       hx-post="{% url 'request_reschedule' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
@@ -294,8 +299,10 @@
                                         </div>
                                         {% endfor %}
                                     </div>
+                                    {% if can_reschedule %}
                                     <input type="hidden" name="{{ reschedule_form.open_slot.html_name }}" value="{{ option.slot.pk }}">
                                     <button type="submit" class="btn btn-primary btn-sm slot-submit-inline">&#10003; Request Reschedule with this Slot</button>
+                                    {% endif %}
                                 </div>
                             </label>
                             {% endfor %}
@@ -319,7 +326,9 @@
                     <div class="form-group">
                         <label>Reason</label>{{ reschedule_form.reason }}
                     </div>
+                    {% if can_reschedule %}
                     <button type="submit" class="btn btn-outline">Request Reschedule (manual)</button>
+                    {% endif %}
                 </form>
             </div>
         </div>
