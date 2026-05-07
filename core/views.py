@@ -362,6 +362,17 @@ def _is_captain(user, team=None):
         return False
 
 
+def _can_manage_reschedule(user, tournament, team):
+    """Return True when user can create/respond to reschedules for the given competitor."""
+    if _is_organizer(user):
+        return True
+    if not user.is_authenticated or not tournament or not team:
+        return False
+    if tournament.registration_mode == "individual":
+        return True
+    return _is_captain(user, team)
+
+
 def _get_active_team(user):
     """Get user's active team, or None."""
     if not user.is_authenticated:
@@ -3490,7 +3501,7 @@ def match_detail(request, pk):
     no_show_window_open = bool(match.scheduled_time and match.scheduled_time <= timezone.now())
     can_mark_no_show = is_organizer and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open
     can_report_no_show = is_participant and _is_captain(request.user, team) and bool(match.team1_id and match.team2_id) and match.status in ("upcoming", "in_progress") and no_show_window_open and not pending_no_show_report
-    can_reschedule = is_participant and _is_captain(request.user, team)
+    can_reschedule = is_participant and _can_manage_reschedule(request.user, match.tournament, team)
     can_override_result = is_organizer and _can_override_match(match)
     reschedule_form = RescheduleForm(tournament=match.tournament)
     open_slot_choices = _build_open_slot_choices(match, reschedule_form.fields["open_slot"].queryset)
@@ -3854,8 +3865,11 @@ def request_reschedule(request, pk):
     if not team or (match.team1 != team and match.team2 != team):
         messages.error(request, "Not a participant.")
         return _redirect_to_match_detail(request, pk)
-    if not _is_captain(request.user, team) and not _is_organizer(request.user):
-        messages.error(request, "Only the team captain can request rescheduling.")
+    if not _can_manage_reschedule(request.user, match.tournament, team):
+        if match.tournament.registration_mode == "individual":
+            messages.error(request, "Only participants in this match can request rescheduling.")
+        else:
+            messages.error(request, "Only the team captain can request rescheduling.")
         return _redirect_to_match_detail(request, pk)
     if match.tournament.status != "active":
         messages.error(request, "Rescheduling is not available until the tournament has started.")
@@ -3935,8 +3949,11 @@ def respond_reschedule(request, pk):
     if match.team1 != team and match.team2 != team:
         messages.error(request, "Not a participant.")
         return _redirect_to_match_detail(request, match.pk)
-    if not _is_captain(request.user, team) and not _is_organizer(request.user):
-        messages.error(request, "Only the team captain can approve or reject reschedule requests.")
+    if not _can_manage_reschedule(request.user, match.tournament, team):
+        if match.tournament.registration_mode == "individual":
+            messages.error(request, "Only participants in this match can approve or reject reschedule requests.")
+        else:
+            messages.error(request, "Only the team captain can approve or reject reschedule requests.")
         return _redirect_to_match_detail(request, match.pk)
     action = request.POST.get("action")
     if action == "approve":
