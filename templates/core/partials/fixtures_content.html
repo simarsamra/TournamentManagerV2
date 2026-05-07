@@ -1,4 +1,9 @@
 {% load core_extras %}
+<div id="fixtures-live-region"
+     hx-get="{% url 'fixtures' %}?page={{ page }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1"
+     hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#fixtures-live-region"
+     hx-swap="outerHTML">
 {% include "core/partials/flash_messages_oob.html" %}
 {% if tournament %}
 {% if tournament.status == 'completed' %}
@@ -49,17 +54,18 @@
 
 {% if total_pages > 1 %}
 <div class="pagination">
-    {% if page > 1 %}<a href="?page={{ page|add:"-1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ page|add:'-1' }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="innerHTML" hx-push-url="true">&laquo;</a>{% endif %}
+    {% if page > 1 %}<a href="?page={{ page|add:"-1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ page|add:'-1' }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="outerHTML" hx-push-url="true">&laquo;</a>{% endif %}
     {% for p in page_range %}
     {% if p == page %}
     <span class="active">{{ p }}</span>
     {% else %}
-    <a href="?page={{ p }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ p }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="innerHTML" hx-push-url="true">{{ p }}</a>
+    <a href="?page={{ p }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ p }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="outerHTML" hx-push-url="true">{{ p }}</a>
     {% endif %}
     {% endfor %}
-    {% if page < total_pages %}<a href="?page={{ page|add:"1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ page|add:'1' }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="innerHTML" hx-push-url="true">&raquo;</a>{% endif %}
+    {% if page < total_pages %}<a href="?page={{ page|add:"1" }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}" hx-get="{% url 'fixtures' %}?page={{ page|add:'1' }}&status={{ status_filter }}&team={{ team_filter }}&court={{ court_filter }}&group={{ group_filter }}&sort={{ sort }}&partial=1" hx-target="#fixtures-live-region" hx-swap="outerHTML" hx-push-url="true">&raquo;</a>{% endif %}
 </div>
 {% endif %}
 {% else %}
 <p class="text-muted">No tournament active.</p>
 {% endif %}
+</div>
