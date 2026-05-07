@@ -42,7 +42,7 @@ from .scheduling import (
     count_available_slots,
     _assign_schedule_to_existing,
 )
-from .standings import calculate_standings, advance_winner, get_bracket_data, check_group_stage_complete, _determine_champion
+from .standings import calculate_standings, advance_winner, advance_loser_to_third_place, get_bracket_data, get_third_place_match, check_group_stage_complete, _determine_champion
 from .withdrawals import handle_withdrawal
 from .backup import create_backup, validate_backup, restore_backup, list_backups, delete_backup
 from .audit import log_action
@@ -506,6 +506,7 @@ def _finalize_no_show_match(match, loser, winner, reason_text, report=None, repo
     tournament = match.tournament
     if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
         advance_winner(match)
+        advance_loser_to_third_place(match)
     if tournament.format == "consolation":
         generate_consolation_if_ready(tournament)
     if tournament.format == "hybrid" and match.group:
@@ -665,6 +666,7 @@ def _lock_match_score(match, confirmed_by_user=None, lock_note=""):
     _create_open_slot_for_completed_match(match, f"Completed early: {match}")
     if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
         advance_winner(match)
+        advance_loser_to_third_place(match)
     if tournament.format == "consolation":
         generate_consolation_if_ready(tournament)
     if tournament.format == "hybrid" and match.group:
@@ -3106,6 +3108,7 @@ def test_maker_view(request):
                     "score_team1", "score_team2", "winner", "status", "submitted_by", "confirmed_by"
                 ])
                 advance_winner(match)
+                advance_loser_to_third_place(match)
                 updated += 1
 
             log_action(
@@ -3326,12 +3329,22 @@ def match_detail(request, pk):
         or (is_organizer and match.status in ("upcoming", "in_progress", "pending_confirmation", "disputed"))
     )
     can_confirm = (
+        match.status == "pending_confirmation"
+        and (
+            is_organizer
+            or (
+                is_participant
+                and match.submitted_by != request.user
+                and dispute_window_open
+            )
+        )
+    )
+    can_dispute = (
         is_participant
         and match.status == "pending_confirmation"
         and match.submitted_by != request.user
         and dispute_window_open
     )
-    can_dispute = can_confirm
     pending_no_show_report = match.no_show_reports.filter(status="pending").select_related(
         "absent_team", "present_team"
     ).first()
@@ -3460,6 +3473,7 @@ def submit_score(request, pk):
             _create_open_slot_for_completed_match(match, f"Completed by organizer: {match}")
             if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
                 advance_winner(match)
+                advance_loser_to_third_place(match)
             if tournament.format == "consolation":
                 generate_consolation_if_ready(tournament)
             if tournament.format == "hybrid" and match.group:
@@ -3495,19 +3509,21 @@ def confirm_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
     _expire_pending_score_disputes(match.tournament)
     match.refresh_from_db()
+    is_organizer = _is_organizer(request.user)
     team = _get_team(request.user, match.tournament)
-    if not team or match.submitted_by == request.user:
-        messages.error(request, "Cannot confirm your own submission.")
-        return redirect("match_detail", pk=pk)
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
         return redirect("match_detail", pk=pk)
-    if not _is_within_dispute_window(match):
-        messages.error(request, "The dispute window has expired and the score is now locked.")
-        return redirect("match_detail", pk=pk)
-    if match.team1 != team and match.team2 != team:
-        messages.error(request, "You are not a participant in this match.")
-        return redirect("match_detail", pk=pk)
+    if not is_organizer:
+        if not team or match.submitted_by == request.user:
+            messages.error(request, "Cannot confirm your own submission.")
+            return redirect("match_detail", pk=pk)
+        if not _is_within_dispute_window(match):
+            messages.error(request, "The dispute window has expired and the score is now locked.")
+            return redirect("match_detail", pk=pk)
+        if match.team1 != team and match.team2 != team:
+            messages.error(request, "You are not a participant in this match.")
+            return redirect("match_detail", pk=pk)
     tournament = match.tournament
     if not _lock_match_score(match, confirmed_by_user=request.user):
         messages.error(request, "Draws are not allowed in elimination matches.")
@@ -3830,6 +3846,8 @@ def standings_view(request):
                 context["standings"] = standings
         if tournament.format in ("knockout", "double_elimination", "consolation"):
             context["bracket"] = get_bracket_data(tournament)
+        if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
+            context["third_place_match"] = get_third_place_match(tournament)
 
         team_ids = set()
         for round_matches in (context.get("bracket") or {}).values():
@@ -3840,6 +3858,11 @@ def standings_view(request):
                     team_ids.add(match.team2_id)
                 if match.winner_id:
                     team_ids.add(match.winner_id)
+        tpm = context.get("third_place_match")
+        if tpm:
+            for tid in [tpm.team1_id, tpm.team2_id, tpm.winner_id]:
+                if tid:
+                    team_ids.add(tid)
         context["team_name_map"] = _team_display_map(tournament, team_ids)
         context["tournament_champion_label"] = (
             _team_display_label(tournament, tournament.champion) if tournament.champion else ""
@@ -5023,6 +5046,8 @@ def public_standings(request):
             context["standings"] = standings
     if tournament.format in ("knockout", "double_elimination", "consolation"):
         context["bracket"] = get_bracket_data(tournament)
+    if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
+        context["third_place_match"] = get_third_place_match(tournament)
 
     team_ids = set()
     for round_matches in (context.get("bracket") or {}).values():
@@ -5033,6 +5058,11 @@ def public_standings(request):
                 team_ids.add(match.team2_id)
             if match.winner_id:
                 team_ids.add(match.winner_id)
+    tpm = context.get("third_place_match")
+    if tpm:
+        for tid in [tpm.team1_id, tpm.team2_id, tpm.winner_id]:
+            if tid:
+                team_ids.add(tid)
     context["team_name_map"] = _team_display_map(tournament, team_ids)
     context["tournament_champion_label"] = (
         _team_display_label(tournament, tournament.champion) if tournament.champion else ""
@@ -5984,8 +6014,9 @@ def disqualify_team(request, tournament_pk, participation_pk):
             match.notes = (match.notes + "\n" if match.notes else "") + f"Disqualification: {team.name}. {reason}"
             match.save()
             if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
-                from .standings import advance_winner
+                from .standings import advance_winner, advance_loser_to_third_place
                 advance_winner(match)
+                advance_loser_to_third_place(match)
             _check_and_finalize_tournament(tournament)
 
     # Notify team members

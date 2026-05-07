@@ -71,6 +71,36 @@
                 {% endfor %}
             </div>
             {% endfor %}
+            {% if third_place_match %}
+            <div class="bracket-round">
+                <div class="bracket-round-title">🥉 3rd Place</div>
+                <div class="bracket-match-wrap">
+                <div class="bracket-match">
+                    <div class="bracket-team {% if third_place_match.winner == third_place_match.team1 %}winner{% endif %}">
+                        <span>{% if third_place_match.team1_id %}{{ team_name_map|dict_get:third_place_match.team1_id|default:third_place_match.team1.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ third_place_match.score_team1|default_if_none:"" }}</span>
+                    </div>
+                    <div class="bracket-team {% if third_place_match.winner == third_place_match.team2 %}winner{% endif %}">
+                        <span>{% if third_place_match.team2_id %}{{ team_name_map|dict_get:third_place_match.team2_id|default:third_place_match.team2.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ third_place_match.score_team2|default_if_none:"" }}</span>
+                    </div>
+                </div>
+                {% if third_place_match.status not in "confirmed,forfeited,bye,cancelled" %}
+                {% if third_place_match.scheduled_time or third_place_match.court %}
+                <div class="bracket-match-info">
+                    {% if third_place_match.scheduled_time %}
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Date</span><span>{{ third_place_match.scheduled_time|date:"M d" }}</span></span>
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Time</span><span>{{ third_place_match.scheduled_time|date:"H:i" }}</span></span>
+                    {% endif %}
+                    {% if third_place_match.court %}
+                    <span class="bracket-info-chip bracket-info-chip-place"><span class="bracket-info-label">Court</span><span>{{ third_place_match.court.name }}</span></span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -199,6 +229,36 @@
                 {% endfor %}
             </div>
             {% endfor %}
+            {% if third_place_match %}
+            <div class="bracket-round">
+                <div class="bracket-round-title">🥉 3rd Place</div>
+                <div class="bracket-match-wrap">
+                <div class="bracket-match">
+                    <div class="bracket-team {% if third_place_match.winner == third_place_match.team1 %}winner{% endif %}">
+                        <span>{% if third_place_match.team1_id %}{{ team_name_map|dict_get:third_place_match.team1_id|default:third_place_match.team1.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ third_place_match.score_team1|default_if_none:"" }}</span>
+                    </div>
+                    <div class="bracket-team {% if third_place_match.winner == third_place_match.team2 %}winner{% endif %}">
+                        <span>{% if third_place_match.team2_id %}{{ team_name_map|dict_get:third_place_match.team2_id|default:third_place_match.team2.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ third_place_match.score_team2|default_if_none:"" }}</span>
+                    </div>
+                </div>
+                {% if third_place_match.status not in "confirmed,forfeited,bye,cancelled" %}
+                {% if third_place_match.scheduled_time or third_place_match.court %}
+                <div class="bracket-match-info">
+                    {% if third_place_match.scheduled_time %}
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Date</span><span>{{ third_place_match.scheduled_time|date:"M d" }}</span></span>
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Time</span><span>{{ third_place_match.scheduled_time|date:"H:i" }}</span></span>
+                    {% endif %}
+                    {% if third_place_match.court %}
+                    <span class="bracket-info-chip bracket-info-chip-place"><span class="bracket-info-label">Court</span><span>{{ third_place_match.court.name }}</span></span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

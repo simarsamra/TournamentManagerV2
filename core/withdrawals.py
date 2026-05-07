@@ -1,7 +1,7 @@
 """Withdrawal handling logic."""
 from django.utils import timezone
 from .models import Match, Team, TeamTournamentParticipation
-from .standings import advance_winner
+from .standings import advance_winner, advance_loser_to_third_place
 from .audit import log_action
 
 
@@ -109,6 +109,7 @@ def handle_withdrawal(request, team, tournament):
             # Advance opponent in knockout brackets
             if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
                 advance_winner(match)
+                advance_loser_to_third_place(match)
             if tournament.format == "consolation":
                 from .scheduling import generate_consolation_if_ready
 

@@ -149,6 +149,50 @@ def get_bracket_data(tournament):
     return dict(sorted(rounds.items()))
 
 
+def get_third_place_match(tournament):
+    """Return the third-place match for a tournament, or None."""
+    if not getattr(tournament, "enable_third_place_match", False):
+        return None
+    return (
+        tournament.matches
+        .filter(bracket_type="third_place")
+        .select_related("team1", "team2", "court", "winner")
+        .first()
+    )
+
+
+def advance_loser_to_third_place(match):
+    """After a semi-final is confirmed, place the loser in the third-place match."""
+    if not getattr(match.tournament, "enable_third_place_match", False):
+        return
+    if match.bracket_type != "winners":
+        return
+    if not match.winner_id:
+        return
+    # Only act on semi-finals: their next_match must be the final (which has no next_match)
+    if not match.next_match_id:
+        return
+    next_match = Match.objects.filter(pk=match.next_match_id).values("next_match_id").first()
+    if not next_match or next_match["next_match_id"] is not None:
+        return
+    # Determine loser
+    if match.winner_id == match.team1_id:
+        loser = match.team2
+    else:
+        loser = match.team1
+    if not loser:
+        return
+    third_place = match.tournament.matches.filter(bracket_type="third_place").first()
+    if not third_place:
+        return
+    if not third_place.team1_id:
+        third_place.team1 = loser
+        third_place.save(update_fields=["team1"])
+    elif not third_place.team2_id:
+        third_place.team2 = loser
+        third_place.save(update_fields=["team2"])
+
+
 def _seed_order(size):
     """Return standard bracket seed positions for a power-of-two size."""
     if size == 1:

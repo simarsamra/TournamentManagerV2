@@ -15,6 +15,7 @@ class TournamentForm(forms.ModelForm):
             "points_per_win", "points_per_loss",
             "points_per_draw", "num_groups", "teams_per_group_advance",
             "withdrawal_policy", "default_match_duration", "matches_per_court_per_day",
+            "enable_third_place_match",
         ]
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-control"}),

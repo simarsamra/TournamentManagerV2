@@ -460,6 +460,20 @@ def generate_knockout(tournament, teams=None, start_match=1, bracket_type="winne
                 next_match.team2 = prev_matches[i + 1].winner
             next_match.save(update_fields=["team1", "team2"])
 
+    # Third-place match: created when there are at least semi-finals (num_rounds >= 2)
+    if getattr(tournament, "enable_third_place_match", False) and num_rounds >= 2:
+        third_place = Match(
+            tournament=tournament,
+            match_number=match_num,
+            round_number=num_rounds + round_offset,
+            bracket_position=1,
+            bracket_type="third_place",
+            status="upcoming",
+            group=group,
+        )
+        third_place.save()
+        all_matches.append(third_place)
+
     _assign_round_based_schedule(tournament, all_matches)
     return all_matches
 
@@ -521,6 +535,20 @@ def generate_knockout_placeholders(
             prev_matches[i + 1].next_match = next_match
             prev_matches[i].save(update_fields=["next_match"])
             prev_matches[i + 1].save(update_fields=["next_match"])
+
+    # Third-place match placeholder: same round as the final, teams filled in later
+    if getattr(tournament, "enable_third_place_match", False) and num_rounds >= 2:
+        third_place = Match(
+            tournament=tournament,
+            match_number=match_num,
+            round_number=num_rounds + round_offset,
+            bracket_position=1,
+            bracket_type="third_place",
+            status="upcoming",
+            group=group,
+        )
+        third_place.save()
+        all_matches.append(third_place)
 
     if schedule:
         _assign_round_based_schedule(tournament, all_matches)
@@ -1006,7 +1034,7 @@ def _assign_hybrid_knockout_schedule(tournament):
 
     ko_matches = list(
         tournament.matches
-        .filter(group="", bracket_type="winners", status="upcoming")
+        .filter(group="", bracket_type__in=["winners", "third_place"], status="upcoming")
         .order_by("round_number", "match_number")
     )
     if not ko_matches:
@@ -1046,7 +1074,7 @@ def _assign_schedule_to_existing(tournament, knockout_only=False):
         scheduled_time__isnull=True,
     )
     if knockout_only:
-        matches_qs = matches_qs.filter(group="", bracket_type__in=["winners", "losers", "consolation"])
+        matches_qs = matches_qs.filter(group="", bracket_type__in=["winners", "losers", "consolation", "third_place"])
 
     matches = list(
         matches_qs.select_related("team1", "team2").order_by("group", "round_number", "match_number")

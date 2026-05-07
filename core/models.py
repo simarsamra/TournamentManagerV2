@@ -114,6 +114,10 @@ class Tournament(models.Model):
         related_name="championships",
         help_text="Team that won the tournament",
     )
+    enable_third_place_match = models.BooleanField(
+        default=False,
+        help_text="Generate a 3rd-place match between semi-final losers (knockout & hybrid only)",
+    )
 
     def get_tiebreaker_order(self):
         return json.loads(self.tiebreaker_order)
