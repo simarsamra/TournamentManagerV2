@@ -1257,6 +1257,48 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(rr.new_time, slot.start_time)
 		self.assertEqual(rr.new_court, alt_court)
 
+	def test_request_reschedule_open_slot_hx_request_returns_partial_and_creates_request(self):
+		tournament = self._create_tournament(name="Open Slot Choice HTMX")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
+		primary_court = Court.objects.create(tournament=tournament, name="Primary HTMX", is_available=True)
+		alt_court = Court.objects.create(tournament=tournament, name="Alt HTMX", is_available=True)
+		team1 = self._create_team(tournament, "Res HTMX A", username="res_htmx_a_user")
+		team2 = self._create_team(tournament, "Res HTMX B", username="res_htmx_b_user")
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=31,
+			team1=team1,
+			team2=team2,
+			court=primary_court,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		slot = OpenSlot.objects.create(
+			tournament=tournament,
+			court=alt_court,
+			start_time=timezone.now() + timedelta(days=3),
+			end_time=timezone.now() + timedelta(days=3, minutes=30),
+			reason="Free slot HTMX",
+		)
+
+		self.client.force_login(_captain_user(team1))
+		response = self.client.post(
+			reverse("request_reschedule", kwargs={"pk": match.pk}),
+			{"open_slot": str(slot.pk), "reason": "Use free slot over HTMX"},
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Reschedule request sent")
+		self.assertContains(response, "Request Reschedule")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+		rr = RescheduleRequest.objects.get(match=match, requested_by=_captain_user(team1))
+		self.assertEqual(rr.new_time, slot.start_time)
+		self.assertEqual(rr.new_court, alt_court)
+
 	def test_match_detail_reschedule_shows_open_slot_date_in_list(self):
 		tournament = self._create_tournament(name="Readable Slot Picker")
 		tournament.status = "active"

@@ -253,7 +253,7 @@
         </div>
         {% endif %}
 
-        {% if is_participant and match.status == "upcoming" and match.tournament.status == "active" %}
+        {% if can_reschedule and match.status == "upcoming" and match.tournament.status == "active" %}
         <div class="card">
             <div class="card-header">Request Reschedule</div>
             <div class="card-body">
@@ -294,6 +294,7 @@
                                         </div>
                                         {% endfor %}
                                     </div>
+                                    <input type="hidden" name="{{ reschedule_form.open_slot.html_name }}" value="{{ option.slot.pk }}">
                                     <button type="submit" class="btn btn-primary btn-sm slot-submit-inline">&#10003; Request Reschedule with this Slot</button>
                                 </div>
                             </label>
