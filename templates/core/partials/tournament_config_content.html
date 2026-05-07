@@ -78,8 +78,13 @@
             {% endif %}
         </div>
         <div class="card-body">
+            {% if availability_date_warning %}
+            <div class="alert alert-warning" style="margin-bottom:0.75rem;font-size:0.9rem;">
+                {{ availability_date_warning }}
+            </div>
+            {% endif %}
             {% for ca in court_availabilities %}
-            <div class="mb-1 d-flex justify-between align-center" style="font-size:0.85rem;gap:0.5rem;">
+            <div class="mb-1 d-flex justify-between align-center" style="font-size:0.85rem;gap:0.5rem;" id="availability-{{ ca.pk }}">
                 <div>
                     <strong>{{ ca.court.name }}</strong> — {{ ca.get_weekday_display }} {{ ca.match_time_summary }}
                     • {{ ca.matches_per_court_per_day }} match{{ ca.matches_per_court_per_day|pluralize }} per day
@@ -91,7 +96,7 @@
                     {% endif %}
                     {% if not ca.is_active %}<span class="badge" style="background:#6c757d;color:#fff;font-size:0.7rem;">Inactive</span>{% endif %}
                 </div>
-                <form method="post" action="{% url 'delete_court_availability' pk=tournament.pk availability_pk=ca.pk %}" style="margin:0;">
+                <form method="post" action="{% url 'delete_court_availability' pk=tournament.pk availability_pk=ca.pk %}" style="margin:0;" hx-post="{% url 'delete_court_availability' pk=tournament.pk availability_pk=ca.pk %}" hx-target="#availability-{{ ca.pk }}" hx-swap="delete" hx-confirm="Delete this availability?">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.1rem 0.45rem;font-size:0.75rem;" title="Delete this availability">✕</button>
                 </form>
@@ -151,7 +156,6 @@
                                     id="estimate-end-date-button"
                                     class="btn btn-outline btn-sm"
                                     hx-post="{% url 'estimate_court_availability_end_date' pk=tournament.pk %}"
-                                    hx-include="#court-availability-form"
                                     hx-target="#availability-estimate-result"
                                     hx-swap="innerHTML">Estimate End Date</button>
                         </div>
@@ -208,7 +212,7 @@
                         {% if p.is_underfilled %}<span class="badge" style="background:#f0ad4e;color:#fff;">⚠ Pending (forming)</span>{% endif %}
                         <span class="badge badge-{{ p.status }}">{{ p.get_status_display }}</span>
                         {% if tournament.status != 'active' and tournament.status != 'completed' %}
-                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.display_name }} from this tournament?');">
+                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" hx-boost="false" onsubmit="return confirm('Remove {{ p.display_name }} from this tournament?');">
                             {% csrf_token %}
                             <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.5rem;font-size:0.75rem;">Remove</button>
                         </form>

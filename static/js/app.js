@@ -55,76 +55,33 @@ document.addEventListener('DOMContentLoaded', function() {
         return null;
     }
 
-    // Bulk checkbox shortcuts for availability forms
-    document.querySelectorAll('[data-check-target]').forEach(function(button) {
-        button.addEventListener('click', function() {
-            const target = this.getAttribute('data-check-target');
-            const mode = this.getAttribute('data-check-mode');
-            const container = document.querySelector('[data-check-group="' + target + '"]');
-            if (!container) {
-                return;
-            }
+    // Bulk checkbox shortcuts for availability forms.
+    // Use event delegation so buttons still work after HTMX swaps.
+    document.addEventListener('click', function(event) {
+        const button = event.target.closest('[data-check-target]');
+        if (!button) {
+            return;
+        }
 
-            container.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
-                if (mode === 'all') {
-                    checkbox.checked = true;
-                } else if (mode === 'none') {
-                    checkbox.checked = false;
-                } else if (mode === 'weekdays') {
-                    checkbox.checked = ['0', '1', '2', '3', '4'].includes(checkbox.value);
-                } else if (mode === 'weekend') {
-                    checkbox.checked = ['5', '6'].includes(checkbox.value);
-                }
-            });
+        const target = button.getAttribute('data-check-target');
+        const mode = button.getAttribute('data-check-mode');
+        const container = document.querySelector('[data-check-group="' + target + '"]');
+        if (!container) {
+            return;
+        }
+
+        container.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+            if (mode === 'all') {
+                checkbox.checked = true;
+            } else if (mode === 'none') {
+                checkbox.checked = false;
+            } else if (mode === 'weekdays') {
+                checkbox.checked = ['0', '1', '2', '3', '4'].includes(checkbox.value);
+            } else if (mode === 'weekend') {
+                checkbox.checked = ['5', '6'].includes(checkbox.value);
+            }
         });
     });
-
-    const estimateEndDateButton = document.getElementById('estimate-end-date-button');
-    if (estimateEndDateButton) {
-        const form = document.getElementById('court-availability-form');
-        const resultContainer = document.getElementById('availability-estimate-result');
-        estimateEndDateButton.addEventListener('click', function() {
-            if (!form) {
-                return;
-            }
-
-            resultContainer.style.color = '#333';
-            resultContainer.textContent = 'Estimating end date...';
-            const formData = new FormData(form);
-            fetch(this.dataset.estimateUrl, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCookie('csrftoken') || '',
-                },
-                body: formData,
-            })
-                .then(function(response) {
-                    return response.json().then(function(data) {
-                        return {status: response.status, body: data};
-                    });
-                })
-                .then(function(result) {
-                    const data = result.body;
-                    if (data.status === 'ok') {
-                        resultContainer.style.color = '#155724';
-                        if (data.estimated_end_date) {
-                            const endDateInput = form.querySelector('[name="end_date"]');
-                            if (endDateInput) {
-                                endDateInput.value = data.estimated_end_date;
-                            }
-                        }
-                        resultContainer.textContent = data.message;
-                    } else {
-                        resultContainer.style.color = '#856404';
-                        resultContainer.textContent = data.message || 'Could not estimate an end date.';
-                    }
-                })
-                .catch(function() {
-                    resultContainer.style.color = '#856404';
-                    resultContainer.textContent = 'Could not calculate the end date. Please try again.';
-                });
-        });
-    }
 
     function formatMinutes(minutes) {
         var hours = Math.floor(minutes / 60);
@@ -322,6 +279,21 @@ document.addEventListener('DOMContentLoaded', function() {
             ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(active.tagName)
         );
     };
+
+    // Auto-fill end date when estimate succeeds
+    document.addEventListener('htmx:afterSettle', function(event) {
+        if (event.detail.target && event.detail.target.id === 'availability-estimate-result') {
+            const resultDiv = event.detail.target;
+            const estimatedDate = resultDiv.querySelector('.alert-success[data-estimated-date]');
+            if (estimatedDate) {
+                const dateValue = estimatedDate.getAttribute('data-estimated-date');
+                const endDateInput = document.getElementById('id_end_date');
+                if (endDateInput && dateValue) {
+                    endDateInput.value = dateValue;
+                }
+            }
+        }
+    });
 });
 
 // ── Fireworks Animation for Tournament Celebration ──────────────────────────

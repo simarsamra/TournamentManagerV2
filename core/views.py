@@ -1896,6 +1896,28 @@ def tournament_config(request, pk):
         ko_tbd = tournament.matches.filter(team1__isnull=True, team2__isnull=True, group="").exists()
         show_proceed_knockout = group_qs.exists() and not pending.exists() and ko_tbd
 
+    court_availabilities = CourtAvailability.objects.filter(
+        court__tournament=tournament
+    ).select_related("court")
+
+    availability_date_warning = ""
+    base_date = tournament.start_date or timezone.localdate()
+    if tournament.end_date:
+        conflicting_open_rows = 0
+        for availability in court_availabilities:
+            if availability.end_date:
+                continue
+            range_start = max(base_date, availability.start_date or base_date)
+            if tournament.end_date < range_start:
+                conflicting_open_rows += 1
+        if conflicting_open_rows:
+            availability_date_warning = (
+                f"Tournament end date ({tournament.end_date}) is earlier than the effective start date "
+                f"for {conflicting_open_rows} open-ended availability entr"
+                f"{'y' if conflicting_open_rows == 1 else 'ies'}. "
+                "Update the tournament end date or set explicit end dates on those entries."
+            )
+
     available_slots = count_available_slots(tournament)
     active_count = active_participant_count(tournament)
     required_matches = estimate_required_matches(tournament, team_count=active_count)
@@ -1907,7 +1929,8 @@ def tournament_config(request, pk):
             _team_display_label(tournament, tournament.champion) if tournament.champion else ""
         ),
         "courts": tournament.courts.all(),
-        "court_availabilities": CourtAvailability.objects.filter(court__tournament=tournament).select_related("court"),
+        "court_availabilities": court_availabilities,
+        "availability_date_warning": availability_date_warning,
         "team_participations": team_participations,
         "underfilled_count": underfilled_count,
         "active_teams_count": active_teams_count,
@@ -1952,8 +1975,9 @@ def proceed_to_knockout_view(request, pk):
 
 
 @login_required
-@require_POST
 def add_court(request, pk):
+    if request.method != "POST":
+        return redirect("tournament_config", pk=pk)
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
@@ -1991,6 +2015,11 @@ def delete_court_availability(request, pk, availability_pk):
     availability.delete()
     log_action(request, "court_availability_deleted", f"Deleted availability: {label}", tournament=tournament)
     messages.success(request, f"Availability '{label}' removed.")
+    
+    # For HTMX requests, return empty response so hx-swap="delete" removes the element
+    if _is_htmx_request(request):
+        return HttpResponse("")
+    
     return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
@@ -2082,8 +2111,18 @@ def estimate_court_availability_end_date(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     form = CourtAvailabilityForm(request.POST, tournament=tournament)
     if not form.is_valid():
-        error_message = "Please correct the availability details and try again."
-        return _availability_response({"status": "error", "message": error_message, "errors": form.errors}, status=400)
+        if "courts" in form.errors:
+            error_message = form.errors["courts"][0]
+        elif "weekdays" in form.errors:
+            error_message = "Select at least one weekday."
+        else:
+            first_error = ""
+            for errs in form.errors.values():
+                if errs:
+                    first_error = errs[0]
+                    break
+            error_message = first_error or "Please correct the availability details and try again."
+        return _availability_response({"status": "error", "message": error_message, "errors": form.errors}, status=200)
 
     courts = list(form.cleaned_data["courts"])
     weekdays = [int(day) for day in form.cleaned_data["weekdays"]]
@@ -2091,31 +2130,31 @@ def estimate_court_availability_end_date(request, pk):
     matches_per_court_per_day = form.cleaned_data.get("matches_per_court_per_day")
     start_date = form.cleaned_data.get("start_date") or tournament.start_date or timezone.localdate()
     if not courts:
-        return _availability_response({"status": "error", "message": "Select at least one court."}, status=400)
+        return _availability_response({"status": "error", "message": "Select at least one court."}, status=200)
     if not weekdays:
-        return _availability_response({"status": "error", "message": "Select at least one weekday."}, status=400)
+        return _availability_response({"status": "error", "message": "Select at least one weekday."}, status=200)
 
     duration = max(1, tournament.default_match_duration or 35)
     match_slots, parse_error = _parse_match_slots_from_request(request, duration)
     if parse_error:
-        return _availability_response({"status": "error", "message": parse_error}, status=400)
+        return _availability_response({"status": "error", "message": parse_error}, status=200)
     if match_slots is not None:
         daily_slots_per_court = len(match_slots)
     else:
         inferred_end_time = _infer_end_time(start_time, matches_per_court_per_day, duration)
         if inferred_end_time is None:
-            return _availability_response({"status": "error", "message": "The selected number of matches does not fit in a single day from the chosen start time."}, status=400)
+            return _availability_response({"status": "error", "message": "The selected number of matches does not fit in a single day from the chosen start time."}, status=200)
         daily_slots_per_court = matches_per_court_per_day
 
     active_count = active_participant_count(tournament)
     team_count = active_count or tournament.expected_teams_count or 0
     if team_count < 2:
-        return _availability_response({"status": "error", "message": "Need at least 2 participants or teams in the tournament to estimate an end date. Add entries or set the expected count."}, status=400)
+        return _availability_response({"status": "error", "message": "Need at least 2 participants or teams in the tournament to estimate an end date. Add entries or set the expected count."}, status=200)
 
     required_matches = estimate_required_matches(tournament, team_count=team_count)
     weekly_slots = daily_slots_per_court * len(courts) * len(weekdays)
     if weekly_slots <= 0:
-        return _availability_response({"status": "error", "message": "The selected schedule does not produce any available slots."}, status=400)
+        return _availability_response({"status": "error", "message": "The selected schedule does not produce any available slots."}, status=200)
 
     estimated_end_date = estimate_completion_date(
         tournament,
@@ -2128,7 +2167,7 @@ def estimate_court_availability_end_date(request, pk):
         start_date=start_date,
     )
     if not estimated_end_date:
-        return _availability_response({"status": "error", "message": "Could not estimate an end date from the selected availability. Try a longer daily window or more weekdays."}, status=400)
+        return _availability_response({"status": "error", "message": "Could not estimate an end date from the selected availability. Try a longer daily window or more weekdays."}, status=200)
 
     weeks_needed = math.ceil(required_matches / max(1, weekly_slots))
     message = (

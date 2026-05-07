@@ -874,9 +874,8 @@ def _build_slots(tournament, courts):
     slots = []
     seen = set()
 
-    # When court availability has no end_date ("Open"), use the tournament's end_date.
-    # If neither is set, extend 365 days from start to avoid artificially capping slots.
-    open_fallback = tournament.end_date or (base_date + timedelta(days=365))
+    # Default horizon for open-ended availability when no usable end date is present.
+    open_fallback_days = 365
 
     availabilities = list(
         CourtAvailability.objects.filter(
@@ -888,7 +887,12 @@ def _build_slots(tournament, courts):
     if availabilities:
         for availability in availabilities:
             range_start = max(base_date, availability.start_date or base_date)
-            range_end = availability.end_date or open_fallback
+            if availability.end_date:
+                range_end = availability.end_date
+            elif tournament.end_date and tournament.end_date >= range_start:
+                range_end = tournament.end_date
+            else:
+                range_end = range_start + timedelta(days=open_fallback_days)
             current_date = range_start
             while current_date <= range_end:
                 if current_date.weekday() == availability.weekday:
