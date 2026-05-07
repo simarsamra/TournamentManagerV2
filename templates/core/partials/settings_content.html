@@ -18,9 +18,11 @@
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     {{ field }}
                     {% if not is_settings_locked and tournament %}
-                    <button type="submit"
+                    <button type="button"
                             class="btn btn-secondary"
-                            formaction="{% url 'compute_end_date' pk=tournament.pk %}"
+                            hx-post="{% url 'compute_end_date' pk=tournament.pk %}"
+                            hx-target="#settings-content-region"
+                            hx-swap="innerHTML"
                             title="Auto-calculate end date from match count, courts, and match duration">
                         Compute
                     </button>
