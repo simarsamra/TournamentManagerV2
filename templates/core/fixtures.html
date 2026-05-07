@@ -70,7 +70,7 @@
 {% endif %}
 
 <div id="fixtures-live-region"
-     hx-get="{% url 'fixtures' %}?partial=1{% if request.GET.urlencode %}&{{ request.GET.urlencode }}{% endif %}"
+     hx-get="{% url 'fixtures' %}?partial=1{% if request.META.QUERY_STRING %}&{{ request.META.QUERY_STRING }}{% endif %}"
      hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
      hx-target="#fixtures-live-region"
      hx-swap="innerHTML">
