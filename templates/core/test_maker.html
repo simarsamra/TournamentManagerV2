@@ -169,16 +169,26 @@
     </div>
 
     <div class="card">
-        <div class="card-header">Register FIRST N Existing {% if registration_mode == "individual" %}Users{% else %}Teams{% endif %}</div>
+        <div class="card-header">{% if registration_mode == "individual" %}Register FIRST N Individuals to Selected Tournament{% else %}Register FIRST N Existing Teams{% endif %}</div>
         <div class="card-body">
-            {% if tournament and tournament.status == "registration_open" %}
+            {% if tournament and registration_mode == "individual" %}
             <p class="text-muted mb-1">
-                Reuses existing {% if registration_mode == "individual" %}user accounts{% else %}teams{% endif %} and registers the first N not already in this tournament.
-                {% if registration_mode == "individual" %}
+                Reuses existing user accounts and registers the first N not already in the selected individual tournament.
                 Available users: <strong>{{ available_existing_users }}</strong>.
-                {% else %}
+            </p>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="register_existing_to_open_tournament">
+                <div class="form-group">
+                    <label>How many individuals to register</label>
+                    <input type="number" name="existing_count" class="form-control" min="1" value="10" required>
+                </div>
+                <button type="submit" class="btn btn-success">Register FIRST N Individuals</button>
+            </form>
+            {% elif tournament and tournament.status == "registration_open" %}
+            <p class="text-muted mb-1">
                 Available teams: <strong>{{ available_existing_teams }}</strong>.
-                {% endif %}
+                Reuses existing teams and registers the first N not already in this tournament.
             </p>
             <form method="post">
                 {% csrf_token %}
@@ -191,7 +201,7 @@
             </form>
             {% else %}
             <p class="text-muted mb-1">
-                Tournament must be in <strong>Registration Open</strong> status to use this action.
+                Tournament must be in <strong>Registration Open</strong> status to register existing teams.
                 {% if tournament %}<span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span>{% endif %}
             </p>
             <button type="button" class="btn btn-outline" disabled>Unavailable — Not Open for Registration</button>

@@ -201,12 +201,12 @@
             {% for p in team_participations %}
             <div class="mb-1" style="padding:0.5rem;border-radius:6px;{% if p.is_underfilled %}background:#fff8e1;border:1px solid #f0ad4e;{% else %}background:#f8f9fa;{% endif %}">
                 <div class="d-flex justify-between align-center">
-                    <strong>{{ p.team.name }}</strong>
+                    <strong>{{ p.display_name }}</strong>
                     <div class="d-flex align-center" style="gap:0.5rem;">
                         {% if p.is_underfilled %}<span class="badge" style="background:#f0ad4e;color:#fff;">⚠ Pending (forming)</span>{% endif %}
                         <span class="badge badge-{{ p.status }}">{{ p.get_status_display }}</span>
                         {% if tournament.status != 'active' and tournament.status != 'completed' %}
-                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.team.name }} from this tournament?');">
+                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.display_name }} from this tournament?');">
                             {% csrf_token %}
                             <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.5rem;font-size:0.75rem;">Remove</button>
                         </form>

@@ -1822,6 +1822,7 @@ def tournament_config(request, pk):
 
     required_members = max(1, tournament.players_per_team or 1)
     for participation in team_participations:
+        participation.display_name = _team_display_label(tournament, participation.team)
         if participation.team.is_internal:
             reg = TournamentIndividualRegistration.objects.filter(
                 shadow_team=participation.team, tournament=tournament
@@ -2955,7 +2956,7 @@ def test_maker_view(request):
             messages.success(request, summary)
 
         elif action == "register_existing_to_open_tournament":
-            if tournament.status != "registration_open":
+            if tournament.registration_mode != "individual" and tournament.status != "registration_open":
                 messages.error(request, "Tournament must have status 'Registration Open' to use this action.")
                 return redirect("test_maker")
 
@@ -2972,9 +2973,9 @@ def test_maker_view(request):
 
             if tournament.registration_mode == "individual":
                 candidates = list(
-                    User.objects.exclude(
-                        individual_registrations__tournament=tournament
-                    ).order_by("username", "id")[:existing_count]
+                    User.objects.filter(is_staff=False, is_superuser=False)
+                    .exclude(individual_registrations__tournament=tournament)
+                    .order_by("username", "id")[:existing_count]
                 )
                 for user in candidates:
                     base_name = (user.first_name or user.username or "participant").strip()[:100] or "participant"
@@ -2991,7 +2992,7 @@ def test_maker_view(request):
                         created_shadows += 1
                 skipped = max(0, existing_count - len(candidates))
                 summary = (
-                    f"Registered {registered} existing user(s) as individuals; "
+                    f"Registered {registered} existing individual(s) from existing user accounts; "
                     f"created {created_shadows} shadow competitor(s)."
                 )
             else:
@@ -3863,24 +3864,17 @@ def teams_view(request):
     registration_mode = tournament.registration_mode if tournament else "team"
     if tournament:
         if tournament.registration_mode == "individual":
-            regs_qs = tournament.individual_registrations.filter(status="active")
-            if not is_organizer:
-                regs_qs = regs_qs.filter(user=request.user)
             participant_list = list(
-                regs_qs
+                tournament.individual_registrations.filter(status="active")
                 .select_related("user", "shadow_team")
                 .order_by("display_name", "id")
             )
         else:
-            teams_qs = Team.objects.filter(
+            teams = Team.objects.filter(
                 participations__tournament=tournament,
                 participations__status="active",
                 is_internal=False,
-            )
-            if not is_organizer:
-                teams_qs = teams_qs.filter(memberships__user=request.user)
-
-            teams = teams_qs.prefetch_related("players").distinct().order_by("name")
+            ).prefetch_related("players").distinct().order_by("name")
             for team in teams:
                 participation = team.participations.filter(tournament=tournament).first()
                 team.group = participation.group if participation else ""

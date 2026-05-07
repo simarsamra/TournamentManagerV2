@@ -1664,6 +1664,47 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(response, "Semi-finals")
 		self.assertContains(response, "Final")
 
+	def test_knockout_bracket_shows_zero_score_in_standings(self):
+		tournament = self._create_tournament(fmt="knockout", name="Knockout Zero Score")
+		team1 = self._create_team(tournament, "Team 1", seed=1)
+		team2 = self._create_team(tournament, "Team 2", seed=2)
+		generate_fixtures(tournament)
+		match = tournament.matches.get(team1=team1, team2=team2)
+		match.status = "confirmed"
+		match.score_team1 = 0
+		match.score_team2 = 2
+		match.winner = team2
+		match.save(update_fields=["status", "score_team1", "score_team2", "winner"])
+
+		self.client.force_login(self.organizer)
+		session = self.client.session
+		session["selected_tournament_id"] = tournament.pk
+		session.save()
+
+		response = self.client.get(reverse("standings"), follow=True)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, 'class="bracket-score">0</span>', html=False)
+		self.assertContains(response, 'class="bracket-score">2</span>', html=False)
+
+	def test_public_knockout_bracket_shows_zero_score(self):
+		tournament = self._create_tournament(fmt="knockout", name="Public Knockout Zero Score")
+		team1 = self._create_team(tournament, "Public Team 1", seed=1)
+		team2 = self._create_team(tournament, "Public Team 2", seed=2)
+		generate_fixtures(tournament)
+		match = tournament.matches.get(team1=team1, team2=team2)
+		match.status = "confirmed"
+		match.score_team1 = 0
+		match.score_team2 = 3
+		match.winner = team2
+		match.save(update_fields=["status", "score_team1", "score_team2", "winner"])
+
+		response = self.client.get(reverse("public_standings"), {"tournament": tournament.pk})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, 'class="bracket-score">0</span>', html=False)
+		self.assertContains(response, 'class="bracket-score">3</span>', html=False)
+
 	def test_analytics_exposes_head_to_head_form_and_prep_context(self):
 		tournament = self._create_tournament(fmt="round_robin", name="Analytics Context")
 		tournament.status = "active"
@@ -2597,6 +2638,59 @@ class EnrollmentRefactorRegressionTests(TestCase):
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament, user__in=[u1, u2]).count(), 2)
 		self.assertEqual(IndividualRegistration.objects.filter(tournament=individual_tournament).count(), 0)
+
+	def test_test_maker_register_first_n_individuals_for_selected_tournament(self):
+		individual_tournament = self._mk_tournament("Selected Individual Flow", mode="individual")
+		individual_tournament.status = "active"
+		individual_tournament.save(update_fields=["status"])
+		u1 = User.objects.create_user(username="selected_i1", password="pass123", first_name="Selected One")
+		u2 = User.objects.create_user(username="selected_i2", password="pass123", first_name="Selected Two")
+
+		self.client.force_login(self.organizer)
+		session = self.client.session
+		session["selected_tournament_id"] = individual_tournament.pk
+		session.save()
+
+		response = self.client.post(
+			reverse("test_maker"),
+			{
+				"action": "register_existing_to_open_tournament",
+				"existing_count": "2",
+			},
+			follow=True,
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
+		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament, user__in=[u1, u2]).count(), 2)
+
+	def test_tournament_config_hides_internal_shadow_team_names_for_individuals(self):
+		tournament = self._mk_tournament("Organizer Individual Config", mode="individual")
+		user = User.objects.create_user(username="config_individual", password="pass123")
+		shadow = Team.objects.create(
+			name="__tm_shadow_6_100_38",
+			sport_type=tournament.sport_type,
+			is_internal=True,
+		)
+		TeamTournamentParticipation.objects.create(
+			team=shadow,
+			tournament=tournament,
+			status="active",
+		)
+		TournamentIndividualRegistration.objects.create(
+			tournament=tournament,
+			user=user,
+			display_name="Player 100",
+			shadow_team=shadow,
+			status="active",
+		)
+
+		self.client.force_login(self.organizer)
+		response = self.client.get(reverse("tournament_config", kwargs={"pk": tournament.pk}))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Player 100")
+		self.assertNotContains(response, "__tm_shadow_6_100_38")
 
 	def test_audit_participant_integrity_reports_missing_shadow_and_legacy_rows(self):
 		tournament = self._mk_tournament("Audit Target", mode="individual")

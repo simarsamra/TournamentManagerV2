@@ -109,11 +109,11 @@
                     <div class="bracket-match">
                         <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
                             <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
-                            <span class="bracket-score">{{ m.score_team1|default:"" }}</span>
+                            <span class="bracket-score">{{ m.score_team1|default_if_none:"" }}</span>
                         </div>
                         <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
                             <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
-                            <span class="bracket-score">{{ m.score_team2|default:"" }}</span>
+                            <span class="bracket-score">{{ m.score_team2|default_if_none:"" }}</span>
                         </div>
                     </div>
                     {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
