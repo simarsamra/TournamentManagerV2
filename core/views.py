@@ -438,10 +438,11 @@ def _auto_end_date(tournament):
     if not start:
         return None
 
-    if tournament.pk:
-        team_count = active_participant_count(tournament) or tournament.expected_teams_count or 0
-    else:
-        team_count = tournament.expected_teams_count or 0
+    if not tournament.pk:
+        # Cannot access related courts/participants before the instance is saved.
+        return start
+
+    team_count = active_participant_count(tournament) or tournament.expected_teams_count or 0
     if team_count < 2:
         return start
 
