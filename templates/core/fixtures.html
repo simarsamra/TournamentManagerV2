@@ -11,7 +11,7 @@
       class="filters"
       hx-get="{% url 'fixtures' %}"
       hx-target="#fixtures-live-region"
-      hx-swap="innerHTML"
+    hx-swap="outerHTML"
       hx-push-url="true">
     <div class="form-group" style="margin-bottom:0">
         <label>Status</label>
@@ -69,11 +69,5 @@
 </form>
 {% endif %}
 
-<div id="fixtures-live-region"
-     hx-get="{% url 'fixtures' %}?partial=1{% if request.GET.urlencode %}&{{ request.GET.urlencode }}{% endif %}"
-     hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
-     hx-target="#fixtures-live-region"
-     hx-swap="innerHTML">
-    {% include "core/partials/fixtures_content.html" %}
-</div>
+{% include "core/partials/fixtures_content.html" %}
 {% endblock %}
