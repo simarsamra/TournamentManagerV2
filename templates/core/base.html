@@ -123,9 +123,7 @@
                 <a href="{% url 'profile' %}" class="btn btn-outline btn-sm">My Profile</a>
                 <a href="{% url 'notifications' %}" class="btn btn-outline btn-sm" title="Notifications" style="position:relative;">
                     🔔
-                    {% if unread_notification_count %}
-                    <span style="position:absolute;top:-4px;right:-4px;background:var(--danger,#e74c3c);color:#fff;border-radius:50%;font-size:0.65rem;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:700;">{{ unread_notification_count }}</span>
-                    {% endif %}
+                    {% include "core/partials/unread_notification_badge.html" %}
                 </a>
                 <form method="post" action="{% url 'logout' %}" style="display:inline;">
                     {% csrf_token %}
@@ -142,26 +140,34 @@
                 </div>
             </div>
         </header>
-        <div class="content">
-            {% if messages %}
-            {% for message in messages %}
-            <div class="alert alert-{{ message.tags }}">{{ message }}</div>
-            {% endfor %}
-            {% endif %}
-            {% block content %}{% endblock %}
+        <div class="content" id="main-content-region">
+            <div id="flash-messages">
+                {% include "core/partials/flash_messages.html" %}
+            </div>
+            <div id="page-content-region">
+                {% block content %}{% endblock %}
+            </div>
         </div>
     </div>
 </div>
 {% else %}
 <div class="content" style="max-width: 500px; margin: 4rem auto; padding: 2rem;">
-    {% if messages %}
-    {% for message in messages %}
-    <div class="alert alert-{{ message.tags }}">{{ message }}</div>
-    {% endfor %}
-    {% endif %}
+    <div id="flash-messages">
+        {% include "core/partials/flash_messages.html" %}
+    </div>
     {% block public_content %}{% endblock %}
 </div>
 {% endif %}
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script>
+    document.body.addEventListener('htmx:configRequest', function (event) {
+        var token = (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1];
+        if (token) {
+            event.detail.headers['X-CSRFToken'] = decodeURIComponent(token);
+        }
+        event.detail.headers['X-Requested-With'] = 'XMLHttpRequest';
+    });
+</script>
 <script src="{% static 'js/app.js' %}?v={% now 'YmdHis' %}"></script>
 {% block extra_js %}{% endblock %}
 </body>
