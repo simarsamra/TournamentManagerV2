@@ -3366,10 +3366,34 @@ def fixtures_view(request):
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, total_pages)
     matches = matches[(page - 1) * per_page : page * per_page]
-    teams_qs = Team.objects.filter(participations__tournament=tournament)
-    if not _is_organizer(request.user):
-        teams_qs = teams_qs.filter(is_internal=False)
-    teams = teams_qs.distinct()
+    if tournament.registration_mode == "individual":
+        team_options = [
+            {
+                "pk": reg.shadow_team_id,
+                "name": reg.display_name,
+            }
+            for reg in TournamentIndividualRegistration.objects.filter(
+                tournament=tournament,
+                status="active",
+                shadow_team__isnull=False,
+            )
+            .order_by("display_name")
+            .only("shadow_team_id", "display_name")
+        ]
+    else:
+        team_options = [
+            {
+                "pk": team.pk,
+                "name": team.name,
+            }
+            for team in Team.objects.filter(
+                participations__tournament=tournament,
+                is_internal=False,
+            )
+            .distinct()
+            .order_by("name")
+            .only("pk", "name")
+        ]
     courts = tournament.courts.all()
     groups = sorted(set(tournament.team_participations.exclude(group="").values_list("group", flat=True)))
     team_ids = {
@@ -3384,7 +3408,7 @@ def fixtures_view(request):
         "tournament": tournament,
         "matches": matches,
         "team_name_map": team_name_map,
-        "teams": teams,
+        "team_options": team_options,
         "courts": courts,
         "groups": groups,
         "status_filter": status_filter,

@@ -30,7 +30,7 @@
         <label>Team</label>
         <select name="team">
             <option value="">All</option>
-            {% for t in teams %}
+            {% for t in team_options %}
             <option value="{{ t.pk }}" {% if team_filter == t.pk|stringformat:"d" %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
         </select>
