@@ -1,0 +1,23 @@
+{% if error %}
+<div id="end-date-estimate-panel" style="display:block;margin-top:1rem;padding:0.75rem;background:#fff5f5;border:1px solid #f5c2c7;border-radius:6px;">
+    <strong>End Date Estimate</strong>
+    <div id="end-date-estimate-content" style="margin-top:0.5rem;font-size:0.9rem;">{{ error }}</div>
+</div>
+{% else %}
+<div id="end-date-estimate-panel" style="display:block;margin-top:1rem;padding:0.75rem;background:#f0f8ff;border:1px solid #b8d9f8;border-radius:6px;">
+    <strong>End Date Estimate</strong>
+    <div id="end-date-estimate-content" style="margin-top:0.5rem;font-size:0.9rem;">
+        <dl style="display:grid;grid-template-columns:auto 1fr;gap:0.25rem 1rem;margin:0;">
+            <dt class="text-muted">Format</dt><dd style="margin:0;">{{ format_display }}</dd>
+            <dt class="text-muted">{{ participant_label_plural }}</dt><dd style="margin:0;">{{ team_count }}</dd>
+            <dt class="text-muted">Required matches</dt><dd style="margin:0;">{{ required_matches }}</dd>
+            <dt class="text-muted">Available courts</dt><dd style="margin:0;">{{ court_count }}</dd>
+            <dt class="text-muted">Matches / court / day</dt><dd style="margin:0;">{{ matches_per_court_per_day }}</dd>
+            <dt class="text-muted">Matches / day total</dt><dd style="margin:0;">{{ matches_per_day }}</dd>
+            <dt class="text-muted">Days needed</dt><dd style="margin:0;">{{ days_needed }}</dd>
+            <dt class="text-muted">Start date</dt><dd style="margin:0;">{{ start_date }}</dd>
+            <dt style="font-weight:600;">Estimated end date</dt><dd style="margin:0;font-weight:600;color:#0a5e2c;">{{ estimated_end_date }}</dd>
+        </dl>
+    </div>
+</div>
+{% endif %}

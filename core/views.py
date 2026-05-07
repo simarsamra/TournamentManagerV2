@@ -17,6 +17,7 @@ from django.db import models as db_models
 from django.db.models import Q, Count, Avg, F
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -476,6 +477,12 @@ def _resolve_individual_team_name(user, requested_name=""):
 def _render_refreshable_page(request, full_template, partial_template, context):
     template_name = partial_template if _is_partial_refresh(request) else full_template
     return render(request, template_name, context)
+
+
+def _htmx_or_redirect(request, view_callable, redirect_name, **kwargs):
+    if _is_htmx_request(request):
+        return view_callable(request, **kwargs)
+    return redirect(redirect_name, **kwargs)
 
 
 def _can_override_match(match):
@@ -1226,7 +1233,7 @@ def join_tournament_view(request, pk):
                 "participation_status": participation.status,
             })
 
-    return render(request, "core/join_tournament.html", {
+    context = {
         "tournament": tournament,
         "team_list": team_list,
         "participant_list": participant_list,
@@ -1235,7 +1242,14 @@ def join_tournament_view(request, pk):
         "players_per_team": players_per_team,
         "registration_mode": registration_mode,
         "registration_full": is_registration_capacity_reached(tournament),
-    })
+        **_tournament_context(request, tournament),
+    }
+    return _render_refreshable_page(
+        request,
+        "core/join_tournament.html",
+        "core/partials/join_tournament_content.html",
+        context,
+    )
 
 
 @login_required
@@ -1289,6 +1303,8 @@ def join_team_view(request, tournament_pk, team_pk):
         still_needed = required - new_count
         messages.success(request, f"You joined {team.name}! {still_needed} more player{'s' if still_needed != 1 else ''} needed to complete registration.")
 
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -1332,11 +1348,16 @@ def create_team_view(request, pk):
                         "participant_name",
                         "That name is already in use. Please choose a different player name.",
                     )
-                    return render(request, "core/create_team.html", {
-                        "form": form,
-                        "tournament": tournament,
-                        **_tournament_context(request, tournament),
-                    })
+                    return _render_refreshable_page(
+                        request,
+                        "core/create_team.html",
+                        "core/partials/create_team_content.html",
+                        {
+                            "form": form,
+                            "tournament": tournament,
+                            **_tournament_context(request, tournament),
+                        },
+                    )
 
                 registration, _ = TournamentIndividualRegistration.objects.update_or_create(
                     user=request.user,
@@ -1355,6 +1376,8 @@ def create_team_view(request, pk):
                     tournament=tournament,
                 )
                 messages.success(request, f"You are registered as '{display_name}'.")
+                if _is_htmx_request(request):
+                    return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
                 return redirect("dashboard")
 
             team_name = form.cleaned_data["team_name"]
@@ -1415,12 +1438,17 @@ def create_team_view(request, pk):
     else:
         form = CreateTeamForm(tournament=tournament)
 
-    return render(request, "core/create_team.html", {
-        "form": form,
-        "tournament": tournament,
-        "registration_full": _registration_is_full,
-        **_tournament_context(request, tournament),
-    })
+    return _render_refreshable_page(
+        request,
+        "core/create_team.html",
+        "core/partials/create_team_content.html",
+        {
+            "form": form,
+            "tournament": tournament,
+            "registration_full": _registration_is_full,
+            **_tournament_context(request, tournament),
+        },
+    )
 
 
 @login_required
@@ -1873,7 +1901,7 @@ def tournament_config(request, pk):
     required_matches = estimate_required_matches(tournament, team_count=active_count)
     active_teams_count = active_count
 
-    return render(request, "core/tournament_config.html", {
+    context = {
         "tournament": tournament,
         "tournament_champion_label": (
             _team_display_label(tournament, tournament.champion) if tournament.champion else ""
@@ -1894,7 +1922,13 @@ def tournament_config(request, pk):
         "available_slots": available_slots,
         "required_matches": required_matches,
         **_tournament_context(request, tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/tournament_config.html",
+        "core/partials/tournament_config_content.html",
+        context,
+    )
 
 
 @login_required
@@ -1906,7 +1940,7 @@ def proceed_to_knockout_view(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     if tournament.format != "hybrid" or tournament.status != "active":
         messages.error(request, "Knockout phase can only be triggered for an active hybrid tournament.")
-        return redirect("tournament_config", pk=pk)
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
     result = check_group_stage_complete(tournament)
     if result:
@@ -1914,7 +1948,7 @@ def proceed_to_knockout_view(request, pk):
         log_action(request, "knockout_phase_started", "Admin triggered knockout phase progression", tournament=tournament)
     else:
         messages.error(request, "Cannot proceed: group stage is not yet complete, or the knockout bracket is already populated.")
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -1936,13 +1970,13 @@ def add_court(request, pk):
                 request,
                 "A court with this name already exists for this tournament.",
             )
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
         log_action(request, "court_added", f"Court '{court.name}' added", tournament=tournament)
         messages.success(request, f"Court '{court.name}' added.")
     else:
         for error in form.errors.get("name", []):
             messages.error(request, error)
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -1957,7 +1991,7 @@ def delete_court_availability(request, pk, availability_pk):
     availability.delete()
     log_action(request, "court_availability_deleted", f"Deleted availability: {label}", tournament=tournament)
     messages.success(request, f"Availability '{label}' removed.")
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 def _calculate_daily_slots(start_time, end_time, duration_minutes):
@@ -2033,13 +2067,23 @@ def _build_capacity_by_date(start_date, weekdays, daily_capacity, max_days=365 *
 @login_required
 @require_POST
 def estimate_court_availability_end_date(request, pk):
+    def _availability_response(payload, status=200):
+        if _is_htmx_request(request):
+            return render(
+                request,
+                "core/partials/availability_estimate_result.html",
+                payload,
+                status=status,
+            )
+        return JsonResponse(payload, status=status)
+
     if not _is_organizer(request.user):
-        return JsonResponse({"status": "error", "message": "Not authorized."}, status=403)
+        return _availability_response({"status": "error", "message": "Not authorized."}, status=403)
     tournament = get_object_or_404(Tournament, pk=pk)
     form = CourtAvailabilityForm(request.POST, tournament=tournament)
     if not form.is_valid():
         error_message = "Please correct the availability details and try again."
-        return JsonResponse({"status": "error", "message": error_message, "errors": form.errors}, status=400)
+        return _availability_response({"status": "error", "message": error_message, "errors": form.errors}, status=400)
 
     courts = list(form.cleaned_data["courts"])
     weekdays = [int(day) for day in form.cleaned_data["weekdays"]]
@@ -2047,31 +2091,31 @@ def estimate_court_availability_end_date(request, pk):
     matches_per_court_per_day = form.cleaned_data.get("matches_per_court_per_day")
     start_date = form.cleaned_data.get("start_date") or tournament.start_date or timezone.localdate()
     if not courts:
-        return JsonResponse({"status": "error", "message": "Select at least one court."}, status=400)
+        return _availability_response({"status": "error", "message": "Select at least one court."}, status=400)
     if not weekdays:
-        return JsonResponse({"status": "error", "message": "Select at least one weekday."}, status=400)
+        return _availability_response({"status": "error", "message": "Select at least one weekday."}, status=400)
 
     duration = max(1, tournament.default_match_duration or 35)
     match_slots, parse_error = _parse_match_slots_from_request(request, duration)
     if parse_error:
-        return JsonResponse({"status": "error", "message": parse_error}, status=400)
+        return _availability_response({"status": "error", "message": parse_error}, status=400)
     if match_slots is not None:
         daily_slots_per_court = len(match_slots)
     else:
         inferred_end_time = _infer_end_time(start_time, matches_per_court_per_day, duration)
         if inferred_end_time is None:
-            return JsonResponse({"status": "error", "message": "The selected number of matches does not fit in a single day from the chosen start time."}, status=400)
+            return _availability_response({"status": "error", "message": "The selected number of matches does not fit in a single day from the chosen start time."}, status=400)
         daily_slots_per_court = matches_per_court_per_day
 
     active_count = active_participant_count(tournament)
     team_count = active_count or tournament.expected_teams_count or 0
     if team_count < 2:
-        return JsonResponse({"status": "error", "message": "Need at least 2 participants or teams in the tournament to estimate an end date. Add entries or set the expected count."}, status=400)
+        return _availability_response({"status": "error", "message": "Need at least 2 participants or teams in the tournament to estimate an end date. Add entries or set the expected count."}, status=400)
 
     required_matches = estimate_required_matches(tournament, team_count=team_count)
     weekly_slots = daily_slots_per_court * len(courts) * len(weekdays)
     if weekly_slots <= 0:
-        return JsonResponse({"status": "error", "message": "The selected schedule does not produce any available slots."}, status=400)
+        return _availability_response({"status": "error", "message": "The selected schedule does not produce any available slots."}, status=400)
 
     estimated_end_date = estimate_completion_date(
         tournament,
@@ -2084,7 +2128,7 @@ def estimate_court_availability_end_date(request, pk):
         start_date=start_date,
     )
     if not estimated_end_date:
-        return JsonResponse({"status": "error", "message": "Could not estimate an end date from the selected availability. Try a longer daily window or more weekdays."}, status=400)
+        return _availability_response({"status": "error", "message": "Could not estimate an end date from the selected availability. Try a longer daily window or more weekdays."}, status=400)
 
     weeks_needed = math.ceil(required_matches / max(1, weekly_slots))
     message = (
@@ -2094,7 +2138,7 @@ def estimate_court_availability_end_date(request, pk):
     if active_count == 0 and tournament.expected_teams_count:
         message += f" Using expected count of {tournament.expected_teams_count}."
 
-    return JsonResponse({
+    return _availability_response({
         "status": "ok",
         "message": message,
         "estimated_end_date": str(estimated_end_date),
@@ -2124,7 +2168,7 @@ def add_court_availability(request, pk):
         match_slots, parse_error = _parse_match_slots_from_request(request, duration)
         if parse_error:
             messages.error(request, parse_error)
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
         if match_slots is not None:
             start_time = match_slots[0][0]
@@ -2140,7 +2184,7 @@ def add_court_availability(request, pk):
                         request,
                         "The selected number of matches does not fit in a single day from the chosen start time."
                     )
-                    return redirect("tournament_config", pk=pk)
+                    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
                 end_time = inferred
 
         existing_keys = set(
@@ -2199,7 +2243,7 @@ def add_court_availability(request, pk):
         for errs in form.errors.values():
             for err in errs:
                 messages.error(request, err)
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -2216,7 +2260,7 @@ def add_timeslot(request, pk):
         court = form.cleaned_data.get("court")
         if end <= start:
             messages.error(request, "End time must be after start time.")
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
         start_dt = timezone.make_aware(datetime.combine(date, start))
         end_dt = timezone.make_aware(datetime.combine(date, end))
         TimeSlot.objects.create(
@@ -2232,7 +2276,7 @@ def add_timeslot(request, pk):
         messages.success(request, "Time slot added.")
         if tournament.matches.exists():
             _assign_schedule_to_existing(tournament, knockout_only=True)
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 def _parse_team_line(line):
@@ -2310,12 +2354,12 @@ def add_teams_bulk(request, pk):
         MAX_LINES = 500
         if uploaded.size > MAX_UPLOAD_BYTES:
             messages.error(request, "File too large. Maximum size is 512 KB.")
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
         content = uploaded.read(MAX_UPLOAD_BYTES + 1).decode("utf-8", errors="ignore")
         lines = content.split("\n")
         if len(lines) > MAX_LINES:
             messages.error(request, f"File has too many lines. Maximum is {MAX_LINES} teams.")
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
         for line in lines:
             line = line.strip()
             if not line:
@@ -2331,14 +2375,24 @@ def add_teams_bulk(request, pk):
     else:
         messages.warning(request, "No valid team data found.")
 
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
 def estimate_tournament_end_date(request, pk):
     """Return a JSON estimate of when the tournament will finish."""
+    def _end_date_response(payload, status=200):
+        if _is_htmx_request(request):
+            return render(
+                request,
+                "core/partials/tournament_end_date_estimate.html",
+                payload,
+                status=status,
+            )
+        return JsonResponse(payload, status=status)
+
     if not _is_organizer(request.user):
-        return JsonResponse({"error": "Unauthorized"}, status=403)
+        return _end_date_response({"error": "Unauthorized"}, status=403)
     tournament = get_object_or_404(Tournament, pk=pk)
 
     # Determine team count: prefer actual active teams, fall back to expected count
@@ -2347,11 +2401,11 @@ def estimate_tournament_end_date(request, pk):
         team_count = tournament.expected_teams_count
 
     if team_count < 2:
-        return JsonResponse({"error": "Need at least 2 teams to estimate."})
+        return _end_date_response({"error": "Need at least 2 teams to estimate."})
 
     required_matches = estimate_required_matches(tournament, team_count=team_count)
     if required_matches == 0:
-        return JsonResponse({"error": "Unable to estimate matches for this format."})
+        return _end_date_response({"error": "Unable to estimate matches for this format."})
 
     # Matches per court per day — honour the stored value or auto-detect from availability
     courts = list(tournament.courts.filter(is_available=True))
@@ -2396,7 +2450,7 @@ def estimate_tournament_end_date(request, pk):
         days_needed = max(1, (estimated_end - start).days + 1)
         matches_per_day = max(1, matches_per_court_per_day * max(1, court_count))
 
-    return JsonResponse({
+    return _end_date_response({
         "team_count": team_count,
         "required_matches": required_matches,
         "court_count": court_count,
@@ -2434,7 +2488,7 @@ def remove_team_from_tournament(request, pk, participation_pk):
         tournament=tournament,
     )
     messages.success(request, f"'{team_name}' has been removed from the tournament.")
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -2455,7 +2509,7 @@ def open_registration(request, pk):
         messages.success(request, "Registration re-opened. The previous draft schedule has been cleared — regenerate the schedule once you close registration again.")
     else:
         messages.success(request, "Registration is now open.")
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -2517,13 +2571,13 @@ def close_registration(request, pk):
     if errors:
         for error in errors:
             messages.error(request, error)
-        return redirect("tournament_config", pk=pk)
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
     tournament.status = "ready"
     tournament.save(update_fields=["status"])
     log_action(request, "registration_closed", f"Registration closed for '{tournament.name}'", tournament=tournament)
     messages.success(request, "Registration closed. The tournament is ready for scheduling checks.")
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -2536,7 +2590,7 @@ def generate_schedule(request, pk):
     if readiness_errors:
         for error in readiness_errors:
             messages.error(request, error)
-        return redirect("tournament_config", pk=pk)
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
     generate_fixtures(tournament)
     tournament.status = "scheduled"
     tournament.save(update_fields=["status"])
@@ -2556,7 +2610,7 @@ def start_tournament(request, pk):
         if readiness_errors:
             for error in readiness_errors:
                 messages.error(request, error)
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
         generate_fixtures(tournament)
         tournament.status = "scheduled"
         tournament.save(update_fields=["status"])
@@ -2581,7 +2635,7 @@ def complete_tournament(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     if tournament.status != "active":
         messages.error(request, "Only active tournaments can be marked as completed.")
-        return redirect("tournament_config", pk=pk)
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
     tournament.status = "completed"
     tournament.completed_at = timezone.now()
     tournament.champion = _determine_champion(tournament)
@@ -2598,7 +2652,7 @@ def complete_tournament(request, pk):
         "Tournament marked as completed."
         + (f" Champion: {tournament.champion.name}" if tournament.champion else ""),
     )
-    return redirect("tournament_config", pk=pk)
+    return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
 
 @login_required
@@ -3980,7 +4034,7 @@ def team_detail(request, pk):
     max_members = tournament.players_per_team if tournament else None
     members_full = max_members is not None and memberships.count() >= max_members
     team_heading_label = _team_display_label(tournament, team) if tournament else team.name
-    return render(request, "core/team_detail.html", {
+    context = {
         "team": team,
         "team_heading_label": team_heading_label,
         "tournament": tournament, "matches": matches, "stats": stats,
@@ -3994,7 +4048,13 @@ def team_detail(request, pk):
         "invite_form": TeamMemberInviteForm() if (is_captain or is_organizer) else None,
         "existing_member_form": ExistingTeamMemberForm() if (is_captain or is_organizer) else None,
         **_tournament_context(request, selected_tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/team_detail.html",
+        "core/partials/team_detail_content.html",
+        context,
+    )
 
 
 @login_required
@@ -4071,7 +4131,7 @@ def manage_team_members(request, pk):
                 for field in form:
                     for error in field.errors:
                         messages.error(request, f"{field.label}: {error}")
-    return redirect("team_detail", pk=pk)
+    return _htmx_or_redirect(request, team_detail, "team_detail", pk=pk)
 
 
 @login_required
@@ -4108,7 +4168,7 @@ def reset_member_password(request, pk, user_pk):
         tournament=_get_tournament(request),
     )
     messages.success(request, f"Password for '{member_user.username}' has been reset.")
-    return redirect("team_detail", pk=pk)
+    return _htmx_or_redirect(request, team_detail, "team_detail", pk=pk)
 
 
 @login_required
@@ -4143,7 +4203,7 @@ def reset_captain_password(request, pk):
         tournament=_get_tournament(request),
     )
     messages.success(request, f"Password for captain '{captain_user.username}' has been reset.")
-    return redirect("team_detail", pk=pk)
+    return _htmx_or_redirect(request, team_detail, "team_detail", pk=pk)
 
 
 @login_required
@@ -4170,7 +4230,7 @@ def remove_team_member(request, pk, user_pk):
     # 12.3: warn if roster drops below tournament minimum
     _check_roster_minimum(team)
     messages.success(request, f"Member '{removed_username}' has been removed from the team.")
-    return redirect("team_detail", pk=pk)
+    return _htmx_or_redirect(request, team_detail, "team_detail", pk=pk)
 
 
 @login_required
@@ -4226,6 +4286,8 @@ def withdraw_team(request, pk):
 
     handle_withdrawal(request, team, tournament)
     messages.success(request, f"Team '{team.name}' has been withdrawn.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("teams")})
     return redirect("teams")
 
 
@@ -4257,6 +4319,8 @@ def organizer_remove_team(request, pk):
         tournament=tournament,
     )
     messages.success(request, f"Team '{team_name}' has been removed from the tournament.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("tournament_config", kwargs={"pk": tournament.pk})})
     return redirect("tournament_config", pk=tournament.pk)
 
 
@@ -4904,6 +4968,8 @@ def delete_tournament(request, pk):
 
     log_action(request, "tournament_deleted", f"Tournament '{tournament_name}' deleted")
     messages.success(request, f"Tournament '{tournament_name}' deleted.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -4913,7 +4979,12 @@ def settings_view(request):
         return redirect("dashboard")
     tournament = _get_tournament(request)
     if not tournament:
-        return render(request, "core/settings.html", _tournament_context(request, tournament))
+        return _render_refreshable_page(
+            request,
+            "core/settings.html",
+            "core/partials/settings_content.html",
+            _tournament_context(request, tournament),
+        )
     is_settings_locked = bool(tournament.started_at or tournament.status in ("active", "completed"))
     if request.method == "POST":
         if is_settings_locked:
@@ -4930,14 +5001,20 @@ def settings_view(request):
             return redirect("settings")
     else:
         form = TournamentForm(instance=tournament)
-    return render(request, "core/settings.html", {
+    context = {
         "tournament": tournament,
         "form": form,
         "is_settings_locked": is_settings_locked,
         "users": User.objects.filter(is_superuser=False).order_by("username"),
         "organizer_applications": OrganizerApplication.objects.order_by("-created_at"),
         **_tournament_context(request, tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/settings.html",
+        "core/partials/settings_content.html",
+        context,
+    )
 
 
 @login_required
@@ -4954,7 +5031,7 @@ def compute_end_date_view(request, pk):
         messages.success(request, f"End date computed and set to {computed.strftime('%B %d, %Y')}.")
     else:
         messages.error(request, "Could not compute end date — make sure a start date is set.")
-    return redirect("settings")
+    return _htmx_or_redirect(request, settings_view, "settings")
 
 
 # -- User Management --
@@ -4989,7 +5066,7 @@ def set_user_organizer(request, user_pk):
     detail = f"User '{target.username}' role updated to {'organizer' if make_organizer else 'user'}."
     log_action(request, action, detail)
     messages.success(request, detail)
-    return redirect("settings")
+    return _htmx_or_redirect(request, settings_view, "settings")
 
 
 @login_required
@@ -5016,7 +5093,7 @@ def delete_user_account(request, user_pk):
     target.delete()
     log_action(request, "user_deleted", f"User '{username}' account deleted.")
     messages.success(request, f"User '{username}' deleted.")
-    return redirect("settings")
+    return _htmx_or_redirect(request, settings_view, "settings")
 
 
 # -- Public Views --
@@ -5178,6 +5255,8 @@ def enter_existing_team_view(request, pk):
         tournament=tournament,
     )
     messages.success(request, f"'{team.name}' has been entered into '{tournament.name}'!")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -5203,6 +5282,8 @@ def leave_team_view(request, pk):
     # 12.3: warn if roster drops below tournament minimum
     _check_roster_minimum(team)
     messages.success(request, f"You have left '{team.name}'.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -5276,6 +5357,8 @@ def delete_team_view(request, pk):
         tournament=tournament,
     )
     messages.success(request, f"Team '{team_name}' has been deleted.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -5490,7 +5573,7 @@ def review_organizer_application(request, pk):
     else:
         messages.error(request, "Invalid action.")
 
-    return redirect("settings")
+    return _htmx_or_redirect(request, settings_view, "settings")
 
 
 # =============================================================================
@@ -5599,6 +5682,8 @@ def accept_team_invite(request, pk):
 
     log_action(request, "team_invite_accepted", f"User '{request.user.username}' joined team '{team.name}'")
     messages.success(request, f"You have joined {team.name}!")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("team_detail", kwargs={"pk": team.pk})})
     return redirect("team_detail", pk=team.pk)
 
 
@@ -5626,6 +5711,8 @@ def decline_team_invite(request, pk):
 
     log_action(request, "team_invite_declined", f"User '{request.user.username}' declined invite to '{invite.team.name}'")
     messages.info(request, f"You declined the invite to join {invite.team.name}.")
+    if _is_htmx_request(request):
+        return _htmx_or_redirect(request, my_invites_view, "my_invites")
     return redirect("notifications")
 
 
@@ -5636,10 +5723,16 @@ def my_invites_view(request):
         invited_user=request.user, status="pending"
     ).select_related("team", "invited_by")
     tournament = _get_tournament(request)
-    return render(request, "core/my_invites.html", {
+    context = {
         "invites": invites,
         **_tournament_context(request, tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/my_invites.html",
+        "core/partials/my_invites_content.html",
+        context,
+    )
 
 
 # =============================================================================
@@ -5810,12 +5903,18 @@ def registration_review_view(request, pk):
             .order_by("status", "team__name")
         )
 
-    return render(request, "core/registration_review.html", {
+    context = {
         "tournament": tournament,
         "registrations": registrations,
         "team_regs": team_regs,
         **_tournament_context(request, tournament),
-    })
+    }
+    return _render_refreshable_page(
+        request,
+        "core/registration_review.html",
+        "core/partials/registration_review_content.html",
+        context,
+    )
 
 
 @login_required
@@ -5862,7 +5961,7 @@ def approve_registration(request, tournament_pk, reg_pk):
         tournament=tournament,
     )
     messages.success(request, f"Registration for '{name}' approved.")
-    return redirect("registration_review", pk=tournament_pk)
+    return _htmx_or_redirect(request, registration_review_view, "registration_review", pk=tournament_pk)
 
 
 @login_required
@@ -5910,7 +6009,7 @@ def reject_registration(request, tournament_pk, reg_pk):
         tournament=tournament,
     )
     messages.success(request, f"Registration for '{name}' rejected.")
-    return redirect("registration_review", pk=tournament_pk)
+    return _htmx_or_redirect(request, registration_review_view, "registration_review", pk=tournament_pk)
 
 
 # =============================================================================
@@ -5969,6 +6068,8 @@ def cancel_tournament(request, pk):
         tournament=tournament,
     )
     messages.success(request, f"Tournament '{tournament.name}' has been cancelled.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -6013,6 +6114,8 @@ def duplicate_tournament(request, pk):
         tournament=new_tournament,
     )
     messages.success(request, f"Tournament duplicated as '{new_name}'. Please update the dates and settings.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("tournament_config", kwargs={"pk": new_tournament.pk})})
     return redirect("tournament_config", pk=new_tournament.pk)
 
 
@@ -6074,7 +6177,7 @@ def disqualify_team(request, tournament_pk, participation_pk):
         tournament=tournament,
     )
     messages.success(request, f"Team '{team.name}' has been disqualified.")
-    return redirect("registration_review", pk=tournament_pk)
+    return _htmx_or_redirect(request, registration_review_view, "registration_review", pk=tournament_pk)
 
 
 # =============================================================================
@@ -6124,6 +6227,8 @@ def pause_tournament(request, pk):
 
     log_action(request, "tournament_paused", f"Tournament '{tournament.name}' paused", tournament=tournament)
     messages.success(request, f"Tournament '{tournament.name}' has been paused.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -6170,6 +6275,8 @@ def resume_tournament(request, pk):
 
     log_action(request, "tournament_resumed", f"Tournament '{tournament.name}' resumed", tournament=tournament)
     messages.success(request, f"Tournament '{tournament.name}' has been resumed.")
+    if _is_htmx_request(request):
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("dashboard")})
     return redirect("dashboard")
 
 
@@ -6395,7 +6502,7 @@ def toggle_user_suspension(request, user_pk):
         log_action(request, "user_unsuspended", f"User '{target.username}' unsuspended")
         messages.success(request, f"User '{target.username}' has been unsuspended.")
 
-    return redirect("settings")
+    return _htmx_or_redirect(request, settings_view, "settings")
 
 
 # =============================================================================
@@ -6523,7 +6630,7 @@ def seed_participants_view(request, pk):
                 p.save(update_fields=["seed"])
             log_action(request, "seeds_auto_assigned", f"Auto-seeded {len(participants)} participants for '{tournament.name}'", tournament=tournament)
             messages.success(request, "Participants auto-seeded.")
-            return redirect("tournament_config", pk=pk)
+            return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
         content_type = request.META.get("CONTENT_TYPE", "")
         if "application/json" in content_type:
@@ -6550,7 +6657,7 @@ def seed_participants_view(request, pk):
 
         log_action(request, "seeds_updated", f"Seeds updated for '{tournament.name}'", tournament=tournament)
         messages.success(request, "Seeds saved.")
-        return redirect("tournament_config", pk=pk)
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
     return render(request, "core/seed_participants.html", {
         "tournament": tournament,

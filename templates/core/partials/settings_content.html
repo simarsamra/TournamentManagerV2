@@ -1,0 +1,178 @@
+{% include "core/partials/flash_messages_oob.html" %}
+<h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Tournament Settings</h1>
+{% if tournament %}
+{% if is_settings_locked %}
+<div class="alert alert-warning" style="max-width:900px;">
+    This tournament has started. Settings are now locked.
+</div>
+{% endif %}
+<div class="card" style="max-width:700px;">
+    <div class="card-body">
+        <div style="{% if is_settings_locked %}opacity:0.5;pointer-events:none;{% endif %}">
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+            <div class="form-group">
+                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% if field.html_name == "end_date" %}
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    {{ field }}
+                    {% if not is_settings_locked and tournament %}
+                    <button type="submit"
+                            class="btn btn-secondary"
+                            formaction="{% url 'compute_end_date' pk=tournament.pk %}"
+                            title="Auto-calculate end date from match count, courts, and match duration">
+                        Compute
+                    </button>
+                    {% endif %}
+                </div>
+                {% else %}
+                {{ field }}
+                {% endif %}
+                {% if field.help_text %}<small class="text-muted">{{ field.help_text }}</small>{% endif %}
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary" {% if is_settings_locked %}disabled{% endif %}>Save Settings</button>
+        </form>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="max-width:700px; margin-top:1rem; border:1px solid #ef4444;">
+    <div class="card-body">
+        <h3 style="margin-top:0; color:#b91c1c;">Danger Zone</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+            {% if tournament.status == 'active' %}
+            <form method="post" action="{% url 'pause_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary">⏸ Pause Tournament</button>
+            </form>
+            {% elif tournament.status == 'paused' %}
+            <form method="post" action="{% url 'resume_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primary">▶ Resume Tournament</button>
+            </form>
+            {% endif %}
+            {% if tournament.status != 'completed' and tournament.status != 'cancelled' %}
+            <form method="post" action="{% url 'cancel_tournament' pk=tournament.pk %}"
+                  onsubmit="return confirm('Cancel this tournament? All participants will be notified.');">
+                {% csrf_token %}
+                <input type="hidden" name="confirm_cancel" value="CANCEL">
+                <button type="submit" class="btn btn-secondary" style="color:#b91c1c;">✕ Cancel Tournament</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{% url 'duplicate_tournament' pk=tournament.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary">📋 Duplicate Tournament</button>
+            </form>
+        </div>
+        <p class="text-muted">Delete this tournament and its related teams, matches, courts, and time slots.</p>
+        <form method="post" action="{% url 'delete_tournament' pk=tournament.pk %}" onsubmit="return confirm('Delete this tournament permanently?');">
+            {% csrf_token %}
+            <input type="hidden" name="confirm_delete" value="DELETE">
+            <button type="submit" class="btn btn-danger">Delete Tournament</button>
+        </form>
+    </div>
+</div>
+
+<div class="card" style="max-width:900px; margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">User Management</h3>
+        <p class="text-muted">Promote users to organizer role or delete user accounts.</p>
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th style="width: 320px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user_obj in users %}
+                    <tr>
+                        <td>{{ user_obj.username }}</td>
+                        <td>
+                            {% if user_obj.is_staff %}Organizer{% else %}User{% endif %}
+                            {% if not user_obj.is_active %}<span class="badge badge-danger" style="margin-left:4px;">Suspended</span>{% endif %}
+                        </td>
+                        <td>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <form method="post" action="{% url 'set_user_organizer' user_pk=user_obj.pk %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="is_organizer" value="{% if user_obj.is_staff %}0{% else %}1{% endif %}">
+                                    <button type="submit" class="btn btn-secondary">
+                                        {% if user_obj.is_staff %}Demote{% else %}Promote to Organizer{% endif %}
+                                    </button>
+                                </form>
+                                <form method="post" action="{% url 'toggle_user_suspension' user_pk=user_obj.pk %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn {% if user_obj.is_active %}btn-warning{% else %}btn-success{% endif %}">
+                                        {% if user_obj.is_active %}Suspend{% else %}Unsuspend{% endif %}
+                                    </button>
+                                </form>
+                                {% if user.is_superuser %}
+                                <form method="post" action="{% url 'impersonate_user' user_pk=user_obj.pk %}" onsubmit="return confirm('Impersonate {{ user_obj.username|escapejs }}?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline">Impersonate</button>
+                                </form>
+                                {% endif %}
+                                <form method="post" action="{% url 'delete_user_account' user_pk=user_obj.pk %}" onsubmit="return confirm('Delete user account {{ user_obj.username|escapejs }}?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-danger">Delete User</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<p class="text-muted">No tournament configured.</p>
+{% endif %}
+
+{% if user.is_staff %}
+<div class="card" style="max-width:900px; margin-top:1rem;">
+    <div class="card-body">
+        <h3 style="margin-top:0;">Organizer Applications</h3>
+        {% with pending_apps=organizer_applications %}
+        {% if pending_apps %}
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead><tr><th>Applicant</th><th>Organization</th><th>Applied</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                {% for app in pending_apps %}
+                <tr>
+                    <td>{{ app.user.username }}</td>
+                    <td>{{ app.org_name }}</td>
+                    <td class="text-muted">{{ app.created_at|date:"M j, Y" }}</td>
+                    <td><span class="badge {% if app.status == 'pending' %}badge-warning{% elif app.status == 'approved' %}badge-success{% else %}badge-danger{% endif %}">{{ app.get_status_display }}</span></td>
+                    <td>
+                        {% if app.status == 'pending' %}
+                        <form method="post" action="{% url 'review_organizer_application' pk=app.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve">
+                            <button type="submit" class="btn btn-primary btn-sm">✓ Approve</button>
+                        </form>
+                        <form method="post" action="{% url 'review_organizer_application' pk=app.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="reject">
+                            <button type="submit" class="btn btn-outline btn-sm">✗ Reject</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No organizer applications.</p>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
+{% endif %}

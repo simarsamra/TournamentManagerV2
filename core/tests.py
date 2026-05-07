@@ -25,6 +25,7 @@ from .models import (
 	IndividualRegistration,
 	OrganizerProfile,
 	Notification,
+	TeamInvite,
 )
 from .scheduling import generate_fixtures, count_available_slots
 from .standings import calculate_standings, advance_winner
@@ -1371,6 +1372,74 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertContains(response, "Match Info")
 		self.assertContains(response, "Request Reschedule")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
+	def test_team_detail_htmx_request_returns_section_only(self):
+		tournament = self._create_tournament(name="HTMX Team Detail")
+		team = self._create_team(tournament, "HTMX Team", username="htmx_team_captain")
+		self.client.force_login(_captain_user(team))
+
+		response = self.client.get(
+			reverse("team_detail", kwargs={"pk": team.pk}),
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Team Members")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
+	def test_join_tournament_htmx_request_returns_section_only(self):
+		tournament = self._create_tournament(name="Join HTMX")
+		tournament.status = "registration_open"
+		tournament.save(update_fields=["status"])
+		user = User.objects.create_user(username="join_htmx_user", password="pw12345")
+		self.client.force_login(user)
+
+		response = self.client.get(
+			reverse("join_tournament", kwargs={"pk": tournament.pk}),
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, tournament.name)
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
+	def test_my_invites_htmx_decline_returns_partial(self):
+		tournament = self._create_tournament(name="Invites HTMX")
+		team = self._create_team(tournament, "Invite Team", username="invite_captain")
+		invited_user = User.objects.create_user(username="invited_htmx", password="pw12345")
+		invite = TeamInvite.objects.create(
+			team=team,
+			invited_user=invited_user,
+			invited_by=_captain_user(team),
+			status="pending",
+		)
+
+		self.client.force_login(invited_user)
+		response = self.client.post(
+			reverse("decline_team_invite", kwargs={"pk": invite.pk}),
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "no pending team invites")
+		self.assertNotContains(response, "<!DOCTYPE html>")
+
+	def test_registration_review_htmx_approve_returns_partial(self):
+		tournament = self._create_tournament(name="Review HTMX")
+		team_user = User.objects.create_user(username="review_team_captain", password="pw12345")
+		team = Team.objects.create(name="Review Team")
+		TeamMembership.objects.create(team=team, user=team_user, role="captain")
+		part = TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="pending")
+
+		self.client.force_login(self.organizer)
+		response = self.client.post(
+			reverse("approve_registration", kwargs={"tournament_pk": tournament.pk, "reg_pk": part.pk}),
+			HTTP_HX_REQUEST="true",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Team Registrations")
 		self.assertNotContains(response, "<!DOCTYPE html>")
 
 	def test_notifications_htmx_and_mark_read_return_partial(self):
