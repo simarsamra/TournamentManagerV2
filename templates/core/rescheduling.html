@@ -15,12 +15,12 @@
             {% for rr in requests %}
             <tr>
                 <td><a href="{% url 'match_detail' pk=rr.match.pk %}">Match #{{ rr.match.match_number }}</a></td>
-                <td>{{ rr.requested_by.name }}</td>
+                <td>{{ rr.requested_by.get_full_name|default:rr.requested_by.username }}</td>
                 <td>{{ rr.new_time|date:"M d, H:i" }}</td>
                 <td>{{ rr.new_court.name|default:"-" }}</td>
                 <td><span class="badge badge-{{ rr.status }}">{{ rr.get_status_display }}</span></td>
                 <td>
-                    {% if rr.status == "pending" and team and rr.requested_by != team %}
+                    {% if rr.status == "pending" and team and rr.requested_by != request.user %}
                     <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="approve">

@@ -1419,6 +1419,79 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertContains(response, court_x.name)
 		self.assertContains(response, court_z.name)
 
+	def test_reschedule_request_hides_self_actions_and_shows_requester_username(self):
+		tournament = self._create_tournament(name="Reschedule Request UI")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
+		court = Court.objects.create(tournament=tournament, name="Center Court", is_available=True)
+		team1 = self._create_team(tournament, "Team 009", username="team009_captain")
+		team2 = self._create_team(tournament, "Team 010", username="team010_captain")
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=45,
+			team1=team1,
+			team2=team2,
+			court=court,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		captain = _captain_user(team1)
+		RescheduleRequest.objects.create(
+			match=match,
+			requested_by=captain,
+			new_time=timezone.now() + timedelta(days=2),
+			new_court=court,
+			reason="Conflict",
+		)
+
+		self.client.force_login(captain)
+		response = self.client.get(reverse("match_detail", kwargs={"pk": match.pk}))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "team009_captain")
+		self.assertNotContains(response, "Approve")
+		self.assertNotContains(response, "Reject")
+
+	def test_rescheduling_view_shows_requester_and_hides_self_actions(self):
+		tournament = self._create_tournament(name="Rescheduling Dashboard")
+		tournament.status = "active"
+		tournament.started_at = timezone.now()
+		tournament.save(update_fields=["status", "started_at"])
+		court = Court.objects.create(tournament=tournament, name="Center Court", is_available=True)
+		team1 = self._create_team(tournament, "Team 009", username="team009_rescheduling")
+		team2 = self._create_team(tournament, "Team 010", username="team010_rescheduling")
+		match = Match.objects.create(
+			tournament=tournament,
+			match_number=46,
+			team1=team1,
+			team2=team2,
+			court=court,
+			scheduled_time=timezone.now() + timedelta(days=1),
+			scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+			status="upcoming",
+		)
+		captain = _captain_user(team1)
+		RescheduleRequest.objects.create(
+			match=match,
+			requested_by=captain,
+			new_time=timezone.now() + timedelta(days=2),
+			new_court=court,
+			reason="Conflict",
+		)
+
+		self.client.force_login(captain)
+		session = self.client.session
+		session["selected_tournament_id"] = tournament.pk
+		session.save()
+		response = self.client.get(reverse("rescheduling"))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "team009_rescheduling")
+		self.assertNotContains(response, "✓")
+		self.assertNotContains(response, "✗")
+
 	def test_request_reschedule_accepts_open_slot_backed_by_completed_match(self):
 		tournament = self._create_tournament(name="Completed Match Slot")
 		tournament.status = "active"

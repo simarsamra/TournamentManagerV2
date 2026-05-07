@@ -4738,7 +4738,7 @@ def rescheduling_view(request):
     ).select_related("match", "requested_by", "new_court").order_by("-created_at")
     if team and not _is_organizer(request.user):
         requests_qs = requests_qs.filter(
-            Q(requested_by=team) | Q(match__team1=team) | Q(match__team2=team)
+            Q(requested_by=request.user) | Q(match__team1=team) | Q(match__team2=team)
         )
     return render(request, "core/rescheduling.html", {
         "tournament": tournament, "requests": requests_qs,
