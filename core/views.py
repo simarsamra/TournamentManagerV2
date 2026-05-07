@@ -329,6 +329,13 @@ def _team_display_map(tournament, team_ids):
     return dict(Team.objects.filter(pk__in=valid_ids).values_list("pk", "name"))
 
 
+def _match_display_str(match):
+    """Return a human-readable match description using display labels (not shadow team names)."""
+    t1 = _team_display_label(match.tournament, match.team1)
+    t2 = _team_display_label(match.tournament, match.team2)
+    return f"Match {match.match_number}: {t1} vs {t2}"
+
+
 def _is_organizer(user):
     """Check if user is an approved organizer."""
     try:
@@ -1621,23 +1628,55 @@ def dashboard_view(request):
         # Add runner-ups context for completed tournaments
         if tournament.status == "completed":
             if standings:
-                # For round-robin formats, get top 3 from standings
-                context["tournament_champion"] = standings[0]["team"] if standings else tournament.champion
-                context["tournament_runner_up_1"] = standings[1]["team"] if len(standings) > 1 else None
-                context["tournament_runner_up_2"] = standings[2]["team"] if len(standings) > 2 else None
-                context["tournament_champion_label"] = standings[0].get("display_label") or _team_display_label(
-                    tournament, standings[0]["team"]
-                )
-                context["tournament_runner_up_1_label"] = (
-                    standings[1].get("display_label")
-                    if len(standings) > 1
-                    else None
-                )
-                context["tournament_runner_up_2_label"] = (
-                    standings[2].get("display_label")
-                    if len(standings) > 2
-                    else None
-                )
+                # For hybrid format, the actual champion is the knockout-phase winner
+                # (tournament.champion), not standings[0] which reflects group-stage RR.
+                if tournament.format == "hybrid" and tournament.champion:
+                    context["tournament_champion"] = tournament.champion
+                    context["tournament_champion_label"] = _team_display_label(tournament, tournament.champion)
+                    # Runner-up is the other finalist (lost the final), not standings position
+                    _final = (
+                        tournament.matches
+                        .filter(bracket_type="winners", next_match__isnull=True,
+                                group="", team1__isnull=False, team2__isnull=False,
+                                status="confirmed")
+                        .order_by("-round_number")
+                        .first()
+                    )
+                    if _final and _final.winner:
+                        _runner_up = _final.team2 if _final.winner == _final.team1 else _final.team1
+                    else:
+                        _runner_up = None
+                    context["tournament_runner_up_1"] = _runner_up
+                    context["tournament_runner_up_1_label"] = (
+                        _team_display_label(tournament, _runner_up) if _runner_up else None
+                    )
+                    # 3rd place: winner of the third-place match (if one exists)
+                    _third_match = get_third_place_match(tournament)
+                    if _third_match and _third_match.status == "confirmed" and _third_match.winner:
+                        _third = _third_match.winner
+                    else:
+                        _third = None
+                    context["tournament_runner_up_2"] = _third
+                    context["tournament_runner_up_2_label"] = (
+                        _team_display_label(tournament, _third) if _third else None
+                    )
+                else:
+                    context["tournament_champion"] = standings[0]["team"] if standings else tournament.champion
+                    context["tournament_champion_label"] = standings[0].get("display_label") or _team_display_label(
+                        tournament, standings[0]["team"]
+                    )
+                    context["tournament_runner_up_1"] = standings[1]["team"] if len(standings) > 1 else None
+                    context["tournament_runner_up_2"] = standings[2]["team"] if len(standings) > 2 else None
+                    context["tournament_runner_up_1_label"] = (
+                        standings[1].get("display_label")
+                        if len(standings) > 1
+                        else None
+                    )
+                    context["tournament_runner_up_2_label"] = (
+                        standings[2].get("display_label")
+                        if len(standings) > 2
+                        else None
+                    )
             else:
                 # For bracket formats, use tournament.champion
                 context["tournament_champion"] = tournament.champion
@@ -3653,7 +3692,7 @@ def submit_score(request, pk):
             messages.success(request, "Score recorded and confirmed instantly.")
         else:
             log_action(request, "score_submitted",
-                       f"Score submitted for {match}: {match.score_team1}-{match.score_team2}",
+                       f"Score submitted for {_match_display_str(match)}: {match.score_team1}-{match.score_team2}",
                        tournament=match.tournament)
             if _is_critical_stage_match(match):
                 messages.success(
@@ -3696,7 +3735,7 @@ def confirm_score(request, pk):
         messages.error(request, "Draws are not allowed in elimination matches.")
         return _redirect_to_match_detail(request, pk)
     log_action(request, "score_confirmed",
-               f"Score confirmed for {match}: {match.score_team1}-{match.score_team2}",
+               f"Score confirmed for {_match_display_str(match)}: {match.score_team1}-{match.score_team2}",
                tournament=tournament)
     messages.success(request, "Score locked. Match marked done.")
     if _is_htmx_request(request):
@@ -3728,7 +3767,7 @@ def dispute_score(request, pk):
     match.notes = f"{prefix} by {request.user.username}: {dispute_note}" if dispute_note else f"{prefix} by {request.user.username}"
     match.save()
     log_action(request, "score_disputed",
-               f"Score disputed for {match} by {request.user.username}: {dispute_note}",
+               f"Score disputed for {_match_display_str(match)} by {request.user.username}: {dispute_note}",
                tournament=match.tournament)
     if match.critical_dispute:
         messages.warning(request, "Critical-stage dispute filed. Organizers will review with priority.")
@@ -3782,7 +3821,7 @@ def resolve_dispute(request, pk):
             match.notes += f"\nResolution notes: {resolution_notes}"
         match.save()
         log_action(request, "dispute_resolved",
-                   f"Dispute resolved for {match}: {match.score_team1}-{match.score_team2}",
+                   f"Dispute resolved for {_match_display_str(match)}: {match.score_team1}-{match.score_team2}",
                    tournament=tournament)
         messages.success(request, "Dispute resolved. Match marked done.")
     if _is_htmx_request(request):
@@ -3922,7 +3961,7 @@ def request_reschedule(request, pk):
         if had_pending_no_show:
             resolved.update(status="resolved", resolved_at=timezone.now())
         log_action(request, "reschedule_requested",
-                   f"Reschedule requested for {match} to {new_dt}",
+                   f"Reschedule requested for {_match_display_str(match)} to {new_dt}",
                    tournament=match.tournament)
         if had_pending_no_show:
             messages.success(request, "Reschedule request sent. The pending no-show notice has been cleared.")
@@ -3979,14 +4018,14 @@ def respond_reschedule(request, pk):
         if rr.new_court:
             match.court = rr.new_court
         match.save()
-        log_action(request, "reschedule_approved", f"Reschedule approved for {match}",
+        log_action(request, "reschedule_approved", f"Reschedule approved for {_match_display_str(match)}",
                    tournament=match.tournament)
         messages.success(request, "Reschedule approved!")
     elif action == "reject":
         rr.status = "rejected"
         rr.responded_at = timezone.now()
         rr.save()
-        log_action(request, "reschedule_rejected", f"Reschedule rejected for {match}",
+        log_action(request, "reschedule_rejected", f"Reschedule rejected for {_match_display_str(match)}",
                    tournament=match.tournament)
         messages.info(request, "Reschedule rejected.")
     if _is_htmx_request(request):

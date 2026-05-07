@@ -300,8 +300,12 @@
                                         {% endfor %}
                                     </div>
                                     {% if can_reschedule %}
-                                    <input type="hidden" name="{{ reschedule_form.open_slot.html_name }}" value="{{ option.slot.pk }}">
-                                    <button type="submit" class="btn btn-primary btn-sm slot-submit-inline">&#10003; Request Reschedule with this Slot</button>
+                                    <button
+                                        type="submit"
+                                        class="btn btn-primary btn-sm slot-submit-inline"
+                                        name="{{ reschedule_form.open_slot.html_name }}"
+                                        value="{{ option.slot.pk }}"
+                                    >&#10003; Request Reschedule with this Slot</button>
                                     {% endif %}
                                 </div>
                             </label>
