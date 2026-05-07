@@ -1,0 +1,9 @@
+{% firstof unread_notification_count unread_count 0 as badge_count %}
+<span id="notification-badge-wrapper" hx-swap-oob="true">
+    {% if badge_count %}
+    <span id="notification-badge"
+          style="position:absolute;top:-4px;right:-4px;background:var(--danger,#e74c3c);color:#fff;border-radius:50%;font-size:0.65rem;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:700;">
+        {{ badge_count }}
+    </span>
+    {% endif %}
+</span>

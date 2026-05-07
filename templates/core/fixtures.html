@@ -7,7 +7,12 @@
 </div>
 
 {% if tournament %}
-<form method="get" class="filters">
+<form method="get"
+      class="filters"
+      hx-get="{% url 'fixtures' %}"
+      hx-target="#fixtures-live-region"
+      hx-swap="innerHTML"
+      hx-push-url="true">
     <div class="form-group" style="margin-bottom:0">
         <label>Status</label>
         <select name="status">
@@ -64,7 +69,11 @@
 </form>
 {% endif %}
 
-<div id="fixtures-live-region" data-auto-refresh="true" data-refresh-interval="10000">
+<div id="fixtures-live-region"
+     hx-get="{% url 'fixtures' %}?partial=1{% if request.GET.urlencode %}&{{ request.GET.urlencode }}{% endif %}"
+     hx-trigger="every 10s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#fixtures-live-region"
+     hx-swap="innerHTML">
     {% include "core/partials/fixtures_content.html" %}
 </div>
 {% endblock %}

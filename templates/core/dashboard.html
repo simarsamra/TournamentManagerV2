@@ -3,7 +3,11 @@
 {% block page_header %}Dashboard{% endblock %}
 {% block content %}
 <h1 class="page-title">Dashboard</h1>
-<div id="dashboard-live-region" data-auto-refresh="true" data-refresh-interval="15000">
+<div id="dashboard-live-region"
+     hx-get="{% url 'dashboard' %}?partial=1"
+     hx-trigger="every 15s[!window.tmShouldPauseRefresh(this)]"
+     hx-target="#dashboard-live-region"
+     hx-swap="innerHTML">
     {% include "core/partials/dashboard_content.html" %}
 </div>
 {% endblock %}

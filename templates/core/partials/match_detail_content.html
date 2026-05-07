@@ -1,3 +1,4 @@
+{% include "core/partials/flash_messages_oob.html" %}
 {% if reschedule_requests %}
 <div class="card mb-2 card-warning">
     <div class="card-header">🔄 Reschedule Requests</div>
@@ -14,12 +15,14 @@
                 <td><span class="badge badge-{{ rr.status }}">{{ rr.get_status_display }}</span></td>
                 <td>
                     {% if rr.status == "pending" and is_participant and rr.requested_by != request.user %}
-                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;">
+                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;"
+                          hx-post="{% url 'respond_reschedule' pk=rr.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="approve">
                         <button type="submit" class="btn btn-success btn-sm">Approve</button>
                     </form>
-                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;">
+                    <form method="post" action="{% url 'respond_reschedule' pk=rr.pk %}" style="display:inline;"
+                          hx-post="{% url 'respond_reschedule' pk=rr.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject">
                         <button type="submit" class="btn btn-danger btn-sm">Reject</button>
@@ -75,7 +78,8 @@
                 {% if is_organizer %}
                 <p class="text-muted mb-1">Organizer entries are confirmed instantly (no opponent approval needed).</p>
                 {% endif %}
-                <form method="post" action="{% url 'submit_score' pk=match.pk %}">
+                <form method="post" action="{% url 'submit_score' pk=match.pk %}"
+                      hx-post="{% url 'submit_score' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                     {% csrf_token %}
                     <div class="grid grid-2">
                         <div class="form-group">
@@ -109,11 +113,13 @@
                 <p class="text-muted mb-1"><strong>Critical stage match:</strong> disputes are expedited and reviewed with stricter organizer checks.</p>
                 {% endif %}
                 <div class="d-flex gap-1">
-                    <form method="post" action="{% url 'confirm_score' pk=match.pk %}">
+                    <form method="post" action="{% url 'confirm_score' pk=match.pk %}"
+                          hx-post="{% url 'confirm_score' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-success">✓ Lock Score</button>
                     </form>
-                    <form method="post" action="{% url 'dispute_score' pk=match.pk %}">
+                    <form method="post" action="{% url 'dispute_score' pk=match.pk %}"
+                          hx-post="{% url 'dispute_score' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <input type="text" name="dispute_notes" class="form-control" placeholder="Reason (optional)" style="display:inline;width:200px;">
                         <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to dispute this score? An organizer will need to review and resolve it manually.')">✗ Dispute</button>
@@ -130,7 +136,8 @@
                 {% if match.critical_dispute %}
                 <p class="mb-1"><strong>Critical-stage dispute:</strong> resolution notes are required.</p>
                 {% endif %}
-                <form method="post" action="{% url 'resolve_dispute' pk=match.pk %}">
+                <form method="post" action="{% url 'resolve_dispute' pk=match.pk %}"
+                      hx-post="{% url 'resolve_dispute' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                     {% csrf_token %}
                     <div class="grid grid-2">
                         <div class="form-group">
@@ -178,6 +185,7 @@
                     This updates standings immediately.
                 </p>
                 <form method="post" action="{% url 'override_match_result' pk=match.pk %}"
+                      hx-post="{% url 'override_match_result' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML"
                       onsubmit="return confirm('Override the result of this match? This will update standings.')">
                     {% csrf_token %}
                     <div class="grid grid-2">
@@ -209,7 +217,8 @@
             <div class="card-header">Report Opponent No-Show</div>
             <div class="card-body">
                 <p class="mb-1">If the other team did not arrive, report it here. They will have 24 hours to request a reschedule before the result becomes a forfeit automatically.</p>
-                <form method="post" action="{% url 'report_no_show' pk=match.pk %}">
+                <form method="post" action="{% url 'report_no_show' pk=match.pk %}"
+                      hx-post="{% url 'report_no_show' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                     {% csrf_token %}
                     <input type="hidden" name="no_show_team" value="{% if match.team1 == team %}{{ match.team2.pk }}{% else %}{{ match.team1.pk }}{% endif %}">
                     <button type="submit" class="btn btn-warning" onclick="return confirm('Report the opponent as a no-show?')">Report Opponent No-Show</button>
@@ -224,12 +233,14 @@
             <div class="card-body">
                 <p class="mb-1">Mark a team as no-show. Opponent will win by forfeit.</p>
                 <div class="d-flex gap-1">
-                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
+                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;"
+                          hx-post="{% url 'mark_no_show' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <input type="hidden" name="no_show_team" value="{{ match.team1.pk }}">
                         <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ team1_label }} as no-show?')">{{ team1_label }} No-Show</button>
                     </form>
-                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;">
+                    <form method="post" action="{% url 'mark_no_show' pk=match.pk %}" style="display:inline;"
+                          hx-post="{% url 'mark_no_show' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                         {% csrf_token %}
                         <input type="hidden" name="no_show_team" value="{{ match.team2.pk }}">
                         <button type="submit" class="btn btn-danger" onclick="return confirm('Mark {{ team2_label }} as no-show?')">{{ team2_label }} No-Show</button>
@@ -243,7 +254,8 @@
         <div class="card">
             <div class="card-header">Request Reschedule</div>
             <div class="card-body">
-                <form method="post" action="{% url 'request_reschedule' pk=match.pk %}">
+                <form method="post" action="{% url 'request_reschedule' pk=match.pk %}"
+                      hx-post="{% url 'request_reschedule' pk=match.pk %}" hx-target="#match-detail-live-region" hx-swap="innerHTML">
                     {% csrf_token %}
                     <div class="form-group">
                         <label>Choose Open Slot</label>

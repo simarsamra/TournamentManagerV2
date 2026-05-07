@@ -311,56 +311,17 @@ document.addEventListener('DOMContentLoaded', function() {
         updateRegistrationPreview();
     }
 
-    // Lightweight live section refresh
-    document.querySelectorAll('[data-auto-refresh="true"]').forEach(function(section) {
-        const intervalMs = parseInt(section.getAttribute('data-refresh-interval') || '15000', 10);
-        let refreshing = false;
-
-        const refreshSection = function() {
-            if (document.hidden || refreshing || !section.isConnected) {
-                return;
-            }
-
-            const active = document.activeElement;
-            if (active && section.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(active.tagName)) {
-                return;
-            }
-
-            const url = new URL(window.location.href);
-            url.searchParams.set('partial', '1');
-            refreshing = true;
-
-            fetch(url.toString(), {
-                headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                cache: 'no-store'
-            })
-                .then(function(response) {
-                    if (!response.ok) {
-                        throw new Error('Auto refresh failed');
-                    }
-                    return response.text();
-                })
-                .then(function(html) {
-                    if (html && section.isConnected) {
-                        // Flicker-free swap: only replace when new content is ready.
-                        // Build off-screen, then do a single atomic innerHTML assignment
-                        // so there is never a blank frame between old and new content.
-                        const trimmed = html.trim();
-                        if (trimmed && trimmed !== section.innerHTML.trim()) {
-                            section.innerHTML = trimmed;
-                        }
-                    }
-                })
-                .catch(function() {
-                    // Silent fail to avoid interrupting the user experience.
-                })
-                .finally(function() {
-                    refreshing = false;
-                });
-        };
-
-        window.setInterval(refreshSection, intervalMs);
-    });
+    window.tmShouldPauseRefresh = function(section) {
+        if (!section || document.hidden || !section.isConnected) {
+            return true;
+        }
+        var active = document.activeElement;
+        return !!(
+            active &&
+            section.contains(active) &&
+            ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(active.tagName)
+        );
+    };
 });
 
 // ── Fireworks Animation for Tournament Celebration ──────────────────────────

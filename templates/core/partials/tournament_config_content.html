@@ -1,0 +1,343 @@
+{% include "core/partials/flash_messages_oob.html" %}
+{% if tournament.status == 'completed' %}
+<div class="alert alert-success" style="display:flex;align-items:center;gap:0.75rem;font-size:1.05rem;margin-bottom:1.25rem;">
+    <span style="font-size:1.6rem;">🏆</span>
+    <div>
+        <strong>Tournament Complete!</strong>
+        {% if tournament.champion %}
+                    Champion: <strong>{{ tournament_champion_label|default:tournament.champion.name }}</strong>
+        {% else %}
+            No champion recorded.
+        {% endif %}
+        {% if tournament.completed_at %}<span class="text-muted" style="font-size:0.85rem;margin-left:0.5rem;">Completed {{ tournament.completed_at|date:"M d, Y H:i" }}</span>{% endif %}
+    </div>
+</div>
+{% endif %}
+
+<h1 class="page-title">{{ tournament.name }} <span class="badge badge-{{ tournament.status }}">{{ tournament.get_status_display }}</span></h1>
+<p class="text-muted mb-2">Sport: {{ tournament.get_sport_type_display }} | Registration: {{ tournament.get_registration_mode_display }} | Format: {{ tournament.get_format_display }} | Players/{{ tournament.participant_label }}: {{ tournament.players_per_team }} | Expected {{ tournament.participant_label_plural }}: {{ tournament.expected_teams_count|default:"-" }}{% if tournament.matches_per_court_per_day %} | Matches/Court/Day: {{ tournament.matches_per_court_per_day }}{% endif %} | Start: {{ tournament.start_date|default:"-" }} | Duration: {{ tournament.default_match_duration }}min</p>
+
+<div class="grid grid-3">
+    <!-- Courts -->
+    <div class="card">
+        <div class="card-header">Courts ({{ courts.count }})</div>
+        <div class="card-body">
+            {% for court in courts %}
+            <div class="mb-1" style="padding:0.5rem;background:#f8f9fa;border-radius:6px;">
+                <div class="d-flex justify-between align-center">
+                    <span>{{ court.name }}</span>
+                    <span class="badge {% if court.is_available %}badge-active{% else %}badge-withdrawn{% endif %}">
+                        {% if court.is_available %}Available{% else %}Unavailable{% endif %}
+                    </span>
+                </div>
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    {% with avails=court.availabilities.all %}
+                        {% if avails %}
+                            {% for avail in avails %}
+                                <div>{{ avail.get_weekday_display }} • {{ avail.start_time|time:"H:i" }} - {{ avail.end_time|time:"H:i" }}{% if avail.start_date or avail.end_date %} • {{ avail.start_date|default:"Any" }} to {{ avail.end_date|default:"Open" }}{% endif %}</div>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">No recurring availability set yet.</span>
+                        {% endif %}
+                    {% endwith %}
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted">No courts added yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <form method="post" action="{% url 'add_court' pk=tournament.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="availability_present" value="1">
+                <div class="form-group">
+                    <label>Court Name</label>
+                    {{ court_form.name }}
+                </div>
+                <div class="form-group">
+                    <label class="d-flex align-center" style="gap:0.5rem;">
+                        {{ court_form.is_available }}
+                        <span>Available for scheduling</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Add Court</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Availability -->
+    <div class="card">
+        <div class="card-header">
+            Court Availability
+            {% if required_matches %}
+            <span class="text-muted" style="font-size:0.8rem;font-weight:normal;margin-left:0.75rem;">
+                {{ available_slots }} schedulable slot{{ available_slots|pluralize }} &nbsp;/&nbsp; ~{{ required_matches }} match{{ required_matches|pluralize }} needed
+                {% if available_slots < required_matches %}
+                <span style="color:#dc3545;font-weight:600;">&#9888; Not enough slots</span>
+                {% endif %}
+            </span>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            {% for ca in court_availabilities %}
+            <div class="mb-1 d-flex justify-between align-center" style="font-size:0.85rem;gap:0.5rem;">
+                <div>
+                    <strong>{{ ca.court.name }}</strong> — {{ ca.get_weekday_display }} {{ ca.match_time_summary }}
+                    • {{ ca.matches_per_court_per_day }} match{{ ca.matches_per_court_per_day|pluralize }} per day
+                    {% if ca.start_date or ca.end_date %}
+                    <span class="text-muted">({{ ca.start_date|default:"Any" }} to
+                        {% if ca.end_date %}<span style="color:#dc3545;">{{ ca.end_date }}</span>{% else %}<span title="Open-ended — uses tournament end date or +365 days as fallback">Open</span>{% endif %})</span>
+                    {% else %}
+                    <span class="text-muted">(Open-ended)</span>
+                    {% endif %}
+                    {% if not ca.is_active %}<span class="badge" style="background:#6c757d;color:#fff;font-size:0.7rem;">Inactive</span>{% endif %}
+                </div>
+                <form method="post" action="{% url 'delete_court_availability' pk=tournament.pk availability_pk=ca.pk %}" style="margin:0;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.1rem 0.45rem;font-size:0.75rem;" title="Delete this availability">✕</button>
+                </form>
+            </div>
+            {% empty %}
+            <p class="text-muted">No recurring availability added yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <p class="text-muted" style="font-size:0.85rem;">Select multiple courts and weekdays once, then apply the same hours in a single step. Existing duplicates are skipped automatically.</p>
+            <form id="court-availability-form" method="post" action="{% url 'add_court_availability' pk=tournament.pk %}" data-default-match-duration="{{ tournament.default_match_duration|default:'35' }}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <div class="d-flex justify-between align-center" style="gap:0.5rem;flex-wrap:wrap;">
+                        <label>Courts</label>
+                        <div class="d-flex" style="gap:0.35rem;flex-wrap:wrap;">
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="courts" data-check-mode="all">All Courts</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="courts" data-check-mode="none">Clear</button>
+                        </div>
+                    </div>
+                    <div data-check-group="courts" style="padding:0.75rem;border:1px solid #e0e0e0;border-radius:6px;max-height:150px;overflow:auto;background:#fafafa;">
+                        {{ court_availability_form.courts }}
+                    </div>
+                    <small class="text-muted">Apply one recurring schedule to any number of courts.</small>
+                </div>
+                <div class="form-group">
+                    <div class="d-flex justify-between align-center" style="gap:0.5rem;flex-wrap:wrap;">
+                        <label>Weekdays</label>
+                        <div class="d-flex" style="gap:0.35rem;flex-wrap:wrap;">
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="weekdays">Weekdays</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="weekend">Weekend</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="all">Every Day</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-check-target="weekdays" data-check-mode="none">Clear</button>
+                        </div>
+                    </div>
+                    <div data-check-group="weekdays" style="padding:0.75rem;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;">
+                        {{ court_availability_form.weekdays }}
+                    </div>
+                </div>
+                <div class="form-group"><label>Matches per Court per Day</label>{{ court_availability_form.matches_per_court_per_day }}<small class="text-muted">Choose how many match slots each selected court should hold on every chosen weekday.</small></div>
+                <div class="form-group" id="explicit-match-slots-section" style="display:none;">
+                    <label>Match slots</label>
+                    <div id="match-slots-container" style="display:grid;gap:0.75rem;"></div>
+                    <small class="text-muted">Provide exact start and end times for each match slot. If left empty, the system infers evenly spaced matches from the first start time and duration.</small>
+                </div>
+                <div style="display:none;">
+                    {{ court_availability_form.start_time }}
+                    {{ court_availability_form.additional_start_times }}
+                    {{ court_availability_form.end_time }}
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group"><label>Start Date</label>{{ court_availability_form.start_date }}<small class="text-muted">Leave blank to start from the tournament start date.</small></div>
+                    <div class="form-group">
+                        <label>End Date</label>
+                        <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
+                            {{ court_availability_form.end_date }}
+                            <button type="button"
+                                    id="estimate-end-date-button"
+                                    class="btn btn-outline btn-sm"
+                                    hx-post="{% url 'estimate_court_availability_end_date' pk=tournament.pk %}"
+                                    hx-include="#court-availability-form"
+                                    hx-target="#availability-estimate-result"
+                                    hx-swap="innerHTML">Estimate End Date</button>
+                        </div>
+                        <small class="text-muted">Leave blank for open-ended recurring availability (recommended).</small>
+                        <div id="availability-estimate-result" style="margin-top:0.5rem;font-size:0.9rem;"></div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="d-flex align-center" style="gap:0.5rem;">
+                        {{ court_availability_form.is_active }}
+                        <span>Availability is active immediately</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Apply Availability</button>
+            </form>
+            <hr style="margin:1rem 0;">
+            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Manual Extra Slot</h4>
+            {% for ts in time_slots %}
+            <div class="mb-1" style="font-size:0.85rem;">
+                {{ ts.start_time|date:"M d" }}: {{ ts.start_time|date:"H:i" }} - {{ ts.end_time|date:"H:i" }}{% if ts.court %} • {{ ts.court.name }}{% endif %}
+            </div>
+            {% endfor %}
+            <form method="post" action="{% url 'add_timeslot' pk=tournament.pk %}">
+                {% csrf_token %}
+                <div class="form-group"><label>Court</label>{{ timeslot_form.court }}</div>
+                <div class="form-group"><label>Date</label>{{ timeslot_form.date }}</div>
+                <div class="grid grid-2">
+                    <div class="form-group"><label>Start</label>{{ timeslot_form.start_time }}</div>
+                    <div class="form-group"><label>End</label>{{ timeslot_form.end_time }}</div>
+                </div>
+                <button type="submit" class="btn btn-outline btn-sm">Add Slot</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Teams / Participants -->
+    <div class="card">
+        <div class="card-header">
+            {{ tournament.participant_label_plural }} ({{ active_teams_count }}{% if tournament.expected_teams_count %}/{{ tournament.expected_teams_count }}{% endif %})
+            {% if tournament.expected_teams_count %}
+                {% if active_teams_count >= tournament.expected_teams_count %}
+                <span class="badge badge-withdrawn" style="margin-left:0.5rem;">Full</span>
+                {% else %}
+                <span class="badge badge-scheduled" style="margin-left:0.5rem;">{{ remaining_spots }} open</span>
+                {% endif %}
+            {% endif %}
+        </div>
+        <div class="card-body">
+            {% for p in team_participations %}
+            <div class="mb-1" style="padding:0.5rem;border-radius:6px;{% if p.is_underfilled %}background:#fff8e1;border:1px solid #f0ad4e;{% else %}background:#f8f9fa;{% endif %}">
+                <div class="d-flex justify-between align-center">
+                    <strong>{{ p.display_name }}</strong>
+                    <div class="d-flex align-center" style="gap:0.5rem;">
+                        {% if p.is_underfilled %}<span class="badge" style="background:#f0ad4e;color:#fff;">⚠ Pending (forming)</span>{% endif %}
+                        <span class="badge badge-{{ p.status }}">{{ p.get_status_display }}</span>
+                        {% if tournament.status != 'active' and tournament.status != 'completed' %}
+                        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=p.pk %}" style="margin:0;" onsubmit="return confirm('Remove {{ p.display_name }} from this tournament?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm" style="background:#dc3545;color:#fff;padding:0.15rem 0.5rem;font-size:0.75rem;">Remove</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Sport: {{ p.team.get_sport_type_display }}
+                </div>
+                {% if p.team.department %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Department: {{ p.team.department }}
+                </div>
+                {% endif %}
+                {% if tournament.players_per_team > 1 and p.team.players.all %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Players: {% for player in p.team.players.all %}{{ player.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                </div>
+                {% endif %}
+                <div style="font-size:0.8rem;margin-top:0.25rem;{% if p.is_underfilled %}color:#b8690a;font-weight:600;{% else %}color:#666;{% endif %}">
+                    Members: {{ p.member_count }} / {{ tournament.players_per_team }}{% if p.is_underfilled %} &mdash; needs {{ p.players_needed }} more{% endif %}
+                </div>
+                <div style="font-size:0.8rem;color:#666;margin-top:0.25rem;">
+                    Preferred courts: {% if p.preferred_court_names %}{{ p.preferred_court_names|join:", " }}{% else %}<span class="text-danger">Not set</span>{% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted">No {{ tournament.participant_label_plural|lower }} registered yet.</p>
+            {% endfor %}
+            <hr style="margin:1rem 0;">
+            <h4 style="font-size:0.9rem;margin-bottom:0.5rem;">Add {{ tournament.participant_label_plural }} via Text</h4>
+            <form method="post" action="{% url 'add_teams_bulk' pk=tournament.pk %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="form-group">
+                    {{ bulk_team_form.teams_text }}
+                    <small class="text-muted">{{ bulk_team_form.teams_text.help_text }}</small>
+                </div>
+                <h4 style="font-size:0.9rem;margin:0.75rem 0 0.5rem;">Or Upload CSV/Text File</h4>
+                <div class="form-group">
+                    {{ bulk_team_file_form.file }}
+                    <small class="text-muted">{{ bulk_team_file_form.file.help_text }}</small>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Add {{ tournament.participant_label_plural }}</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-2">
+    <div class="card-body">
+        <div class="d-flex justify-between align-center" style="gap:1rem; flex-wrap:wrap;">
+            <div>
+                <strong>Workflow</strong><br>
+                <span class="text-muted">Status: {{ tournament.get_status_display }} • {{ active_teams_count }} {{ tournament.participant_label_plural|lower }}{% if tournament.expected_teams_count %} / {{ tournament.expected_teams_count }} expected{% endif %} • {{ courts.count }} courts</span>
+            </div>
+            <div class="d-flex" style="gap:0.5rem; flex-wrap:wrap;">
+                {% if tournament.status == 'setup' or tournament.status == 'ready' %}
+                <form method="post" action="{% url 'open_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm">Open Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'registration_open' %}
+                {% if underfilled_count > 0 %}
+                <span title="{{ underfilled_count }} team(s) still forming (incomplete roster)" style="font-size:0.8rem;color:#b8690a;font-weight:600;">⚠ {{ underfilled_count }} team{{ underfilled_count|pluralize }} forming</span>
+                {% endif %}
+                <form method="post" action="{% url 'close_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning btn-sm"{% if underfilled_count > 0 %} onclick="return confirm('{{ underfilled_count }} team(s) are still forming and will be blocked. Resolve their rosters first, then try again.')"{% endif %}>Close Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'scheduled' %}
+                <form method="post" action="{% url 'open_registration' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Re-open registration? The current draft schedule will need to be regenerated once you close registration again.')">Re-open Registration</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'ready' or tournament.status == 'registration_open' or tournament.status == 'setup' %}
+                <form method="post" action="{% url 'generate_schedule' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm">Generate Schedule Draft</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'scheduled' %}
+                <form method="post" action="{% url 'start_tournament' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Publish this reviewed schedule and start the tournament?')">Publish & Start</button>
+                </form>
+                {% endif %}
+
+                {% if tournament.status == 'active' %}
+                <form method="post" action="{% url 'complete_tournament' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Mark this tournament as completed? This will determine the champion from current results.')">Mark as Completed</button>
+                </form>
+                {% endif %}
+
+                {% if show_proceed_knockout %}
+                <form method="post" action="{% url 'proceed_to_knockout' pk=tournament.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Seed the top teams from group standings into the knockout bracket? This action cannot be undone.')">Proceed to Knockout Phase →</button>
+                </form>
+                {% endif %}
+
+                <!-- Estimate End Date button -->
+                {% if tournament.status != 'completed' %}
+                <button type="button"
+                        class="btn btn-outline btn-sm"
+                        id="btn-estimate-end-date"
+                        hx-get="{% url 'estimate_tournament_end_date' pk=tournament.pk %}"
+                        hx-target="#end-date-estimate-panel"
+                        hx-swap="outerHTML">📅 Estimate End Date</button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- End date estimation result panel (hidden until requested) -->
+        <div id="end-date-estimate-panel" style="display:none;margin-top:1rem;padding:0.75rem;background:#f0f8ff;border:1px solid #b8d9f8;border-radius:6px;">
+            <strong>End Date Estimate</strong>
+            <div id="end-date-estimate-content" style="margin-top:0.5rem;font-size:0.9rem;"></div>
+        </div>
+
+        <div class="mt-2" style="font-size:0.9rem;">
+            <strong>Registration link:</strong>
+            <a href="{% url 'tournament_register' pk=tournament.pk %}" hx-boost="false">{% url 'tournament_register' pk=tournament.pk %}</a>
+        </div>
+    </div>
+</div>
