@@ -339,6 +339,10 @@ def _match_display_str(match):
 def _is_organizer(user):
     """Check if user is an approved organizer."""
     try:
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or user.is_staff:
+            return True
         return hasattr(user, 'organizer_profile') and user.organizer_profile.verified
     except:
         return False
