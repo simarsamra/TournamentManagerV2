@@ -5982,6 +5982,12 @@ def tournament_public_detail(request, pk):
         .select_related("team1", "team2", "court")
         .order_by("round_number", "match_number")
     )
+    match_team_ids = {
+        m.team1_id for m in matches if m.team1_id
+    } | {
+        m.team2_id for m in matches if m.team2_id
+    }
+    team_name_map = _team_display_map(tournament, match_team_ids)
 
     is_registered = False
     if request.user.is_authenticated:
@@ -5991,6 +5997,7 @@ def tournament_public_detail(request, pk):
         "tournament": tournament,
         "participants": participants,
         "matches": matches,
+        "team_name_map": team_name_map,
         "is_registered": is_registered,
         "participant_count": len(participants),
     }
