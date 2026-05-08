@@ -309,6 +309,10 @@ def _team_display_label(tournament, team):
         ).first()
         if reg:
             return reg.display_name
+    if getattr(team, "is_internal", False):
+        player_name = team.players.order_by("id").values_list("name", flat=True).first()
+        if player_name:
+            return player_name
     return team.name
 
 
@@ -324,6 +328,18 @@ def _team_display_map(tournament, team_ids):
                 shadow_team_id__in=valid_ids,
             ).values_list("shadow_team_id", "display_name")
         )
+        unresolved_ids = [tid for tid in valid_ids if tid not in labels]
+        if unresolved_ids:
+            internal_ids = set(
+                Team.objects.filter(pk__in=unresolved_ids, is_internal=True).values_list("pk", flat=True)
+            )
+            if internal_ids:
+                for team_id, player_name in Player.objects.filter(team_id__in=internal_ids).order_by("id").values_list("team_id", "name"):
+                    if team_id not in labels and player_name:
+                        labels[team_id] = player_name
+        fallback_ids = [tid for tid in valid_ids if tid not in labels]
+        if fallback_ids:
+            labels.update(dict(Team.objects.filter(pk__in=fallback_ids).values_list("pk", "name")))
         return labels
     return dict(Team.objects.filter(pk__in=valid_ids).values_list("pk", "name"))
 
