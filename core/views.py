@@ -5976,17 +5976,14 @@ def tournament_public_detail(request, pk):
         )
 
     # Bracket / standings for completed / active
-    matches = (
+    matches = list(
         tournament.matches.filter(team1__isnull=False, team2__isnull=False)
         .select_related("team1", "team2", "court")
         .order_by("round_number", "match_number")
     )
-    match_team_ids = {
-        m.team1_id for m in matches if m.team1_id
-    } | {
-        m.team2_id for m in matches if m.team2_id
-    }
-    team_name_map = _team_display_map(tournament, match_team_ids)
+    for m in matches:
+        m.team1_label = _team_display_label(tournament, m.team1)
+        m.team2_label = _team_display_label(tournament, m.team2)
 
     is_registered = False
     if request.user.is_authenticated:
@@ -5996,7 +5993,6 @@ def tournament_public_detail(request, pk):
         "tournament": tournament,
         "participants": participants,
         "matches": matches,
-        "team_name_map": team_name_map,
         "is_registered": is_registered,
         "participant_count": len(participants),
     }

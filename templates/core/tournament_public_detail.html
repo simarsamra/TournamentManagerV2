@@ -121,7 +121,7 @@
                         <td>{{ m.round_number }}</td>
                         <td>
                             <a href="{% url 'match_detail' pk=m.pk %}">
-                                {{ team_name_map|dict_get:m.team1_id|default:m.team1.name }} vs {{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}
+                                {{ m.team1_label|default:m.team1.name }} vs {{ m.team2_label|default:m.team2.name }}
                             </a>
                         </td>
                         <td><span class="badge">{{ m.get_status_display }}</span></td>
