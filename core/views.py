@@ -305,7 +305,7 @@ def _team_display_label(tournament, team):
         return "TBD"
     if tournament and tournament.registration_mode == "individual":
         reg = TournamentIndividualRegistration.objects.filter(
-            tournament=tournament, shadow_team=team, status="active"
+            tournament=tournament, shadow_team=team
         ).first()
         if reg:
             return reg.display_name
@@ -321,7 +321,6 @@ def _team_display_map(tournament, team_ids):
         labels = dict(
             TournamentIndividualRegistration.objects.filter(
                 tournament=tournament,
-                status="active",
                 shadow_team_id__in=valid_ids,
             ).values_list("shadow_team_id", "display_name")
         )
