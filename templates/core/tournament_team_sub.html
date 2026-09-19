@@ -37,7 +37,7 @@
             <tr>
                 <td><a href="{% url 'user_public_profile' username=sub.user.username %}">{{ sub.user.username }}</a></td>
                 <td>{{ sub.user.get_full_name|default:"—" }}</td>
-                <td>{{ sub.joined_at|date:"Y-m-d" }}</td>
+                <td>{{ sub.created_at|date:"Y-m-d" }}</td>
                 <td>
                     <form method="post" style="display:inline" onsubmit="return confirm('Remove this substitute?')">
                         {% csrf_token %}

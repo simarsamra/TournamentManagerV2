@@ -3154,9 +3154,9 @@ python manage.py audit_participant_integrity
 | T-4.5 | Head-to-head tiebreaker implemented | ☐ |
 | T-4.6 | Individual registration sync | ☑ |
 | T-4.7 | JSON seeding fixed | ☑ |
-| T-4.8 | Substitutes scoped | ☐ |
-| T-4.9 | Availability date warning extended | ☐ |
-| T-4.10 | Small correctness batch (11 items) | ☐ |
+| T-4.8 | Substitutes scoped | ☑ |
+| T-4.9 | Availability date warning extended | ☑ |
+| T-4.10 | Small correctness batch (11 items) | ☑ |
 | T-5.1 | Password validators applied everywhere | ☐ |
 | T-5.2 | Test Maker gated | ☐ |
 | T-5.3 | `X-Forwarded-For` trust bounded | ☐ |
@@ -3181,7 +3181,7 @@ survives the branch:
 | T-3.1 | Ownership policy (a/b/c) | **(a) strict ownership** — organizers are independent parties (the app has an application/approval flow); site admins keep global access | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Double elimination: downgrade or implement | **Option A — honest downgrade.** A real losers bracket is a feature, not a bug fix; spec recorded in the generator docstring | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Grand final: bracket reset or single match | | | |
-| T-4.8 | Substitutes: scope the model or counts only | | | |
+| T-4.8 | Substitutes: scope the model or counts only | **Scoped — via a new `TournamentSubstitute` model rather than a nullable FK on `TeamMembership`.** The FK approach would have required auditing 40+ membership queries; a separate table leaves roster arithmetic untouched | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-6.1 | Open-availability horizon: 120 or 365 days | | | |
 
 ### What is deliberately out of scope

@@ -16,6 +16,7 @@ from .models import (
     TournamentIndividualRegistration, UserTeamAssignment, TeamInvite,
     Notification, OrganizerProfile, OrganizerApplication,
     TeamRegistration, IndividualRegistration, NoShowReport,
+    TournamentSubstitute,
 )
 from .signals import suppress_user_autocreate
 
@@ -43,6 +44,7 @@ BACKUP_MODELS = [
     TeamTournamentParticipation,
     TeamTournamentCourtPreference,
     TournamentIndividualRegistration,
+    TournamentSubstitute,
     TeamRegistration,
     IndividualRegistration,
     Match,

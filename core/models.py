@@ -514,6 +514,45 @@ class TeamMembership(models.Model):
         return f"{self.user.username} ({self.get_role_display()}) — {self.team.name}"
 
 
+class TournamentSubstitute(models.Model):
+    """A stand-in player for one team in one tournament.
+
+    Substitutes are deliberately NOT TeamMemberships. TeamMembership has no
+    tournament scope, so a sub recorded that way joined the team in every
+    tournament it competes in and counted toward every roster-size check
+    (close_registration, _validate_tournament_ready, the exact-N rule). Keeping
+    them in their own table means roster arithmetic is untouched and the grant
+    is confined to the tournament it was made for.
+    """
+
+    participation = models.ForeignKey(
+        "TeamTournamentParticipation",
+        on_delete=models.CASCADE,
+        related_name="substitutes",
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="substitute_slots"
+    )
+    added_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="substitutes_added",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["participation_id", "created_at"]
+        unique_together = [["participation", "user"]]
+
+    def __str__(self):
+        return (
+            f"{self.user.username} (sub) — {self.participation.team.name} "
+            f"@ {self.participation.tournament.name}"
+        )
+
+
 class Match(models.Model):
     STATUS_CHOICES = [
         ("upcoming", "Upcoming"),

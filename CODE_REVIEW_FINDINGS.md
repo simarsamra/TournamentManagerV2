@@ -393,10 +393,13 @@ This is the cause of the currently failing test (see §5.1).
   or availability.
 - `add_timeslot` (`core/views.py:2369`) discards form errors entirely — an
   invalid submission redirects with no feedback.
-- `CourtAvailabilityForm.is_active` uses `initial=True` on a
+- ~~`CourtAvailabilityForm.is_active` uses `initial=True` on a
   `BooleanField(required=False)`; `initial` does not apply to bound forms, so an
-  unchecked box creates an inactive availability row that `count_available_slots`
-  ignores.
+  unchecked box creates an inactive availability row.~~ **Retracted — not a
+  bug.** Verified while fixing T-4.10: `tournament_config` builds the form
+  unbound, so the checkbox renders `checked` and the default really is active.
+  Unchecking it is a deliberate choice, and a bound form only occurs on
+  re-render after a validation error, where the submitted value is correct.
 - `create_team_view` / `create_standalone_team_view` check
   `Team.objects.filter(name__iexact=...)` then `create()` against a `unique`
   column — the race raises an unhandled `IntegrityError`.
