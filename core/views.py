@@ -74,6 +74,22 @@ def _get_available_tournaments():
     ).order_by("status_rank", "-created_at")
 
 
+def _manageable_tournaments(user):
+    """Tournaments `user` may administer, ordered like _get_available_tournaments.
+
+    Site admins see everything. A verified organizer sees the ones they created
+    plus legacy rows with no recorded creator (see _can_manage_tournament).
+    Read-only pages are deliberately not scoped this way — an organizer can
+    still look at other tournaments, they just cannot administer them.
+    """
+    qs = _get_available_tournaments()
+    if not _is_organizer(user):
+        return qs.none()
+    if _is_site_admin(user):
+        return qs
+    return qs.filter(db_models.Q(created_by=user) | db_models.Q(created_by__isnull=True))
+
+
 def _get_tournament(request=None):
     tournaments = Tournament.objects.all()
     if request and getattr(request, "user", None) and request.user.is_authenticated:
@@ -182,7 +198,7 @@ def _tournament_context(request, tournament=None):
     
     if _is_organizer(request.user):
         ctx.update({
-            "available_tournaments": _get_available_tournaments(),
+            "available_tournaments": _manageable_tournaments(request.user),
             "selected_tournament": tournament,
         })
         return ctx
@@ -362,6 +378,42 @@ def _is_organizer(user):
         return hasattr(user, 'organizer_profile') and user.organizer_profile.verified
     except:
         return False
+
+
+def _is_site_admin(user):
+    """Site administrators: staff or superusers.
+
+    Distinct from "organizer". Organizers run their own tournaments; only site
+    admins manage user accounts and reach across tournaments they did not
+    create.
+    """
+    try:
+        return bool(user and user.is_authenticated and (user.is_superuser or user.is_staff))
+    except AttributeError:
+        return False
+
+
+def _can_manage_tournament(user, tournament):
+    """Return True when `user` may administer `tournament`.
+
+    Site admins manage everything. A verified organizer manages the tournaments
+    they created — the app has an organizer *application* flow, so organizers
+    are independent parties, not a mutually trusted pool.
+
+    Tournaments with no recorded creator predate the created_by field and could
+    not be attributed from the audit log during its backfill migration. They
+    fall back to any verified organizer so they are not orphaned; once every
+    row carries a creator this branch should become `return False`.
+    """
+    if not _is_organizer(user):
+        return False
+    if _is_site_admin(user):
+        return True
+    if tournament is None:
+        return False
+    if tournament.created_by_id is None:
+        return True
+    return tournament.created_by_id == user.pk
 
 
 def _is_captain(user, team=None):
@@ -1930,7 +1982,7 @@ def dashboard_view(request):
             context["team_participation_status"] = team_part.status if team_part else "active"
 
     if is_organizer:
-        all_tournaments = _get_available_tournaments()
+        all_tournaments = _manageable_tournaments(request.user)
         context["all_tournaments"] = all_tournaments
         context["active_tournaments_count"] = all_tournaments.filter(status="active").count()
         context["setup_tournaments_count"] = all_tournaments.filter(
@@ -1975,6 +2027,7 @@ def tournament_setup(request):
         form = TournamentForm(request.POST)
         if form.is_valid():
             t = form.save(commit=False)
+            t.created_by = request.user
             if not t.end_date and t.start_date:
                 t.end_date = _auto_end_date(t)
             t.save()
@@ -1997,6 +2050,9 @@ def tournament_config(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     request.session["selected_tournament_id"] = tournament.pk
     team_participations = list(
         TeamTournamentParticipation.objects.filter(tournament=tournament)
@@ -2109,6 +2165,9 @@ def proceed_to_knockout_view(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if tournament.format != "hybrid" or tournament.status != "active":
         messages.error(request, "Knockout phase can only be triggered for an active hybrid tournament.")
         return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
@@ -2129,6 +2188,9 @@ def add_court(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     form = CourtForm(request.POST, tournament=tournament)
     if form.is_valid():
         court = form.save(commit=False)
@@ -2158,6 +2220,9 @@ def delete_court_availability(request, pk, availability_pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     availability = get_object_or_404(CourtAvailability, pk=availability_pk, court__tournament=tournament)
     label = str(availability)
     availability.delete()
@@ -2257,6 +2322,10 @@ def estimate_court_availability_end_date(request, pk):
     if not _is_organizer(request.user):
         return _availability_response({"status": "error", "message": "Not authorized."}, status=403)
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        return _availability_response(
+            {"status": "error", "message": "Not authorized."}, status=403
+        )
     form = CourtAvailabilityForm(request.POST, tournament=tournament)
     if not form.is_valid():
         if "courts" in form.errors:
@@ -2341,6 +2410,9 @@ def add_court_availability(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     form = CourtAvailabilityForm(request.POST, tournament=tournament)
     if form.is_valid():
         courts = list(form.cleaned_data["courts"])
@@ -2439,6 +2511,9 @@ def add_timeslot(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     form = TimeSlotForm(request.POST, tournament=tournament)
     if form.is_valid():
         date = form.cleaned_data["date"]
@@ -2517,6 +2592,9 @@ def add_teams_bulk(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     team_data_list = []
 
@@ -2581,6 +2659,8 @@ def estimate_tournament_end_date(request, pk):
     if not _is_organizer(request.user):
         return _end_date_response({"error": "Unauthorized"}, status=403)
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        return _end_date_response({"error": "Unauthorized"}, status=403)
 
     # Determine team count: prefer actual active teams, fall back to expected count
     team_count = active_participant_count(tournament)
@@ -2658,6 +2738,9 @@ def remove_team_from_tournament(request, pk, participation_pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     participation = get_object_or_404(TeamTournamentParticipation, pk=participation_pk, tournament=tournament)
     if tournament.status in ("active", "completed"):
         messages.error(
@@ -2691,6 +2774,9 @@ def open_registration(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     reopening = tournament.status == "scheduled"
     if reopening:
         # Clear the draft schedule so it isn't stale after new registrations
@@ -2712,6 +2798,9 @@ def close_registration(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     errors = []
 
@@ -2780,6 +2869,9 @@ def generate_schedule(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     readiness_errors = _validate_tournament_ready(tournament)
     if readiness_errors:
         for error in readiness_errors:
@@ -2799,6 +2891,9 @@ def start_tournament(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if tournament.status != "scheduled":
         readiness_errors = _validate_tournament_ready(tournament)
         if readiness_errors:
@@ -2827,6 +2922,9 @@ def complete_tournament(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if tournament.status != "active":
         messages.error(request, "Only active tournaments can be marked as completed.")
         return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
@@ -3704,7 +3802,10 @@ def submit_score(request, pk):
     _expire_pending_score_disputes(match.tournament)
     match.refresh_from_db()
     team = _get_team(request.user, match.tournament)
-    is_organizer = _is_organizer(request.user)
+    # Organizer powers here (instant confirm, overriding status) apply only to
+    # tournaments this user actually manages; otherwise treat them as a plain
+    # participant.
+    is_organizer = _can_manage_tournament(request.user, match.tournament)
     is_participant = team and (match.team1 == team or match.team2 == team)
     if not is_organizer and not is_participant:
         messages.error(request, "You are not a participant in this match.")
@@ -3883,6 +3984,9 @@ def resolve_dispute(request, pk):
         messages.error(request, "Only organizers can resolve disputes.")
         return _redirect_to_match_detail(request, pk)
     match = get_object_or_404(Match, pk=pk)
+    if not _can_manage_tournament(request.user, match.tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return _redirect_to_match_detail(request, pk)
     score1 = request.POST.get("final_score_team1")
     score2 = request.POST.get("final_score_team2")
     resolution_notes = request.POST.get("resolution_notes", "").strip()
@@ -3935,6 +4039,9 @@ def override_match_result(request, pk):
         messages.error(request, "Only organizers can override match results.")
         return _redirect_to_match_detail(request, pk)
     match = get_object_or_404(Match, pk=pk)
+    if not _can_manage_tournament(request.user, match.tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return _redirect_to_match_detail(request, pk)
     if not _can_override_match(match):
         messages.error(request, "This match cannot be overridden. It may be a knockout match or the knockout phase has already started.")
         return _redirect_to_match_detail(request, pk)
@@ -4643,6 +4750,9 @@ def mark_no_show(request, pk):
         return _redirect_to_match_detail(request, pk)
 
     match = get_object_or_404(Match, pk=pk)
+    if not _can_manage_tournament(request.user, match.tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return _redirect_to_match_detail(request, pk)
     if match.status not in ("upcoming", "in_progress", "pending_confirmation"):
         messages.error(request, "No-show can only be recorded for active/upcoming matches.")
         return _redirect_to_match_detail(request, pk)
@@ -5230,6 +5340,9 @@ def delete_tournament(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if request.POST.get("confirm_delete", "").strip().upper() != "DELETE":
         messages.error(request, "Tournament deletion was not confirmed.")
         return redirect("settings")
@@ -5262,6 +5375,9 @@ def settings_view(request):
         )
     is_settings_locked = bool(tournament.started_at or tournament.status in ("active", "completed"))
     if request.method == "POST":
+        if not _can_manage_tournament(request.user, tournament):
+            messages.error(request, "You do not manage that tournament.")
+            return redirect("dashboard")
         if is_settings_locked:
             messages.error(request, "Tournament settings are locked after the tournament has started.")
             return redirect("settings")
@@ -5280,8 +5396,17 @@ def settings_view(request):
         "tournament": tournament,
         "form": form,
         "is_settings_locked": is_settings_locked,
-        "users": User.objects.filter(is_superuser=False).order_by("username"),
-        "organizer_applications": OrganizerApplication.objects.order_by("-created_at"),
+        "users": (
+            User.objects.filter(is_superuser=False).order_by("username")
+            if _is_site_admin(request.user)
+            else User.objects.none()
+        ),
+        "organizer_applications": (
+            OrganizerApplication.objects.order_by("-created_at")
+            if _is_site_admin(request.user)
+            else OrganizerApplication.objects.none()
+        ),
+        "is_site_admin": _is_site_admin(request.user),
         **_tournament_context(request, tournament),
     }
     return _render_refreshable_page(
@@ -5299,6 +5424,9 @@ def compute_end_date_view(request, pk):
     if not _is_organizer(request.user):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     computed = _auto_end_date(tournament)
     if computed:
         tournament.end_date = computed
@@ -5316,8 +5444,9 @@ def compute_end_date_view(request, pk):
 @login_required
 @require_POST
 def set_user_organizer(request, user_pk):
-    if not _is_organizer(request.user):
-        return redirect("dashboard")
+    if not _is_site_admin(request.user):
+        messages.error(request, "Only site administrators can manage user accounts.")
+        return redirect("settings")
     target = get_object_or_404(User, pk=user_pk)
     if target.is_superuser:
         messages.error(request, "Superuser accounts cannot be modified here.")
@@ -5351,8 +5480,9 @@ def set_user_organizer(request, user_pk):
 @login_required
 @require_POST
 def delete_user_account(request, user_pk):
-    if not _is_organizer(request.user):
-        return redirect("dashboard")
+    if not _is_site_admin(request.user):
+        messages.error(request, "Only site administrators can manage user accounts.")
+        return redirect("settings")
     target = get_object_or_404(User, pk=user_pk)
     if target == request.user:
         messages.error(request, "You cannot delete your own account.")
@@ -5813,8 +5943,10 @@ def organizer_apply_view(request):
 @require_POST
 def review_organizer_application(request, pk):
     """Admin action to approve or reject an organizer application (1.7)."""
-    if not _is_organizer(request.user):
-        messages.error(request, "Only organizers can review applications.")
+    if not _is_site_admin(request.user):
+        messages.error(
+            request, "Only site administrators can review organizer applications."
+        )
         return redirect("settings")
 
     application = get_object_or_404(OrganizerApplication, pk=pk)
@@ -6179,6 +6311,9 @@ def registration_review_view(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     if tournament.registration_mode == "individual":
         registrations = list(
@@ -6219,6 +6354,9 @@ def approve_registration(request, tournament_pk, reg_pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=tournament_pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     # Try individual registration first, then team participation
     reg = (
@@ -6266,6 +6404,9 @@ def reject_registration(request, tournament_pk, reg_pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=tournament_pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     reason = request.POST.get("reason", "").strip()
 
     reg = (
@@ -6318,6 +6459,9 @@ def cancel_tournament(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     if tournament.status in ("completed", "cancelled"):
         messages.error(request, f"Cannot cancel a tournament that is already {tournament.status}.")
@@ -6379,10 +6523,14 @@ def duplicate_tournament(request, pk):
         return redirect("dashboard")
 
     source = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, source):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     new_name = f"Copy of {source.name}"
 
     new_tournament = Tournament.objects.create(
         name=new_name,
+        created_by=request.user,
         sport_type=source.sport_type,
         registration_mode=source.registration_mode,
         format=source.format,
@@ -6425,6 +6573,9 @@ def disqualify_team(request, tournament_pk, participation_pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=tournament_pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     participation = get_object_or_404(
         TeamTournamentParticipation, pk=participation_pk, tournament=tournament
     )
@@ -6486,6 +6637,9 @@ def pause_tournament(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if tournament.status != "active":
         messages.error(request, "Only active tournaments can be paused.")
         return redirect("dashboard")
@@ -6534,6 +6688,9 @@ def resume_tournament(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     if tournament.status != "paused":
         messages.error(request, "Only paused tournaments can be resumed.")
         return redirect("dashboard")
@@ -6585,6 +6742,9 @@ def organizer_announce_view(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     if request.method == "POST":
         message_text = request.POST.get("message", "").strip()
@@ -6740,20 +6900,17 @@ def organizer_public_page(request, pk):
             raise Http404
         profile = None
 
-    # Find tournaments created by this organizer via AuditLog entries for 'tournament_created'
-    created_tournament_pks = _AuditLog.objects.filter(
-        user=organizer, action="tournament_created"
-    ).values_list("tournament_id", flat=True).distinct()
-
-    if created_tournament_pks.exists():
-        tournaments = Tournament.objects.filter(pk__in=created_tournament_pks).order_by("-created_at")
-    else:
-        # Fallback: show all tournaments if none are specifically attributed to this organizer
-        # (e.g. created via admin or before audit logs were in place)
-        if organizer.is_staff:
-            tournaments = Tournament.objects.all().order_by("-created_at")
-        else:
-            tournaments = Tournament.objects.none()
+    # Tournament.created_by is the authoritative record of authorship. Fall back
+    # to the audit log only for legacy rows the backfill could not attribute.
+    tournaments = Tournament.objects.filter(created_by=organizer)
+    if not tournaments.exists():
+        legacy_pks = _AuditLog.objects.filter(
+            user=organizer, action="tournament_created"
+        ).values_list("tournament_id", flat=True).distinct()
+        tournaments = Tournament.objects.filter(
+            pk__in=[pk for pk in legacy_pks if pk is not None], created_by__isnull=True
+        )
+    tournaments = tournaments.order_by("-created_at")
 
     return render(request, "core/organizer_public_page.html", {
         "organizer": organizer,
@@ -6770,8 +6927,8 @@ def organizer_public_page(request, pk):
 @login_required
 def toggle_user_suspension(request, user_pk):
     """Suspend or unsuspend a user account (11.2)."""
-    if not _is_organizer(request.user):
-        messages.error(request, "Only organizers can suspend users.")
+    if not _is_site_admin(request.user):
+        messages.error(request, "Only site administrators can manage user accounts.")
         return redirect("settings")
 
     target = get_object_or_404(User, pk=user_pk)
@@ -6902,6 +7059,9 @@ def seed_participants_view(request, pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
 
     if tournament.registration_mode == "individual":
         participants = list(
@@ -6978,6 +7138,9 @@ def tournament_team_sub_view(request, pk, participation_pk):
         return redirect("dashboard")
 
     tournament = get_object_or_404(Tournament, pk=pk)
+    if not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     participation = get_object_or_404(TeamTournamentParticipation, pk=participation_pk, tournament=tournament)
     team = participation.team
 
