@@ -75,7 +75,6 @@ urlpatterns = [
     path("team/<int:pk>/", views.team_detail, name="team_detail"),
     path("teams/create/", views.create_standalone_team_view, name="create_standalone_team"),
     path("team/<int:pk>/withdraw/", views.withdraw_team, name="withdraw_team"),
-    path("team/<int:pk>/remove/", views.organizer_remove_team, name="organizer_remove_team"),
     path("team/<int:pk>/preferences/", views.team_preferences, name="team_preferences"),
     path("team/<int:pk>/members/add/", views.manage_team_members, name="manage_team_members"),
     path("team/<int:pk>/members/<int:user_pk>/remove/", views.remove_team_member, name="remove_team_member"),

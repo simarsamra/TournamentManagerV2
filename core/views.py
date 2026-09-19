@@ -2590,6 +2590,13 @@ def remove_team_from_tournament(request, pk, participation_pk):
         return redirect("dashboard")
     tournament = get_object_or_404(Tournament, pk=pk)
     participation = get_object_or_404(TeamTournamentParticipation, pk=participation_pk, tournament=tournament)
+    if tournament.status in ("active", "completed"):
+        messages.error(
+            request,
+            "Cannot remove a competitor from an active or completed tournament. "
+            "Use 'Withdraw' instead so remaining matches are forfeited or voided.",
+        )
+        return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
     team_name = participation.team.name
 
     # For individual-mode tournaments, also remove the corresponding individual registration
@@ -4141,9 +4148,16 @@ def teams_view(request):
                 participations__status="active",
                 is_internal=False,
             ).prefetch_related("players").distinct().order_by("name")
+            captain_by_team = dict(
+                TeamMembership.objects.filter(
+                    team__in=teams, role="captain"
+                ).values_list("team_id", "user__username")
+            )
             for team in teams:
                 participation = team.participations.filter(tournament=tournament).first()
                 team.group = participation.group if participation else ""
+                team.participation_pk = participation.pk if participation else None
+                team.captain_username = captain_by_team.get(team.pk, "")
 
     teams_colspan = 3  # Name, Status, Account/Actions
     if tournament and tournament.players_per_team > 1:
@@ -4197,8 +4211,13 @@ def team_detail(request, pk):
     max_members = tournament.players_per_team if tournament else None
     members_full = max_members is not None and memberships.count() >= max_members
     team_heading_label = _team_display_label(tournament, team) if tournament else team.name
+    team_participation = (
+        TeamTournamentParticipation.objects.filter(team=team, tournament=tournament).first()
+        if tournament else None
+    )
     context = {
         "team": team,
+        "team_participation": team_participation,
         "team_heading_label": team_heading_label,
         "tournament": tournament, "matches": matches, "stats": stats,
         "players": team.players.all(),
@@ -4452,39 +4471,6 @@ def withdraw_team(request, pk):
     if _is_htmx_request(request):
         return HttpResponse(status=204, headers={"HX-Redirect": reverse("teams")})
     return redirect("teams")
-
-
-@login_required
-@require_POST
-def organizer_remove_team(request, pk):
-    """Organizer-only: permanently remove a team from a tournament before it goes active."""
-    if not _is_organizer(request.user):
-        messages.error(request, "Only organizers can remove teams.")
-        return redirect("team_detail", pk=pk)
-    team = get_object_or_404(Team, pk=pk)
-    tournament = team.tournament
-    if tournament.status in ("active", "completed"):
-        messages.error(
-            request,
-            "Cannot remove a team from an active or completed tournament. Use 'Withdraw' instead to forfeit remaining matches.",
-        )
-        return redirect("team_detail", pk=pk)
-    team_name = team.name
-    captain_user = team.user
-    team.delete()
-    # Remove the captain account if they have no other teams
-    if not captain_user.captained_teams.exists():
-        captain_user.delete()
-    log_action(
-        request,
-        "team_removed",
-        f"Organizer removed team '{team_name}' from '{tournament.name}'",
-        tournament=tournament,
-    )
-    messages.success(request, f"Team '{team_name}' has been removed from the tournament.")
-    if _is_htmx_request(request):
-        return HttpResponse(status=204, headers={"HX-Redirect": reverse("tournament_config", kwargs={"pk": tournament.pk})})
-    return redirect("tournament_config", pk=tournament.pk)
 
 
 @login_required

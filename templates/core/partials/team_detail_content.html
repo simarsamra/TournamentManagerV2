@@ -36,10 +36,10 @@
             <button type="submit" class="btn btn-outline" onclick="return confirm('Leave this team?')">Leave Team</button>
         </form>
         {% endif %}
-        {% if is_organizer and tournament.status != 'active' and tournament.status != 'completed' %}
-        <form method="post" action="{% url 'organizer_remove_team' pk=team.pk %}" style="display:inline" onsubmit="return confirm('Permanently remove {{ team.name }} from this tournament? This will delete the team and its captain account.')">
+        {% if is_organizer and team_participation and tournament.status != 'active' and tournament.status != 'completed' %}
+        <form method="post" action="{% url 'remove_team_from_tournament' pk=tournament.pk participation_pk=team_participation.pk %}" style="display:inline" onsubmit="return confirm('Remove {{ team.name }} from {{ tournament.name }}? The team and its member accounts are kept.')">
             {% csrf_token %}
-            <button type="submit" class="btn btn-danger">✕ Remove Team</button>
+            <button type="submit" class="btn btn-danger">✕ Remove From Tournament</button>
         </form>
         {% endif %}
     </div>
