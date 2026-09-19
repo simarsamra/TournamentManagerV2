@@ -3140,13 +3140,13 @@ python manage.py audit_participant_integrity
 | T-0.3 | Green baseline recorded | ☑ |
 | T-1.1 | Backups untracked, ignored, moved out of tree | ☑ |
 | T-1.2 | Backup/restore fixed and non-destructive | ☑ |
-| T-2.1 | `organizer_remove_team` no longer 500s | ☐ |
+| T-2.1 | `organizer_remove_team` no longer 500s | ☑ |
 | T-2.2 | Organizer grants survive login (found during T-1.2) | ☑ |
 | T-3.1 | Tournament ownership + admin/organizer split | ☐ |
-| T-3.2 | Analytics and audit log restricted | ☐ |
-| T-3.3 | `dispute_score` participant check | ☐ |
-| T-3.4 | Open redirect closed | ☐ |
-| T-3.5 | `_can_manage_reschedule` verifies the competitor | ☐ |
+| T-3.2 | Analytics and audit log restricted | ☑ |
+| T-3.3 | `dispute_score` participant check | ☑ |
+| T-3.4 | Open redirect closed | ☑ |
+| T-3.5 | `_can_manage_reschedule` verifies the competitor | ☑ |
 | T-4.1 | Court preferences persisted at team creation | ☐ |
 | T-4.2 | Invite path enforces roster rules | ☐ |
 | T-4.3 | Reschedule responses idempotent + re-checked | ☐ |
