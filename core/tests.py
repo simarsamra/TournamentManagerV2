@@ -2955,8 +2955,13 @@ class EnrollmentRefactorRegressionTests(TestCase):
 		TeamMembership.objects.create(team=team_a, user=captain_a, role="captain")
 		TeamMembership.objects.create(team=team_b, user=captain_b, role="captain")
 
-		u1 = User.objects.create_user(username="a_existing_i1", password="pass123", first_name="Existing One")
-		u2 = User.objects.create_user(username="a_existing_i2", password="pass123", first_name="Existing Two")
+		# Test Maker only sweeps up accounts it created (settings.TEST_MAKER_USER_PREFIX).
+		# It used to register ANY existing user into a tournament without their
+		# involvement; these fixtures previously had unprefixed names and this test
+		# asserted that behaviour. See T-5.2.
+		u1 = User.objects.create_user(username="tm_existing_i1", password="pass123", first_name="Existing One")
+		u2 = User.objects.create_user(username="tm_existing_i2", password="pass123", first_name="Existing Two")
+		bystander = User.objects.create_user(username="real_person", password="pass123", first_name="Real Person")
 
 		self.client.force_login(self.organizer)
 
@@ -2990,14 +2995,23 @@ class EnrollmentRefactorRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament, user__in=[u1, u2]).count(), 2)
+		self.assertFalse(
+			TournamentIndividualRegistration.objects.filter(
+				tournament=individual_tournament, user=bystander
+			).exists(),
+			"Test Maker must not register users it did not create",
+		)
 		self.assertEqual(IndividualRegistration.objects.filter(tournament=individual_tournament).count(), 0)
 
 	def test_test_maker_register_first_n_individuals_for_selected_tournament(self):
 		individual_tournament = self._mk_tournament("Selected Individual Flow", mode="individual")
 		individual_tournament.status = "active"
 		individual_tournament.save(update_fields=["status"])
-		u1 = User.objects.create_user(username="selected_i1", password="pass123", first_name="Selected One")
-		u2 = User.objects.create_user(username="selected_i2", password="pass123", first_name="Selected Two")
+		# Prefixed so Test Maker will pick them up; see the note in
+		# test_test_maker_register_existing_to_open_tournament_uses_existing_rows.
+		u1 = User.objects.create_user(username="tm_selected_i1", password="pass123", first_name="Selected One")
+		u2 = User.objects.create_user(username="tm_selected_i2", password="pass123", first_name="Selected Two")
+		bystander = User.objects.create_user(username="uninvolved_person", password="pass123", first_name="Uninvolved")
 
 		self.client.force_login(self.organizer)
 		session = self.client.session
@@ -3016,6 +3030,12 @@ class EnrollmentRefactorRegressionTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament).count(), 2)
 		self.assertEqual(TournamentIndividualRegistration.objects.filter(tournament=individual_tournament, user__in=[u1, u2]).count(), 2)
+		self.assertFalse(
+			TournamentIndividualRegistration.objects.filter(
+				tournament=individual_tournament, user=bystander
+			).exists(),
+			"Test Maker must not register users it did not create",
+		)
 
 	def test_tournament_config_hides_internal_shadow_team_names_for_individuals(self):
 		tournament = self._mk_tournament("Organizer Individual Config", mode="individual")

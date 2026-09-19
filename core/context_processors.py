@@ -10,6 +10,13 @@ def notification_count(request):
     return {"unread_notification_count": count}
 
 
+def test_maker_enabled(request):
+    """Expose the Test Maker feature flag so the nav link can be hidden."""
+    from django.conf import settings
+
+    return {"test_maker_enabled": getattr(settings, "ENABLE_TEST_MAKER", False)}
+
+
 def user_organizer_status(request):
     """Inject a safe 'user_is_organizer' and 'user_can_apply_organizer' flag."""
     if not request.user.is_authenticated:

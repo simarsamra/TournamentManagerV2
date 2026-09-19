@@ -15,7 +15,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError
 from django.db import models as db_models
 from django.db.models import Q, Count, Avg, F
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, Http404
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
@@ -35,6 +35,7 @@ from .forms import (
     CreateTeamForm, StandaloneTeamForm,
     ScoreSubmitForm, RescheduleForm, TeamPreferencesForm, BulkTeamForm,
     BulkTeamFileForm, CourtAvailabilityForm, TeamMemberInviteForm, ExistingTeamMemberForm,
+    password_strength_errors,
 )
 from .scheduling import (
     generate_fixtures,
@@ -54,6 +55,46 @@ SEARCH_RESULT_LIMIT = 30
 CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES = 10
 DEFAULT_DISPUTE_WINDOW_MINUTES = 10
 CRITICAL_STAGE_MATCHES_THRESHOLD = 2
+LOGIN_ATTEMPTS_PER_IP = 10
+LOGIN_ATTEMPTS_PER_ACCOUNT = 5
+LOGIN_ATTEMPT_WINDOW_SECONDS = 300
+
+
+def _throttle_get(key):
+    """Read a throttle counter, treating cache failure as "no attempts yet".
+
+    The production cache backend is DatabaseCache, which raises if
+    `manage.py createcachetable` was never run. Losing throttling is a
+    degradation; refusing every login because of it would be an outage.
+    """
+    try:
+        return django_cache.get(key, 0) or 0
+    except Exception:
+        return 0
+
+
+def _throttle_bump(key):
+    """Increment a counter on a fixed window, ignoring cache failures."""
+    try:
+        if django_cache.get(key) is None:
+            django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+        else:
+            # incr() preserves the existing TTL, so the window stays fixed
+            # rather than sliding forward on every failed attempt.
+            django_cache.incr(key)
+    except ValueError:
+        django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+    except Exception:
+        pass
+
+
+def _throttle_clear(*keys):
+    try:
+        for key in keys:
+            django_cache.delete(key)
+    except Exception:
+        pass
+
 
 
 def _get_available_tournaments():
@@ -797,11 +838,15 @@ def _is_critical_stage_match(match):
 
 
 def _dispute_window_minutes_for_match(match):
-    return (
-        CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES
-        if _is_critical_stage_match(match)
-        else DEFAULT_DISPUTE_WINDOW_MINUTES
-    )
+    """Minutes an opponent has to dispute before the score auto-locks.
+
+    Stored per tournament so it survives a restart and is consistent across
+    worker processes; the module constants are defaults only.
+    """
+    base = match.tournament.dispute_window_minutes or DEFAULT_DISPUTE_WINDOW_MINUTES
+    if _is_critical_stage_match(match):
+        return min(base, CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES)
+    return base
 
 
 def _is_within_dispute_window(match):
@@ -1236,33 +1281,43 @@ def login_view(request):
         return redirect("dashboard")
     if request.method == "POST":
         ip = request.META.get("REMOTE_ADDR", "unknown")
-        cache_key = f"login_attempts_{ip}"
-        attempts = django_cache.get(cache_key, 0)
-        if attempts >= 5:
+        username = request.POST.get("username", "").strip()
+        # Two counters: one per IP (blunt) and one per account, so spraying one
+        # password across many usernames from a single IP still trips a limit,
+        # and one account cannot be brute-forced from many IPs.
+        ip_key = f"login_attempts_ip_{ip}"
+        user_key = f"login_attempts_user_{username.lower()}"
+
+        if _throttle_get(ip_key) >= LOGIN_ATTEMPTS_PER_IP or (
+            username and _throttle_get(user_key) >= LOGIN_ATTEMPTS_PER_ACCOUNT
+        ):
             messages.error(request, "Too many failed login attempts. Please wait 5 minutes before trying again.")
             return render(request, "core/login.html")
-        username = request.POST.get("username", "").strip()
         password = request.POST.get("password", "")
         user = authenticate(request, username=username, password=password)
         if user:
-            django_cache.delete(cache_key)
+            _throttle_clear(ip_key, user_key)
             login(request, user)
             # Clear tournament selection on login to ensure dashboard defaults to active tournament
             if "selected_tournament_id" in request.session:
                 del request.session["selected_tournament_id"]
             log_action(request, "login", f"User '{username}' logged in")
             return redirect("dashboard")
-        django_cache.set(cache_key, attempts + 1, timeout=300)
+        # Fixed window: only set the TTL on the first failure, so the window
+        # expires instead of sliding forward on every attempt. incr() preserves
+        # the existing TTL.
+        for key in (ip_key, user_key) if username else (ip_key,):
+            _throttle_bump(key)
         messages.error(request, "Invalid credentials.")
     return render(request, "core/login.html")
 
 
+@require_POST
 def logout_view(request):
-    if request.method == "POST" and request.user.is_authenticated:
+    """POST only: a GET logout is CSRF-exempt, so any third-party page could
+    log a user out with an <img src="/logout/">."""
+    if request.user.is_authenticated:
         log_action(request, "logout", f"User '{request.user.username}' logged out")
-        logout(request)
-    elif request.method == "GET" and request.user.is_authenticated:
-        # Silently log out on GET (browser pre-fetch protection) — redirect only
         logout(request)
     return redirect("login")
 
@@ -2669,6 +2724,14 @@ def _create_teams_from_data(tournament, team_data_list, request):
         if Team.objects.filter(name__iexact=team_name).exists():
             messages.warning(request, f"Team '{team_name}' already exists, skipped.")
             continue
+        strength_errors = password_strength_errors(password)
+        if strength_errors:
+            messages.warning(
+                request,
+                f"Team '{team_name}' skipped — the password for '{username}' is not "
+                f"strong enough: {strength_errors[0]}",
+            )
+            continue
         # Enforce registration limit
         if tournament.expected_teams_count:
             current_count = active_participant_count(tournament)
@@ -3071,8 +3134,12 @@ def select_tournament(request):
 
 @login_required
 def test_maker_view(request):
-    if not _is_organizer(request.user):
-        messages.error(request, "Only organizers can access Test Maker.")
+    # Test Maker creates real accounts and rewrites live match data. It is a
+    # development tool, not an organizer feature.
+    if not getattr(settings, "ENABLE_TEST_MAKER", False):
+        raise Http404
+    if not _is_site_admin(request.user):
+        messages.error(request, "Test Maker is restricted to site administrators.")
         return redirect("dashboard")
 
     tournament = _get_tournament(request)
@@ -3428,8 +3495,14 @@ def test_maker_view(request):
             created_shadows = 0
 
             if tournament.registration_mode == "individual":
+                # Only accounts Test Maker itself created — this used to sweep
+                # up real users and register them without their consent.
                 candidates = list(
-                    User.objects.filter(is_staff=False, is_superuser=False)
+                    User.objects.filter(
+                        is_staff=False,
+                        is_superuser=False,
+                        username__startswith=settings.TEST_MAKER_USER_PREFIX,
+                    )
                     .exclude(individual_registrations__tournament=tournament)
                     .order_by("username", "id")[:existing_count]
                 )
@@ -3627,9 +3700,11 @@ def test_maker_view(request):
             except (ValueError, TypeError):
                 messages.error(request, "Dispute window must be a valid number of minutes.")
                 return redirect("test_maker")
-            import core.views as _self
-            _self.DEFAULT_DISPUTE_WINDOW_MINUTES = minutes
-            _self.CRITICAL_STAGE_DISPUTE_WINDOW_MINUTES = minutes
+            if not tournament:
+                messages.error(request, "Select a tournament first.")
+                return redirect("test_maker")
+            tournament.dispute_window_minutes = minutes
+            tournament.save(update_fields=["dispute_window_minutes"])
             log_action(
                 request,
                 "test_maker_set_dispute_window",
@@ -3676,7 +3751,10 @@ def test_maker_view(request):
         ),
         "available_existing_users": available_existing_users,
         "available_existing_teams": available_existing_teams,
-        "dispute_window_minutes": DEFAULT_DISPUTE_WINDOW_MINUTES,
+        "dispute_window_minutes": (
+            tournament.dispute_window_minutes if tournament
+            else DEFAULT_DISPUTE_WINDOW_MINUTES
+        ),
         **_tournament_context(request, tournament),
     }
     return render(request, "core/test_maker.html", context)
@@ -4664,10 +4742,12 @@ def reset_member_password(request, pk, user_pk):
     if new_password != confirm_password:
         messages.error(request, "Passwords do not match.")
         return redirect("team_detail", pk=pk)
-    if len(new_password) < 6:
-        messages.error(request, "Password must be at least 6 characters.")
-        return redirect("team_detail", pk=pk)
     member_user = membership.user
+    strength_errors = password_strength_errors(new_password, user=member_user)
+    if strength_errors:
+        for message in strength_errors:
+            messages.error(request, message)
+        return redirect("team_detail", pk=pk)
     member_user.set_password(new_password)
     member_user.save()
     log_action(
@@ -4695,14 +4775,16 @@ def reset_captain_password(request, pk):
     if new_password != confirm_password:
         messages.error(request, "Passwords do not match.")
         return redirect("team_detail", pk=pk)
-    if len(new_password) < 6:
-        messages.error(request, "Password must be at least 6 characters.")
-        return redirect("team_detail", pk=pk)
     captain_membership = TeamMembership.objects.filter(team=team, role="captain").select_related("user").first()
     if not captain_membership:
         messages.error(request, "No captain found for this team.")
         return redirect("team_detail", pk=pk)
     captain_user = captain_membership.user
+    strength_errors = password_strength_errors(new_password, user=captain_user)
+    if strength_errors:
+        for message in strength_errors:
+            messages.error(request, message)
+        return redirect("team_detail", pk=pk)
     captain_user.set_password(new_password)
     captain_user.save()
     log_action(
@@ -7010,12 +7092,10 @@ def organizer_public_page(request, pk):
     try:
         profile = organizer.organizer_profile
         if not profile.verified and not organizer.is_staff:
-            from django.http import Http404
-            raise Http404
+                raise Http404
     except OrganizerProfile.DoesNotExist:
         if not organizer.is_staff:
-            from django.http import Http404
-            raise Http404
+                raise Http404
         profile = None
 
     # Tournament.created_by is the authoritative record of authorship. Fall back

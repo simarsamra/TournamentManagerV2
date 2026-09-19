@@ -2,8 +2,25 @@ from datetime import datetime
 
 from django import forms
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from .models import Tournament, Court, Team, Match, RescheduleRequest, TimeSlot, Player, CourtAvailability, OpenSlot
+
+
+def password_strength_errors(password, user=None):
+    """Run Django's configured AUTH_PASSWORD_VALIDATORS, returning messages.
+
+    Every path that sets a password must call this. Django only applies the
+    validators where you ask it to; User.objects.create_user does not.
+    """
+    if not password:
+        return []
+    try:
+        validate_password(password, user=user)
+    except DjangoValidationError as exc:
+        return list(exc.messages)
+    return []
 
 
 class TournamentForm(forms.ModelForm):
@@ -218,10 +235,13 @@ class AccountRegistrationForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        if cleaned.get("password") != cleaned.get("password_confirm"):
+        password = cleaned.get("password")
+        if password != cleaned.get("password_confirm"):
             raise forms.ValidationError("Passwords do not match.")
         if User.objects.filter(username=cleaned.get("username", "").strip()).exists():
             raise forms.ValidationError("Username already taken.")
+        for message in password_strength_errors(password):
+            self.add_error("password", message)
         return cleaned
 
 
@@ -261,10 +281,10 @@ class SelfPasswordChangeForm(forms.Form):
 
         if new_password != confirm:
             raise forms.ValidationError("New password and confirmation do not match.")
-        if len(new_password) < 6:
-            raise forms.ValidationError("New password must be at least 6 characters.")
         if current and new_password and current == new_password:
             raise forms.ValidationError("New password must be different from current password.")
+        for message in password_strength_errors(new_password):
+            self.add_error("new_password", message)
         return cleaned
 
 
@@ -485,11 +505,14 @@ class TeamMemberInviteForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        if cleaned.get("password") != cleaned.get("password_confirm"):
+        password = cleaned.get("password")
+        if password != cleaned.get("password_confirm"):
             raise forms.ValidationError("Passwords do not match.")
         username = cleaned.get("username", "").strip()
         if username and User.objects.filter(username=username).exists():
             raise forms.ValidationError("Username already taken.")
+        for message in password_strength_errors(password):
+            self.add_error("password", message)
         return cleaned
 
 

@@ -123,6 +123,11 @@ class Tournament(models.Model):
         related_name="championships",
         help_text="Team that won the tournament",
     )
+    dispute_window_minutes = models.PositiveIntegerField(
+        default=10,
+        help_text="Minutes an opponent has to dispute a submitted score before "
+                  "it auto-locks.",
+    )
     enable_third_place_match = models.BooleanField(
         default=False,
         help_text="Generate a 3rd-place match between semi-final losers (knockout & hybrid only)",

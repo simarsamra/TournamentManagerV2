@@ -3157,12 +3157,12 @@ python manage.py audit_participant_integrity
 | T-4.8 | Substitutes scoped | ☑ |
 | T-4.9 | Availability date warning extended | ☑ |
 | T-4.10 | Small correctness batch (11 items) | ☑ |
-| T-5.1 | Password validators applied everywhere | ☐ |
-| T-5.2 | Test Maker gated | ☐ |
-| T-5.3 | `X-Forwarded-For` trust bounded | ☐ |
-| T-5.4 | Deployment defaults hardened | ☐ |
-| T-5.5 | Logout requires POST | ☐ |
-| T-5.6 | Login throttling durable | ☐ |
+| T-5.1 | Password validators applied everywhere | ☑ |
+| T-5.2 | Test Maker gated | ☑ |
+| T-5.3 | `X-Forwarded-For` trust bounded | ☑ |
+| T-5.4 | Deployment defaults hardened | ☑ |
+| T-5.5 | Logout requires POST | ☑ |
+| T-5.6 | Login throttling durable | ☑ |
 | T-6.1 | `_build_slots` cost reduced | ☐ |
 | T-6.2 | Coverage gaps closed | ☐ |
 | T-6.3 | Repository hygiene | ☐ |

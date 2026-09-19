@@ -54,7 +54,9 @@
             <a href="{% url 'tournament_list' %}" class="{% if request.resolver_match.url_name == 'tournament_list' or request.resolver_match.url_name == 'tournament_public_detail' %}active{% endif %}">🌐 Tournament Listing</a>
             <a href="{% url 'tournament_setup' %}" class="{% if request.resolver_match.url_name == 'tournament_setup' %}active{% endif %}">⚙️ New Tournament</a>
             <a href="{% url 'backup' %}" class="{% if request.resolver_match.url_name == 'backup' %}active{% endif %}">💾 Backup</a>
+            {% if test_maker_enabled and user.is_staff or test_maker_enabled and user.is_superuser %}
             <a href="{% url 'test_maker' %}" class="{% if request.resolver_match.url_name == 'test_maker' %}active{% endif %}">🧪 Test Maker</a>
+            {% endif %}
             <a href="{% url 'audit_log' %}" class="{% if request.resolver_match.url_name == 'audit_log' %}active{% endif %}">📝 Audit Log</a>
             <a href="{% url 'settings' %}" class="{% if request.resolver_match.url_name == 'settings' %}active{% endif %}">🔧 Settings</a>
             {% endif %}
