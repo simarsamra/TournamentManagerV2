@@ -19,6 +19,7 @@ from django.http import JsonResponse, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .models import (
@@ -395,7 +396,10 @@ def _can_manage_reschedule(user, tournament, team):
     if not user.is_authenticated or not tournament or not team:
         return False
     if tournament.registration_mode == "individual":
-        return True
+        # The competitor is a shadow team; the user must own that registration.
+        return TournamentIndividualRegistration.objects.filter(
+            tournament=tournament, shadow_team=team, user=user, status="active"
+        ).exists()
     return _is_captain(user, team)
 
 
@@ -458,6 +462,24 @@ def _organizer_count(exclude_user_id=None):
     if exclude_user_id is not None:
         qs = qs.exclude(user_id=exclude_user_id)
     return qs.count()
+
+
+def _safe_next_url(request, default="dashboard"):
+    """Return a POSTed/GET 'next' target only when it is local to this site.
+
+    redirect() passes any string containing '/' or '.' straight through, so an
+    unvalidated 'next' is an open redirect.
+    """
+    candidate = (request.POST.get("next") or request.GET.get("next") or "").strip()
+    if not candidate:
+        return default
+    if url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return default
 
 
 def _safe_page_param(request, default=1):
@@ -2784,7 +2806,7 @@ def complete_tournament(request, pk):
 @require_POST
 def select_tournament(request):
     tournament_id = request.POST.get("tournament_id")
-    next_url = request.POST.get("next") or "dashboard"
+    next_url = _safe_next_url(request)
     tournament = Tournament.objects.filter(pk=tournament_id).first()
     if not tournament:
         messages.error(request, "Tournament not found.")
@@ -3779,6 +3801,9 @@ def dispute_score(request, pk):
     if not team or match.submitted_by == request.user:
         messages.error(request, "Cannot dispute your own submission.")
         return _redirect_to_match_detail(request, pk)
+    if match.team1 != team and match.team2 != team:
+        messages.error(request, "You are not a participant in this match.")
+        return _redirect_to_match_detail(request, pk)
     if match.status != "pending_confirmation":
         messages.error(request, "Match is not pending confirmation.")
         return _redirect_to_match_detail(request, pk)
@@ -4654,6 +4679,11 @@ def analytics_view(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/analytics.html", _tournament_context(request, tournament))
+    if not _is_organizer(request.user) and not _is_user_enrolled_in_tournament(
+        request.user, tournament
+    ):
+        messages.error(request, "You are not enrolled in that tournament.")
+        return redirect("dashboard")
     _expire_pending_score_disputes(tournament)
     matches = tournament.matches.all()
     teams = Team.objects.filter(participations__tournament=tournament).distinct()
@@ -4723,7 +4753,11 @@ def analytics_view(request):
             "affected_matches": affected,
             "withdrawn_at": participation.withdrawn_at if participation else None,
         })
-    recent_logs = AuditLog.objects.filter(tournament=tournament).order_by("-timestamp")[:20]
+    recent_logs = (
+        AuditLog.objects.filter(tournament=tournament).order_by("-timestamp")[:20]
+        if _is_organizer(request.user)
+        else AuditLog.objects.none()
+    )
     context = {
         "tournament": tournament, "match_stats": match_stats, "court_stats": court_stats,
         "team_stats": team_stats, "schedule_density": json.dumps(schedule_density),
@@ -5073,6 +5107,9 @@ def delete_backup_view(request):
 
 @login_required
 def audit_log_view(request):
+    if not _is_organizer(request.user):
+        messages.error(request, "Only organizers can view the audit log.")
+        return redirect("dashboard")
     tournament = _get_tournament(request)
     logs = AuditLog.objects.select_related("user")
     if tournament:

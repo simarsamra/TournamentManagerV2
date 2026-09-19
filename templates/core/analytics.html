@@ -340,7 +340,8 @@
 </div>
 {% endif %}
 
-<!-- Recent Audit Log -->
+<!-- Recent Audit Log (organizers only) -->
+{% if user_is_organizer %}
 <div class="card mt-2">
     <div class="card-header">Recent Activity</div>
     <div class="table-container">
@@ -359,6 +360,7 @@
     </table>
     </div>
 </div>
+{% endif %}
 
 {% else %}
 <p class="text-muted">No tournament data available.</p>
