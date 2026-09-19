@@ -3150,7 +3150,7 @@ python manage.py audit_participant_integrity
 | T-4.1 | Court preferences persisted at team creation | ☑ |
 | T-4.2 | Invite path enforces roster rules | ☑ |
 | T-4.3 | Reschedule responses idempotent + re-checked | ☑ |
-| T-4.4 | Double elimination honest or implemented | ☐ |
+| T-4.4 | Double elimination honest or implemented | ☑ (Option A) |
 | T-4.5 | Head-to-head tiebreaker implemented | ☐ |
 | T-4.6 | Individual registration sync | ☑ |
 | T-4.7 | JSON seeding fixed | ☑ |
@@ -3179,7 +3179,7 @@ survives the branch:
 |---|---|---|---|---|
 | T-1.1 | History purge + password rotation | | | |
 | T-3.1 | Ownership policy (a/b/c) | **(a) strict ownership** — organizers are independent parties (the app has an application/approval flow); site admins keep global access | Delegated to Claude by the repo owner | 2026-09-19 |
-| T-4.4 | Double elimination: downgrade or implement | | | |
+| T-4.4 | Double elimination: downgrade or implement | **Option A — honest downgrade.** A real losers bracket is a feature, not a bug fix; spec recorded in the generator docstring | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Grand final: bracket reset or single match | | | |
 | T-4.8 | Substitutes: scope the model or counts only | | | |
 | T-6.1 | Open-availability horizon: 120 or 365 days | | | |
