@@ -14,3 +14,11 @@ python scripts/<name>.py
 Several of these hardcode primary keys or usernames from one developer's
 database (for example `Tournament.objects.get(pk=12)`, or the user `t2p1`) and
 will not work unmodified elsewhere. Read a script before running it.
+
+## fixtures/
+
+Sample data used by the seeding scripts.
+
+**`fixtures/teams.txt` contains plaintext passwords** (`pass123`) in its
+`team_name,username,password,players` rows. It is sample data for local testing
+only — never import it into a deployment that real people log in to.
