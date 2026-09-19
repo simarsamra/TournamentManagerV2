@@ -3147,9 +3147,9 @@ python manage.py audit_participant_integrity
 | T-3.3 | `dispute_score` participant check | ☑ |
 | T-3.4 | Open redirect closed | ☑ |
 | T-3.5 | `_can_manage_reschedule` verifies the competitor | ☑ |
-| T-4.1 | Court preferences persisted at team creation | ☐ |
-| T-4.2 | Invite path enforces roster rules | ☐ |
-| T-4.3 | Reschedule responses idempotent + re-checked | ☐ |
+| T-4.1 | Court preferences persisted at team creation | ☑ |
+| T-4.2 | Invite path enforces roster rules | ☑ |
+| T-4.3 | Reschedule responses idempotent + re-checked | ☑ |
 | T-4.4 | Double elimination honest or implemented | ☐ |
 | T-4.5 | Head-to-head tiebreaker implemented | ☐ |
 | T-4.6 | Individual registration sync | ☐ |
