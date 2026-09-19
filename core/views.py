@@ -317,6 +317,43 @@ def _ensure_shadow_team_for_registration(registration, sport_type=None):
     return team
 
 
+def _sync_registration_status(registration):
+    """Push an individual registration's status onto its shadow participation.
+
+    The shadow TeamTournamentParticipation is what the match engine,
+    _validate_tournament_ready and the standings read. Changing one side
+    without the other leaves a rejected player still scheduled.
+    """
+    if not registration.shadow_team_id:
+        _ensure_shadow_team_for_registration(registration)
+        return
+    TeamTournamentParticipation.objects.filter(
+        team_id=registration.shadow_team_id,
+        tournament_id=registration.tournament_id,
+    ).update(
+        status=registration.status,
+        group=registration.group or "",
+        seed=registration.seed,
+        withdrawn_at=registration.withdrawn_at,
+    )
+
+
+def _sync_participation_status(participation):
+    """Push a shadow participation's status back onto its registration.
+
+    The mirror of _sync_registration_status, for organizer actions that operate
+    on the participation (disqualification, withdrawal).
+    """
+    if not participation.team.is_internal:
+        return
+    TournamentIndividualRegistration.objects.filter(
+        shadow_team=participation.team, tournament=participation.tournament
+    ).update(
+        status=participation.status,
+        withdrawn_at=participation.withdrawn_at,
+    )
+
+
 def _team_display_label(tournament, team):
     if not team:
         return "TBD"
@@ -6368,7 +6405,12 @@ def approve_registration(request, tournament_pk, reg_pk):
         return redirect("registration_review", pk=tournament_pk)
 
     reg.status = "active"
-    reg.save(update_fields=["status", "updated_at"])
+    reg.withdrawn_at = None
+    reg.save(update_fields=["status", "withdrawn_at", "updated_at"])
+    if isinstance(reg, TournamentIndividualRegistration):
+        _sync_registration_status(reg)
+    else:
+        _sync_participation_status(reg)
 
     # Notify relevant users
     if hasattr(reg, "user"):
@@ -6418,7 +6460,12 @@ def reject_registration(request, tournament_pk, reg_pk):
         return redirect("registration_review", pk=tournament_pk)
 
     reg.status = "withdrawn"
-    reg.save(update_fields=["status", "updated_at"])
+    reg.withdrawn_at = timezone.now()
+    reg.save(update_fields=["status", "withdrawn_at", "updated_at"])
+    if isinstance(reg, TournamentIndividualRegistration):
+        _sync_registration_status(reg)
+    else:
+        _sync_participation_status(reg)
 
     # Notify relevant users
     if hasattr(reg, "user"):
@@ -6584,6 +6631,7 @@ def disqualify_team(request, tournament_pk, participation_pk):
     participation.status = "withdrawn"
     participation.withdrawn_at = timezone.now()
     participation.save(update_fields=["status", "withdrawn_at", "updated_at"])
+    _sync_participation_status(participation)
 
     # Forfeit any active/upcoming matches for this team
     team = participation.team
@@ -7091,9 +7139,21 @@ def seed_participants_view(request, pk):
         if "application/json" in content_type:
             try:
                 data = json.loads(request.body)
-                seeds = data.get("seeds", {})
+                raw_seeds = data.get("seeds", {})
             except (json.JSONDecodeError, AttributeError):
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
+            if not isinstance(raw_seeds, dict):
+                return JsonResponse({"error": "'seeds' must be an object"}, status=400)
+            # JSON object keys are strings; the apply loop looks them up by the
+            # participant's integer pk, so normalise both sides here.
+            seeds = {}
+            for key, val in raw_seeds.items():
+                try:
+                    seeds[int(key)] = int(val)
+                except (TypeError, ValueError):
+                    return JsonResponse(
+                        {"error": f"Invalid seed entry: {key!r} -> {val!r}"}, status=400
+                    )
         else:
             seeds = {}
             for key, val in request.POST.items():
@@ -7104,14 +7164,20 @@ def seed_participants_view(request, pk):
                     except ValueError:
                         pass
 
+        applied = 0
         for p in participants:
-            new_seed = seeds.get(p.pk) if isinstance(seeds, dict) else None
-            if new_seed is not None:
+            new_seed = seeds.get(p.pk)
+            if new_seed is not None and new_seed != p.seed:
                 p.seed = new_seed
                 p.save(update_fields=["seed"])
+                applied += 1
 
-        log_action(request, "seeds_updated", f"Seeds updated for '{tournament.name}'", tournament=tournament)
-        messages.success(request, "Seeds saved.")
+        log_action(
+            request, "seeds_updated",
+            f"Seeds updated for '{tournament.name}' ({applied} changed)",
+            tournament=tournament,
+        )
+        messages.success(request, f"Seeds saved ({applied} changed).")
         return _htmx_or_redirect(request, tournament_config, "tournament_config", pk=pk)
 
     return render(request, "core/seed_participants.html", {
