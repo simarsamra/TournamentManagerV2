@@ -1040,6 +1040,42 @@ def _check_roster_minimum(team):
                 )
 
 
+def _roster_conflicts_for_joining(user, team):
+    """Return reasons `user` cannot join `team` right now, as display strings.
+
+    A team competes in several tournaments, so joining it can break the roster
+    cap or the one-team-per-tournament rule in any of them. join_team_view
+    enforces both for the tournament being joined; every other path that adds a
+    member must apply the same rules across all of the team's live tournaments.
+    """
+    live_statuses = (
+        "setup", "registration_open", "ready", "scheduled", "active", "paused",
+    )
+    conflicts = []
+    current_size = team.memberships.count()
+    participations = TeamTournamentParticipation.objects.filter(
+        team=team, status__in=["pending", "active", "waitlisted"]
+    ).select_related("tournament")
+
+    for participation in participations:
+        tournament = participation.tournament
+        if tournament.status not in live_statuses:
+            continue
+        capacity = max(1, tournament.players_per_team or 1)
+        if current_size >= capacity:
+            conflicts.append(
+                f"'{team.name}' already has {current_size} of {capacity} "
+                f"player(s) for '{tournament.name}'."
+            )
+            continue
+        if _is_user_enrolled_in_tournament(user, tournament):
+            conflicts.append(
+                f"{user.username} is already registered for '{tournament.name}' "
+                f"with another team."
+            )
+    return conflicts
+
+
 def _promote_team_participation_when_full(team, tournament=None, request=None):
     """Promote pending participations to active when the roster has enough members."""
     if team.is_internal:
@@ -1468,8 +1504,19 @@ def create_team_view(request, pk):
                     department=form.cleaned_data.get("department", "").strip(),
                     sport_type=tournament.sport_type,
                 )
-                TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status=initial_status)
+                participation = TeamTournamentParticipation.objects.create(
+                    team=team, tournament=tournament, status=initial_status
+                )
                 TeamMembership.objects.create(team=team, user=request.user, role="captain")
+                # The form requires a court selection whenever the tournament has
+                # courts; persist it, or _validate_tournament_ready will later
+                # block the start on preferences the captain already supplied.
+                preferred_courts = form.cleaned_data.get("preferred_courts") or []
+                if preferred_courts:
+                    TeamTournamentCourtPreference.objects.bulk_create([
+                        TeamTournamentCourtPreference(participation=participation, court=court)
+                        for court in preferred_courts
+                    ])
                 log_action(
                     request,
                     "team_created",
@@ -4046,7 +4093,54 @@ def respond_reschedule(request, pk):
             messages.error(request, "Only the team captain can approve or reject reschedule requests.")
         return _redirect_to_match_detail(request, match.pk)
     action = request.POST.get("action")
+
+    # A request that has already been answered must not be answered again: the
+    # reschedule has been applied to the match, so flipping the request's status
+    # afterwards leaves the audit trail and the schedule disagreeing.
+    if rr.status != "pending":
+        messages.info(
+            request,
+            f"That reschedule request was already {rr.get_status_display().lower()}.",
+        )
+        return _redirect_to_match_detail(request, match.pk)
+
     if action == "approve":
+        duration = timedelta(minutes=match.tournament.default_match_duration)
+        target_court = rr.new_court or match.court
+        end_dt = rr.new_time + duration
+        active_match_statuses = ["upcoming", "in_progress", "pending_confirmation", "disputed"]
+
+        # Conflicts were only checked when the request was created. Two pending
+        # requests can target the same free slot, so re-check at approval time.
+        court_conflict = Match.objects.filter(
+            tournament=match.tournament,
+            court=target_court,
+            scheduled_time__lt=end_dt,
+            scheduled_end_time__gt=rr.new_time,
+            status__in=active_match_statuses,
+        ).exclude(pk=match.pk).exists()
+
+        team_conflict = Match.objects.filter(
+            tournament=match.tournament,
+            scheduled_time__lt=end_dt,
+            scheduled_end_time__gt=rr.new_time,
+            status__in=active_match_statuses,
+        ).filter(
+            Q(team1=match.team1) | Q(team2=match.team1)
+            | Q(team1=match.team2) | Q(team2=match.team2)
+        ).exclude(pk=match.pk).exists()
+
+        if court_conflict or team_conflict:
+            rr.status = "cancelled"
+            rr.responded_at = timezone.now()
+            rr.save(update_fields=["status", "responded_at"])
+            messages.error(
+                request,
+                "That slot is no longer free — the request has been cancelled. "
+                "Please submit a new one.",
+            )
+            return _redirect_to_match_detail(request, match.pk)
+
         rr.status = "approved"
         rr.responded_at = timezone.now()
         rr.save()
@@ -4057,8 +4151,6 @@ def respond_reschedule(request, pk):
                 end_time=match.scheduled_end_time or match.scheduled_time,
                 defaults={"reason": f"Rescheduled: {match}"},
             )
-        duration = timedelta(minutes=match.tournament.default_match_duration)
-        target_court = rr.new_court or match.court
         OpenSlot.objects.filter(
             tournament=match.tournament,
             court=target_court,
@@ -4294,13 +4386,10 @@ def manage_team_members(request, pk):
                     messages.error(request, f"'{username}' is already in this team.")
                     return redirect("team_detail", pk=pk)
 
-                if tournament and existing_user.memberships.filter(
-                    team__participations__tournament=tournament
-                ).exclude(team=team).exists():
-                    messages.error(
-                        request,
-                        f"'{username}' is already in another team for this tournament.",
-                    )
+                conflicts = _roster_conflicts_for_joining(existing_user, team)
+                if conflicts:
+                    for reason in conflicts:
+                        messages.error(request, reason)
                     return redirect("team_detail", pk=pk)
 
                 TeamMembership.objects.create(team=team, user=existing_user, role="member")
@@ -5851,6 +5940,13 @@ def accept_team_invite(request, pk):
         invite.save()
         messages.info(request, f"You are already a member of {team.name}.")
         return redirect("team_detail", pk=team.pk)
+
+    conflicts = _roster_conflicts_for_joining(request.user, team)
+    if conflicts:
+        for reason in conflicts:
+            messages.error(request, reason)
+        # Leave the invite pending so a freed slot lets them retry.
+        return redirect("my_invites")
 
     TeamMembership.objects.create(team=team, user=request.user, role="member")
     _promote_team_participation_when_full(team, request=request)
