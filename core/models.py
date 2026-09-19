@@ -11,7 +11,7 @@ class Tournament(models.Model):
         ("round_robin", "Round Robin"),
         ("double_round_robin", "Double Round Robin"),
         ("knockout", "Knockout"),
-        ("double_elimination", "Double Elimination"),
+        ("double_elimination", "Double Elimination (losers bracket not yet implemented)"),
         ("consolation", "Consolation"),
         ("hybrid", "Hybrid (Groups + Knockout)"),
     ]

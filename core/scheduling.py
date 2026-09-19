@@ -639,11 +639,22 @@ def generate_hybrid(tournament):
 
 
 def generate_double_elimination(tournament):
-    """Generate double elimination bracket (winners + losers)."""
-    # Start with a standard winners bracket
+    """Generate the winners bracket only — the losers bracket is NOT implemented.
+
+    Despite the format's name, nothing in this codebase creates a match with
+    bracket_type="losers", and advance_winner has no losing-side counterpart, so
+    a "double elimination" tournament behaves as single elimination: a team is
+    out after one defeat.
+
+    This is documented rather than silently accepted; see REMEDIATION_PLAN.md
+    T-4.4 for the specification of a real implementation (losers bracket
+    skeleton, Match.next_loser_match, a grand final, and the bracket-reset
+    decision). Until that lands, the format label, estimate_required_matches
+    and the README all state single-elimination behaviour so they agree with
+    the code.
+    """
     teams = _active_teams(tournament)
     generate_knockout(tournament, teams=teams, bracket_type="winners")
-    # Losers bracket matches are created dynamically as teams are eliminated
 
 
 def generate_consolation(tournament):
@@ -723,7 +734,11 @@ def estimate_required_matches(tournament, team_count=None):
     if tournament.format in ("knockout", "consolation"):
         return n - 1
     if tournament.format == "double_elimination":
-        return max(n - 1, (2 * n) - 2)
+        # Only a winners bracket is generated (see generate_double_elimination),
+        # so this must match single elimination. Reserving 2n-2 made
+        # _validate_tournament_ready demand roughly double the court
+        # availability that would ever be used, falsely blocking the start.
+        return n - 1
     if tournament.format == "hybrid":
         num_groups = max(1, min(tournament.num_groups or 1, n))
         base_size = n // num_groups

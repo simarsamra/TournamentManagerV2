@@ -4,7 +4,7 @@ Tournament Manager is a Django web app for running sports tournaments (table ten
 
 ## Highlights
 
-- Multiple formats: round robin, knockout, double elimination, and hybrid.
+- Multiple formats: round robin, knockout, and hybrid (double elimination is present but currently behaves as single elimination — see Tournament Formats).
 - Registration modes: team-based and individual-based tournaments.
 - Team lifecycle: create standalone teams, enter teams into open tournaments, and manage memberships.
 - Score workflow: submit, confirm, dispute, and audit all changes.
@@ -98,7 +98,7 @@ python manage.py runserver 0.0.0.0:8000
 |---|---|
 | Round Robin | All teams play each other and standings are points-based. |
 | Knockout | Single elimination bracket. |
-| Double Elimination | Winners and losers brackets. |
+| Double Elimination | **Currently single elimination.** The losers bracket is not implemented — a team is out after one defeat. See `REMEDIATION_PLAN.md` T-4.4. |
 | Hybrid | Group phase followed by knockout playoffs. |
 
 ## Tech Stack
