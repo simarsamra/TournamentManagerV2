@@ -72,6 +72,11 @@ class UXAndLogicRegressionTests(TestCase):
 		TeamMembership.objects.get_or_create(team=team, user=user, defaults={"role": "captain"})
 		return team
 
+	def _next_weekday_on_or_after(self, start_date, weekday):
+		"""Return the first date >= start_date falling on `weekday` (0=Monday)."""
+		offset = (weekday - start_date.weekday()) % 7
+		return start_date + timedelta(days=offset)
+
 	def test_register_duplicate_team_name_shows_form_error(self):
 		tournament = self._create_tournament()
 		tournament.status = "registration_open"
@@ -198,6 +203,11 @@ class UXAndLogicRegressionTests(TestCase):
 		court = Court.objects.create(tournament=tournament, name="Court A", is_available=True)
 		self.client.force_login(self.organizer)
 
+		# Pick a Monday on or after the tournament start date. _build_slots clamps
+		# availability to max(tournament.start_date, availability.start_date), so an
+		# absolute date here would silently yield zero slots once it fell in the past.
+		target_day = self._next_weekday_on_or_after(tournament.start_date, 0)
+
 		response = self.client.post(
 			reverse("add_court_availability", kwargs={"pk": tournament.pk}),
 			{
@@ -205,8 +215,8 @@ class UXAndLogicRegressionTests(TestCase):
 				"weekdays": ["0"],
 				"start_time": "10:00",
 				"additional_start_times": "13:00",
-				"start_date": "2026-05-04",
-				"end_date": "2026-05-04",
+				"start_date": target_day.isoformat(),
+				"end_date": target_day.isoformat(),
 				"matches_per_court_per_day": "2",
 				"is_active": "on",
 			},
