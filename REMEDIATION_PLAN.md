@@ -3142,7 +3142,7 @@ python manage.py audit_participant_integrity
 | T-1.2 | Backup/restore fixed and non-destructive | ☑ |
 | T-2.1 | `organizer_remove_team` no longer 500s | ☑ |
 | T-2.2 | Organizer grants survive login (found during T-1.2) | ☑ |
-| T-3.1 | Tournament ownership + admin/organizer split | ☐ |
+| T-3.1 | Tournament ownership + admin/organizer split | ☑ |
 | T-3.2 | Analytics and audit log restricted | ☑ |
 | T-3.3 | `dispute_score` participant check | ☑ |
 | T-3.4 | Open redirect closed | ☑ |
@@ -3152,8 +3152,8 @@ python manage.py audit_participant_integrity
 | T-4.3 | Reschedule responses idempotent + re-checked | ☑ |
 | T-4.4 | Double elimination honest or implemented | ☐ |
 | T-4.5 | Head-to-head tiebreaker implemented | ☐ |
-| T-4.6 | Individual registration sync | ☐ |
-| T-4.7 | JSON seeding fixed | ☐ |
+| T-4.6 | Individual registration sync | ☑ |
+| T-4.7 | JSON seeding fixed | ☑ |
 | T-4.8 | Substitutes scoped | ☐ |
 | T-4.9 | Availability date warning extended | ☐ |
 | T-4.10 | Small correctness batch (11 items) | ☐ |
@@ -3178,7 +3178,7 @@ survives the branch:
 | Task | Question | Decision | Decided by | Date |
 |---|---|---|---|---|
 | T-1.1 | History purge + password rotation | | | |
-| T-3.1 | Ownership policy (a/b/c) | | | |
+| T-3.1 | Ownership policy (a/b/c) | **(a) strict ownership** — organizers are independent parties (the app has an application/approval flow); site admins keep global access | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Double elimination: downgrade or implement | | | |
 | T-4.4 | Grand final: bracket reset or single match | | | |
 | T-4.8 | Substitutes: scope the model or counts only | | | |
