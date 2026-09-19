@@ -21,6 +21,9 @@ db.sqlite3
 media/
 staticfiles/
 
+# Database backups — contain password hashes, never commit
+backups/
+
 # Environment files
 .env
 .env.*

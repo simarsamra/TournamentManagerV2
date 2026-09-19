@@ -86,7 +86,13 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-BACKUP_DIR = BASE_DIR / "backups"
+# Backups serialize auth.User including password hashes, so they default to a
+# location outside the git working tree. Override with DJANGO_BACKUP_DIR.
+BACKUP_DIR = Path(
+    os.environ.get(
+        "DJANGO_BACKUP_DIR", BASE_DIR.parent / "tournament_manager_backups"
+    )
+)
 
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/dashboard/"

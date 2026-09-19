@@ -1,24 +1,60 @@
 """Backup and restore functionality."""
 import json
 import os
-import shutil
 from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import serializers
+from django.db import connection, transaction
 
 from .models import (
-    Tournament, Court, TimeSlot, Team, Match,
+    Tournament, Court, TimeSlot, Team, Match, Player,
     RescheduleRequest, OpenSlot, AuditLog, BackupRecord, CourtAvailability,
+    TeamMembership, TeamTournamentParticipation, TeamTournamentCourtPreference,
+    TournamentIndividualRegistration, UserTeamAssignment, TeamInvite,
+    Notification, OrganizerProfile, OrganizerApplication,
+    TeamRegistration, IndividualRegistration, NoShowReport,
 )
+from .signals import suppress_user_autocreate
 
 
+# Order matters on restore: parents before children. Circular and
+# self-referential FKs (Tournament.champion -> Team, Match.next_match -> Match)
+# are handled by deferring constraint checks for the duration of the restore.
+#
+# Every model with a FK into this set MUST be listed. restore_backup() deletes
+# each of these tables, and a delete cascades into unlisted children that the
+# backup never captured.
 BACKUP_MODELS = [
-    User, Tournament, Court, TimeSlot, CourtAvailability, Team, Match,
-    RescheduleRequest, OpenSlot, AuditLog, BackupRecord,
+    User,
+    Team,
+    Tournament,
+    Court,
+    CourtAvailability,
+    TimeSlot,
+    Player,
+    OrganizerProfile,
+    OrganizerApplication,
+    TeamMembership,
+    UserTeamAssignment,
+    TeamInvite,
+    TeamTournamentParticipation,
+    TeamTournamentCourtPreference,
+    TournamentIndividualRegistration,
+    TeamRegistration,
+    IndividualRegistration,
+    Match,
+    RescheduleRequest,
+    NoShowReport,
+    OpenSlot,
+    Notification,
+    AuditLog,
+    BackupRecord,
 ]
+
+BACKUP_FORMAT_VERSION = 2
 
 
 def create_backup(user=None, is_auto=False, notes=""):
@@ -36,11 +72,11 @@ def create_backup(user=None, is_auto=False, notes=""):
         model_name = f"{model._meta.app_label}.{model._meta.model_name}"
         data[model_name] = json.loads(serializers.serialize("json", model.objects.all()))
 
-    # Include M2M relationships
-    m2m_data = {}
-    for team in Team.objects.all():
-        m2m_data[team.id] = list(team.preferred_courts.values_list("id", flat=True))
-    data["_m2m_team_preferred_courts"] = m2m_data
+    data["_meta"] = {
+        "format_version": BACKUP_FORMAT_VERSION,
+        "created_at": datetime.now().isoformat(),
+        "models": [f"{m._meta.app_label}.{m._meta.model_name}" for m in BACKUP_MODELS],
+    }
 
     content = json.dumps(data, indent=2, default=str)
     filepath.write_text(content)
@@ -62,10 +98,25 @@ def validate_backup(filepath):
         with open(filepath, "r") as f:
             data = json.load(f)
 
-        required_keys = ["auth.user", "core.tournament"]
-        for key in required_keys:
-            if key not in data:
-                return False, f"Missing required data: {key}"
+        if "_m2m_team_preferred_courts" in data and "_meta" not in data:
+            return False, (
+                "This backup predates the global-team schema change and cannot be "
+                "restored safely: it contains no roster, membership or registration "
+                "data, so restoring it would delete all of yours."
+            )
+
+        meta = data.get("_meta") or {}
+        version = meta.get("format_version")
+        if version != BACKUP_FORMAT_VERSION:
+            return False, (
+                f"Unsupported backup format version {version!r} "
+                f"(this server reads version {BACKUP_FORMAT_VERSION})."
+            )
+
+        expected = {f"{m._meta.app_label}.{m._meta.model_name}" for m in BACKUP_MODELS}
+        missing = sorted(expected - set(data))
+        if missing:
+            return False, "Backup is missing required data: " + ", ".join(missing)
 
         return True, "Backup is valid"
     except json.JSONDecodeError:
@@ -75,30 +126,35 @@ def validate_backup(filepath):
 
 
 def restore_backup(filepath):
-    """Restore data from a backup file."""
+    """Restore data from a backup file.
+
+    Runs inside a single transaction with FK constraint checks deferred, so a
+    partial failure rolls back rather than leaving the database half-wiped.
+    Refuses outright to restore a backup that does not validate.
+    """
+    valid, message = validate_backup(filepath)
+    if not valid:
+        raise ValueError(f"Refusing to restore an invalid backup: {message}")
+
     with open(filepath, "r") as f:
         data = json.load(f)
 
-    # Clear existing data in reverse dependency order
-    for model in reversed(BACKUP_MODELS):
-        model.objects.all().delete()
+    with transaction.atomic(), suppress_user_autocreate():
+        with connection.constraint_checks_disabled():
+            for model in reversed(BACKUP_MODELS):
+                model.objects.all().delete()
 
-    # Restore in dependency order
-    for model in BACKUP_MODELS:
-        model_name = f"{model._meta.app_label}.{model._meta.model_name}"
-        if model_name in data:
-            objects = serializers.deserialize("json", json.dumps(data[model_name]))
-            for obj in objects:
-                obj.save()
+            for model in BACKUP_MODELS:
+                model_name = f"{model._meta.app_label}.{model._meta.model_name}"
+                if model_name not in data:
+                    continue
+                for obj in serializers.deserialize("json", json.dumps(data[model_name])):
+                    obj.save()
 
-    # Restore M2M
-    m2m_data = data.get("_m2m_team_preferred_courts", {})
-    for team_id_str, court_ids in m2m_data.items():
-        try:
-            team = Team.objects.get(id=int(team_id_str))
-            team.preferred_courts.set(court_ids)
-        except Team.DoesNotExist:
-            pass
+        # Re-assert every constraint now that all rows are present.
+        connection.check_constraints(
+            table_names=[model._meta.db_table for model in BACKUP_MODELS]
+        )
 
     return True
 

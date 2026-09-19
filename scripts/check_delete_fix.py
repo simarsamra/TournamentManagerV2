@@ -4,7 +4,7 @@ import sys
 import django
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 django.setup()
 
 from django.test import Client

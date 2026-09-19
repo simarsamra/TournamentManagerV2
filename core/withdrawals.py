@@ -54,6 +54,11 @@ def handle_withdrawal(request, team, tournament):
         participation.status = "withdrawn"
         participation.withdrawn_at = timezone.now()
         participation.save(update_fields=["status", "withdrawn_at"])
+        # Individual-mode competitors are shadow teams; keep their registration
+        # row in step or they stay listed as active participants.
+        from .views import _sync_participation_status
+
+        _sync_participation_status(participation)
 
     # Before publication (active), treat withdrawal as deregistration: do not apply forfeits.
     pre_active_statuses = {"setup", "registration_open", "ready", "scheduled"}

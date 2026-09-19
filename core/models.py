@@ -64,6 +64,15 @@ class Tournament(models.Model):
         default="setup",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_tournaments",
+        help_text="Organizer who created this tournament. Only they (and site "
+                  "administrators) may administer it.",
+    )
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     start_date = models.DateField(
