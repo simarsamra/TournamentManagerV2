@@ -3135,12 +3135,13 @@ python manage.py audit_participant_integrity
 
 | Task | Title | Status |
 |---|---|---|
-| T-0.1 | Expired date removed from availability test | ☐ |
-| T-0.2 | Root-level `test*.py` moved out of discovery | ☐ |
-| T-0.3 | Green baseline recorded | ☐ |
-| T-1.1 | Backups untracked, ignored, moved out of tree | ☐ |
-| T-1.2 | Backup/restore fixed and non-destructive | ☐ |
+| T-0.1 | Expired date removed from availability test | ☑ |
+| T-0.2 | Root-level `test*.py` moved out of discovery | ☑ |
+| T-0.3 | Green baseline recorded | ☑ |
+| T-1.1 | Backups untracked, ignored, moved out of tree | ☑ |
+| T-1.2 | Backup/restore fixed and non-destructive | ☑ |
 | T-2.1 | `organizer_remove_team` no longer 500s | ☐ |
+| T-2.2 | Organizer grants survive login (found during T-1.2) | ☑ |
 | T-3.1 | Tournament ownership + admin/organizer split | ☐ |
 | T-3.2 | Analytics and audit log restricted | ☐ |
 | T-3.3 | `dispute_score` participant check | ☐ |

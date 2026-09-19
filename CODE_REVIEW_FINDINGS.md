@@ -74,6 +74,52 @@ this: they carry `_m2m_team_preferred_courts` and no membership data at all.
 **Fix:** drop the `preferred_courts` block, add every model to `BACKUP_MODELS`
 in dependency order, and add a test that round-trips a populated database.
 
+### 1.0 Verified organizer grants are revoked on the organizer's next login **[verified]**
+
+*Found after the initial review, while fixing §1.2. `core/apps.py` was not read
+in the first pass.*
+
+`core/apps.py` registered a `post_save` handler on `User` that re-synced
+`OrganizerProfile.verified` to `instance.is_staff` on every non-creation save:
+
+```python
+        elif not created:
+            org_profile = OrganizerProfile.objects.get(user=instance)
+            if org_profile.verified != instance.is_staff:
+                org_profile.verified = instance.is_staff
+                org_profile.save(update_fields=["verified"])
+```
+
+Reproduced:
+
+```
+PROBE after grant   -> verified: True  _is_organizer: True
+PROBE after login   -> verified: False _is_organizer: False
+PROBE after profile save -> verified: False
+PROBE save with no profile -> raised DoesNotExist
+```
+
+Django's `update_last_login` does `user.save(update_fields=["last_login"])` on
+every login, which fires `post_save` with `created=False` and resets `verified`
+to `False` for any organizer who is not `is_staff`. `_is_organizer` then returns
+`False`.
+
+This means the entire organizer approval flow — `organizer_apply_view` →
+`review_organizer_application` → `OrganizerProfile.verified = True`, and
+`set_user_organizer` — has only ever worked for `is_staff` accounts. A user
+promoted through the UI loses the grant the moment they log in. The same happens
+on any profile update or password change. It also explains why
+`DUAL_ROLE_TOGGLE_FEATURE.md` and `promote_t2p1.py` both talk in terms of
+`is_staff` (§6.1).
+
+Third defect in the same handler: `OrganizerProfile.objects.get(user=instance)`
+raises `DoesNotExist` — an unhandled 500 on `user.save()` — for any user whose
+profile row is missing.
+
+**Fixed** in `[T-2.2]`: handlers moved to `core/signals.py`, the `elif` branch
+removed (`verified` is seeded at creation and then left alone; `_is_organizer`
+already treats `is_staff` as sufficient on its own).
+
 ### 1.3 `organizer_remove_team` raises `AttributeError` on every call **[verified]**
 
 `core/views.py:4457-4489` uses three attributes that no longer exist:
