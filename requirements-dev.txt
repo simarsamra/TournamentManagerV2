@@ -1,0 +1,5 @@
+# Developer tooling. Not needed to run the app.
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+ruff>=0.6,<1
+coverage>=7,<8

@@ -11,9 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tournament_manager.settings")
 django.setup()
 
-from core.models import Match, Team
+from core.models import Match
 from core.views import _get_team
-from django.contrib.auth.models import User
 
 # Get match 195
 match = Match.objects.get(match_number=195)
@@ -32,7 +31,7 @@ team_3_members = [m.user for m in team_3_in_tt1.memberships.all()]
 user = team_3_members[0]
 
 print(f'User: {user.username}')
-print(f'User teams:')
+print('User teams:')
 for m in user.memberships.all().select_related('team__tournament'):
     print(f'  - {m.team.name} (pk={m.team.pk}) in {m.team.tournament.name} - status: {m.team.status}')
 print()
@@ -45,7 +44,7 @@ print(f'  tournament: {team_from_get_team.tournament.name if team_from_get_team 
 print()
 
 # The issue:
-print(f'ISSUE:')
+print('ISSUE:')
 print(f'  Match is in tournament: {match.tournament.name} (pk={match.tournament.pk})')
 print(f'  Team 3 (in match) is: pk={team_3_in_tt1.pk}')
 print(f'  _get_team returns: pk={team_from_get_team.pk if team_from_get_team else None}')
@@ -53,7 +52,7 @@ print(f'  Are they the same team? {team_from_get_team == team_3_in_tt1}')
 print()
 
 # The condition in match_detail
-print(f'MATCH DETAIL VIEW CONDITION:')
+print('MATCH DETAIL VIEW CONDITION:')
 is_participant = team_from_get_team and ((match.team1 == team_from_get_team) or (match.team2 == team_from_get_team))
 print(f'  is_participant: {is_participant}')
 print(f'    team_from_get_team: {team_from_get_team}')

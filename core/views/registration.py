@@ -17,7 +17,6 @@ from ..models import (
     TournamentIndividualRegistration,
     TournamentSubstitute,
 )
-from ..standings import advance_loser_to_third_place, advance_winner
 from ..audit import log_action
 from ..services.enrollment import active_participant_count, is_registration_capacity_reached
 

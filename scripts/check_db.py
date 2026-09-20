@@ -8,7 +8,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 django.setup()
 
-from core.models import Tournament, Court, CourtAvailability
+from core.models import Tournament, CourtAvailability
 
 print("Tournaments:")
 for t in Tournament.objects.all()[:5]:

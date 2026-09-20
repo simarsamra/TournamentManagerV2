@@ -15,7 +15,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
 django.setup()
 
 from django.contrib.auth.models import User
-from core.models import Tournament, Team, TeamMembership
+from core.models import Tournament
 from core.views import _is_organizer
 
 # Create test users
@@ -43,10 +43,10 @@ else:
     print("=" * 70)
     
     print("\n1. User Role Checks:")
-    print(f"   Admin User (test_organizer)")
+    print("   Admin User (test_organizer)")
     print(f"   - is_organizer: {_is_organizer(admin_user)} ✓" if _is_organizer(admin_user) else "   - is_organizer: {_is_organizer(admin_user)} ❌")
     
-    print(f"\n   Regular User (test_regular_user)")
+    print("\n   Regular User (test_regular_user)")
     print(f"   - is_organizer: {_is_organizer(regular_user)} ✓" if not _is_organizer(regular_user) else "   - is_organizer: {_is_organizer(regular_user)} ❌")
     
     print("\n3. Tournament Status:")
@@ -55,7 +55,7 @@ else:
     print(f"   Status: {tournament_ref.status}")
     print(f"   Players per team: {tournament_ref.players_per_team}")
     
-    print(f"\n4. Current Team Memberships:")
+    print("\n4. Current Team Memberships:")
     admin_teams = admin_user.memberships.filter(team__tournament=tournament_ref).values_list('team__name', flat=True)
     regular_teams = regular_user.memberships.filter(team__tournament=tournament_ref).values_list('team__name', flat=True)
     

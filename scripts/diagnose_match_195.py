@@ -11,13 +11,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tournament_manager.settings")
 django.setup()
 
-from core.models import Tournament, Match, Team, TeamMembership
-from django.contrib.auth.models import User
-from django.utils import timezone
+from core.models import Match
 
 # Get match 195
 match = Match.objects.get(match_number=195)
-print(f'Match #195:')
+print('Match #195:')
 print(f'  ID: {match.pk}')
 print(f'  Status: {match.status}')
 print(f'  Team1: {match.team1}')
@@ -29,10 +27,10 @@ print()
 
 # Get Team 3 from the same tournament as match 195
 team_3 = match.tournament.teams.get(name='Team 3')
-print(f'Team 3:')
+print('Team 3:')
 print(f'  ID: {team_3.pk}')
 print(f'  Tournament: {team_3.tournament}')
-print(f'  Members:')
+print('  Members:')
 for m in team_3.memberships.select_related('user'):
     print(f'    - {m.user.username} ({m.role})')
 print()

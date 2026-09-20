@@ -11,8 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tournament_manager.settings")
 django.setup()
 
-from core.models import Tournament, Match, Team
-from django.contrib.auth.models import User
+from core.models import Tournament
 
 # Get the active tournament
 t = Tournament.objects.filter(status='active').first()
@@ -38,7 +37,7 @@ print()
 # Get a team from this match
 team = upcoming.team1
 print(f'Team: {team.name}')
-print(f'  Members:')
+print('  Members:')
 for member in team.memberships.select_related('user'):
     print(f'    - {member.user.username} ({member.role})')
 print()
@@ -61,11 +60,11 @@ print()
 
 # Check template-level conditions
 print('Template-level checks (from match_detail view):')
-print(f'  is_participant: would be True if user in team1 or team2')
+print('  is_participant: would be True if user in team1 or team2')
 print(f'  match.status == "upcoming": {upcoming.status == "upcoming"}')
-print(f'  Template condition for reschedule: is_participant and match.status == "upcoming"')
-print(f'  Would reschedule form show: YES')
+print('  Template condition for reschedule: is_participant and match.status == "upcoming"')
+print('  Would reschedule form show: YES')
 print()
 print(f'  match.status in ("upcoming", "in_progress"): {upcoming.status in ("upcoming", "in_progress")}')
-print(f'  Template condition for score submit: is_participant and match.status in ("upcoming", "in_progress")')
-print(f'  Would score form show: YES')
+print('  Template condition for score submit: is_participant and match.status in ("upcoming", "in_progress")')
+print('  Would score form show: YES')

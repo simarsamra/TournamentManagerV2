@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import os
 import django
-from datetime import timedelta
 
 import sys
 
@@ -12,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tournament_manager.settings")
 django.setup()
 
-from core.models import Tournament, Match
+from core.models import Tournament
 from django.utils import timezone
 
 # Get the active tournament
@@ -21,9 +20,9 @@ if not t:
     print('No active tournament found')
     exit()
 
-print(f'=' * 70)
+print('=' * 70)
 print(f'KNOCKOUT MATCHES ANALYSIS FOR: {t.name}')
-print(f'=' * 70)
+print('=' * 70)
 print()
 
 # Get knockout matches  
@@ -67,8 +66,8 @@ for m in upcoming:
     print(f'    Teams: {m.team1.name if m.team1 else "TBD"} vs {m.team2.name if m.team2 else "TBD"}')
     print(f'    Status: {m.status}')
     print(f'    Scheduled: {scheduled} ({time_str})')
-    print(f'    Can submit score: YES (status="upcoming" + is_participant)')
-    print(f'    Can reschedule: YES (status="upcoming" + is_captain)')
+    print('    Can submit score: YES (status="upcoming" + is_participant)')
+    print('    Can reschedule: YES (status="upcoming" + is_captain)')
 print()
 
 # Summary

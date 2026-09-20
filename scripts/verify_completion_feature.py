@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
 django.setup()
 
-from core.models import Tournament, Team
+from core.models import Tournament
 from core.standings import calculate_standings
 
 # Check for tournaments with different statuses
@@ -41,14 +41,14 @@ for t in completed_tournaments:
     if t.format in ("round_robin", "double_round_robin", "hybrid"):
         standings = calculate_standings(t)
         if standings:
-            print(f"  Final Standings:")
+            print("  Final Standings:")
             for i, s in enumerate(standings[:3]):
                 medal = ["🥇", "🥈", "🥉"][i] if i < 3 else ""
                 print(f"    {medal} #{s['rank']}: {s['team'].name} - {s['points']} pts ({s['wins']}W {s['losses']}L)")
         else:
             print("  No standings available")
     else:
-        print(f"  (Bracket format - no round-robin standings)")
+        print("  (Bracket format - no round-robin standings)")
 
 print("\n" + "=" * 60)
 print("Verification: Context variables that would be passed to template:")

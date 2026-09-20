@@ -15,7 +15,6 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
 django.setup()
 
 from django.contrib.auth.models import User
-from core.models import Tournament, Team, TeamMembership
 from core.views import _is_organizer, _has_dual_roles
 
 # Get t2p1 user

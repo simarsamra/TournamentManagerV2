@@ -1,4 +1,5 @@
-import os, django
+import os
+import django
 import sys
 
 # Scripts live in scripts/; put the project root on sys.path so that

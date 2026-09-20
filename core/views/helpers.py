@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache as django_cache
 from django.contrib import messages
 from django.contrib.auth.models import User
-from django.db import models as db_models, transaction
+from django.db import models as db_models
 from django.db.models import Count, Q
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -680,7 +680,6 @@ def _has_dual_roles(user):
 
 
 def _organizer_count(exclude_user_id=None):
-    from ..models import OrganizerProfile
     qs = OrganizerProfile.objects.filter(verified=True)
     if exclude_user_id is not None:
         qs = qs.exclude(user_id=exclude_user_id)
@@ -1073,7 +1072,6 @@ def _validate_tournament_ready(tournament):
     if not tournament.courts.filter(is_available=True).exists():
         errors.append("Add at least one available court before starting.")
     elif tournament.registration_mode != "individual":
-        from ..models import TeamTournamentCourtPreference
         missing_preferences = [
             team.name for team in active_teams
             if not TeamTournamentCourtPreference.objects.filter(

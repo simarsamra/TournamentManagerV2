@@ -28,7 +28,7 @@ print("=" * 70)
 print("PROMOTING USER TO ORGANIZER")
 print("=" * 70)
 
-print(f"\nBefore:")
+print("\nBefore:")
 print(f"  User: {user.username}")
 print(f"  is_staff: {user.is_staff}")
 print(f"  is_superuser: {user.is_superuser}")
@@ -37,12 +37,12 @@ print(f"  is_superuser: {user.is_superuser}")
 user.is_staff = True
 user.save()
 
-print(f"\nAfter:")
+print("\nAfter:")
 print(f"  User: {user.username}")
 print(f"  is_staff: {user.is_staff}")
 print(f"  is_superuser: {user.is_superuser}")
 
-print(f"\nTeam Memberships (retained):")
+print("\nTeam Memberships (retained):")
 for m in user.memberships.all():
     print(f"  - {m.team.name} ({m.team.tournament.name}): {m.role}")
 

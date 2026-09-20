@@ -11,7 +11,6 @@ from ..models import (
     Match,
     NoShowReport,
     RescheduleRequest,
-    TeamTournamentCourtPreference,
     TeamTournamentParticipation,
     Tournament,
 )

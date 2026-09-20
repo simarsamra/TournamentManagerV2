@@ -498,7 +498,7 @@ def resolve_dispute(request, pk):
             return _redirect_to_match_detail(request, pk)
         match.dispute_resolution_notes = resolution_notes
         match.dispute_resolved_at = timezone.now()
-        match.notes += f"\nResolved by organizer."
+        match.notes += "\nResolved by organizer."
         if resolution_notes:
             match.notes += f"\nResolution notes: {resolution_notes}"
         match.save()

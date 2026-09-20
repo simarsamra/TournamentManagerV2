@@ -2,7 +2,7 @@
 from collections import defaultdict
 from django.db import models
 from django.db.models import F, Max
-from .models import Match, Team, TeamTournamentParticipation
+from .models import Match, Team
 
 
 def _tournament_teams(tournament, statuses):

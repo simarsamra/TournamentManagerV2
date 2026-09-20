@@ -1,13 +1,12 @@
 """Scheduling engine for generating tournament fixtures."""
 import math
-import itertools
 from collections import defaultdict
 from datetime import datetime, timedelta, time
 from django.conf import settings
 from django.db import models
 from django.db.models import F
 from django.utils import timezone
-from .models import Match, Court, TimeSlot, Team, CourtAvailability, TeamTournamentCourtPreference
+from .models import Match, Team, CourtAvailability, TeamTournamentCourtPreference
 
 
 REST_DAYS_BEFORE_SEMIFINAL = 1

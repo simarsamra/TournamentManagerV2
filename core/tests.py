@@ -28,11 +28,12 @@ from .models import (
 	TeamInvite,
 )
 from .scheduling import generate_fixtures, count_available_slots
-from .standings import calculate_standings, advance_winner
+from .standings import calculate_standings, advance_winner, _determine_champion
 from .withdrawals import handle_withdrawal
 from .forms import TournamentForm
 from .scheduling import generate_consolation_if_ready
 from .services.enrollment import active_participant_count, is_registration_capacity_reached
+from .views import _check_and_finalize_tournament
 
 
 def _captain_user(team):
@@ -3535,10 +3536,6 @@ class TournamentLifecycleTests(TestCase):
 		self.assertIn("court_added", actions)
 
 
-from .standings import _determine_champion
-from .views import _check_and_finalize_tournament
-
-
 class AdditionalFormatSupportTests(TestCase):
 	def _create_tournament(self, fmt, name="Format Test"):
 		return Tournament.objects.create(
@@ -3839,7 +3836,6 @@ class TournamentCompletionTests(TestCase):
 		from .models import Court
 		court = Court.objects.create(tournament=t, name="C1")
 		from .models import TimeSlot
-		import datetime
 		ts = TimeSlot.objects.create(
 			tournament=t,
 			court=court,

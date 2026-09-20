@@ -1,6 +1,6 @@
 """Withdrawal handling logic."""
 from django.utils import timezone
-from .models import Match, Team, TeamTournamentParticipation
+from .models import Match, TeamTournamentParticipation
 from .standings import advance_winner, advance_loser_to_third_place
 from .audit import log_action
 

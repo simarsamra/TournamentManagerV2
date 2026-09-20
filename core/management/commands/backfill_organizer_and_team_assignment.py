@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
-from core.models import OrganizerProfile, UserTeamAssignment, TeamMembership
+from core.models import OrganizerProfile, UserTeamAssignment
 
 
 class Command(BaseCommand):
