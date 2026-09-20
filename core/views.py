@@ -45,7 +45,7 @@ from .scheduling import (
     count_available_slots,
     _assign_schedule_to_existing,
 )
-from .standings import calculate_standings, advance_winner, advance_loser_to_third_place, get_bracket_data, get_third_place_match, check_group_stage_complete, _determine_champion
+from .standings import calculate_standings, advance_winner, advance_loser_to_third_place, get_bracket_data, get_third_place_match, check_group_stage_complete, _determine_champion, get_losers_bracket_data, get_grand_final_matches
 from .withdrawals import handle_withdrawal
 from .backup import create_backup, validate_backup, restore_backup, list_backups, delete_backup
 from .audit import log_action
@@ -759,6 +759,19 @@ def _check_and_finalize_tournament(tournament):
             .exclude(status__in=["confirmed", "forfeited", "cancelled", "bye"])
         )
         if pending.exists():
+            return False
+
+    elif fmt == "double_elimination":
+        # The winners-bracket final settles nothing here: its loser drops into
+        # the losers bracket, and it now has a next_match (the grand final), so
+        # the winners-final check below would never find it. Completion is the
+        # last grand-final match that is still live being confirmed.
+        grand_finals = tournament.matches.filter(bracket_type="grand_final")
+        if not grand_finals.exists():
+            return False
+        live = grand_finals.exclude(status="cancelled").order_by("-round_number")
+        decider = live.first()
+        if not decider or decider.status not in ("confirmed", "forfeited"):
             return False
 
     else:
@@ -4506,18 +4519,24 @@ def standings_view(request):
                 context["standings"] = standings
         if tournament.format in ("knockout", "double_elimination", "consolation"):
             context["bracket"] = get_bracket_data(tournament)
+        if tournament.format == "double_elimination":
+            context["losers_bracket"] = get_losers_bracket_data(tournament)
+            context["grand_final_matches"] = get_grand_final_matches(tournament)
         if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
             context["third_place_match"] = get_third_place_match(tournament)
 
         team_ids = set()
-        for round_matches in (context.get("bracket") or {}).values():
-            for match in round_matches:
-                if match.team1_id:
-                    team_ids.add(match.team1_id)
-                if match.team2_id:
-                    team_ids.add(match.team2_id)
-                if match.winner_id:
-                    team_ids.add(match.winner_id)
+        bracket_sources = [context.get("bracket") or {}, context.get("losers_bracket") or {}]
+        for source in bracket_sources:
+            for round_matches in source.values():
+                for match in round_matches:
+                    for tid in (match.team1_id, match.team2_id, match.winner_id):
+                        if tid:
+                            team_ids.add(tid)
+        for match in context.get("grand_final_matches") or []:
+            for tid in (match.team1_id, match.team2_id, match.winner_id):
+                if tid:
+                    team_ids.add(tid)
         tpm = context.get("third_place_match")
         if tpm:
             for tid in [tpm.team1_id, tpm.team2_id, tpm.winner_id]:
@@ -5750,18 +5769,23 @@ def public_standings(request):
             context["standings"] = standings
     if tournament.format in ("knockout", "double_elimination", "consolation"):
         context["bracket"] = get_bracket_data(tournament)
+    if tournament.format == "double_elimination":
+        context["losers_bracket"] = get_losers_bracket_data(tournament)
+        context["grand_final_matches"] = get_grand_final_matches(tournament)
     if tournament.format in ("knockout", "double_elimination", "consolation", "hybrid"):
         context["third_place_match"] = get_third_place_match(tournament)
 
     team_ids = set()
-    for round_matches in (context.get("bracket") or {}).values():
-        for match in round_matches:
-            if match.team1_id:
-                team_ids.add(match.team1_id)
-            if match.team2_id:
-                team_ids.add(match.team2_id)
-            if match.winner_id:
-                team_ids.add(match.winner_id)
+    for source in (context.get("bracket") or {}, context.get("losers_bracket") or {}):
+        for round_matches in source.values():
+            for match in round_matches:
+                for tid in (match.team1_id, match.team2_id, match.winner_id):
+                    if tid:
+                        team_ids.add(tid)
+    for match in context.get("grand_final_matches") or []:
+        for tid in (match.team1_id, match.team2_id, match.winner_id):
+            if tid:
+                team_ids.add(tid)
     tpm = context.get("third_place_match")
     if tpm:
         for tid in [tpm.team1_id, tpm.team2_id, tpm.winner_id]:

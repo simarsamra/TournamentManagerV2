@@ -639,23 +639,207 @@ def generate_hybrid(tournament):
     _assign_hybrid_knockout_schedule(tournament)
 
 
+def _losers_bracket_shape(bracket_size):
+    """Return the losers-bracket round shape for a winners bracket of `bracket_size`.
+
+    Yields (kind, match_count, wb_round) per losers round, in order:
+
+      * ("seed", B/4, 1)     -- round 1, pairing the winners-bracket round-1 losers
+      * ("absorb", m, r)     -- survivors meet the losers dropping from WB round r
+      * ("pair", m, None)    -- survivors play each other, halving the field
+
+    For B = 8 that is seed(2), absorb(2, wb 2), pair(1), absorb(1, wb 3): six
+    matches, which with the winners bracket's seven and one grand final gives
+    the 2n-2 a double elimination is meant to take.
+    """
+    rounds = []
+    k = int(math.log2(bracket_size))
+    if k < 1:
+        return rounds
+    if k == 1:
+        # Two teams: the only match is the winners final, and its loser is the
+        # losers-bracket champion by default. Nothing to play.
+        return rounds
+
+    survivors = bracket_size // 4
+    rounds.append(("seed", survivors, 1))
+
+    for wb_round in range(2, k + 1):
+        wb_losers = bracket_size // (2 ** wb_round)
+        rounds.append(("absorb", wb_losers, wb_round))
+        survivors = wb_losers
+        if wb_round < k:
+            survivors //= 2
+            rounds.append(("pair", survivors, None))
+
+    return rounds
+
+
+def _link_out(match, target, slot, losing_side=False):
+    """Point `match`'s winner (or loser) at slot `slot` of `target`."""
+    if losing_side:
+        match.next_loser_match = target
+        match.next_loser_match_slot = slot
+        match.save(update_fields=["next_loser_match", "next_loser_match_slot"])
+    else:
+        match.next_match = target
+        match.next_match_slot = slot
+        match.save(update_fields=["next_match", "next_match_slot"])
+
+
 def generate_double_elimination(tournament):
-    """Generate the winners bracket only — the losers bracket is NOT implemented.
+    """Generate a full double-elimination bracket.
 
-    Despite the format's name, nothing in this codebase creates a match with
-    bracket_type="losers", and advance_winner has no losing-side counterpart, so
-    a "double elimination" tournament behaves as single elimination: a team is
-    out after one defeat.
+    A winners bracket, a losers bracket fed by its losers, and a grand final.
+    When `tournament.enable_bracket_reset` is set a decider is created behind
+    the grand final, because the losers-bracket champion arrives there with one
+    defeat and the winners-bracket champion with none; without it the former
+    would be eliminated on a single loss, which the format's name says it
+    should not be.
 
-    This is documented rather than silently accepted; see REMEDIATION_PLAN.md
-    T-4.4 for the specification of a real implementation (losers bracket
-    skeleton, Match.next_loser_match, a grand final, and the bracket-reset
-    decision). Until that lands, the format label, estimate_required_matches
-    and the README all state single-elimination behaviour so they agree with
-    the code.
+    Byes are resolved structurally at generation time. A winners round-1 bye
+    produces no loser, so the losers-bracket match that would have received it
+    has one feeder instead of two and is marked "bye": whoever arrives walks
+    over. A match whose feeders are all byes is vestigial and never played.
+    Both are settled here rather than at propagation time, because "no team is
+    coming" and "the team has not arrived yet" are indistinguishable later.
+
+    Losers entering an absorb round are reversed on alternate winners rounds.
+    This is the usual crossover heuristic and reduces immediate rematches; it
+    does not eliminate them.
     """
     teams = _active_teams(tournament)
-    generate_knockout(tournament, teams=teams, bracket_type="winners")
+    n = len(teams)
+    if n < 2:
+        return []
+
+    winners = generate_knockout(tournament, teams=teams, bracket_type="winners")
+    if not winners:
+        return []
+
+    bracket_size = 1
+    while bracket_size < n:
+        bracket_size *= 2
+    k = int(math.log2(bracket_size))
+
+    wb_by_round = defaultdict(list)
+    for match in winners:
+        if match.bracket_type == "winners":
+            wb_by_round[match.round_number].append(match)
+    for round_matches in wb_by_round.values():
+        round_matches.sort(key=lambda m: m.bracket_position)
+
+    next_match_number = max(m.match_number for m in winners) + 1
+    all_matches = list(winners)
+
+    # A winners round-1 bye has no loser to send down.
+    def produces_loser(match):
+        return match.status != "bye"
+
+    losers_rounds = []          # list of lists of Match
+    live_feeders = {}           # Match.pk -> count of feeders that can deliver a team
+    survivors = []              # previous losers round, in bracket_position order
+
+    for lb_round, (kind, count, wb_round) in enumerate(
+        _losers_bracket_shape(bracket_size), start=1
+    ):
+        if count <= 0:
+            continue
+        created = []
+        for position in range(count):
+            match = Match(
+                tournament=tournament,
+                match_number=next_match_number,
+                round_number=lb_round,
+                bracket_position=position,
+                bracket_type="losers",
+                status="upcoming",
+            )
+            created.append(match)
+            next_match_number += 1
+        Match.objects.bulk_create(created)
+        for match in created:
+            live_feeders[match.pk] = 0
+
+        if kind == "seed":
+            sources = [m for m in wb_by_round[1]]
+            for index, source in enumerate(sources):
+                target = created[index // 2]
+                if produces_loser(source):
+                    _link_out(source, target, (index % 2) + 1, losing_side=True)
+                    live_feeders[target.pk] += 1
+        elif kind == "absorb":
+            dropping = list(wb_by_round[wb_round])
+            # Crossover: reverse on alternate rounds so a team is less likely
+            # to meet the opponent that just knocked it down.
+            if wb_round % 2 == 0:
+                dropping = list(reversed(dropping))
+            for index, target in enumerate(created):
+                source = survivors[index] if index < len(survivors) else None
+                if source is not None and live_feeders.get(source.pk, 0) > 0:
+                    _link_out(source, target, 1)
+                    live_feeders[target.pk] += 1
+                drop = dropping[index] if index < len(dropping) else None
+                if drop is not None and produces_loser(drop):
+                    _link_out(drop, target, 2, losing_side=True)
+                    live_feeders[target.pk] += 1
+        else:  # pair
+            for index, source in enumerate(survivors):
+                target = created[index // 2]
+                if live_feeders.get(source.pk, 0) > 0:
+                    _link_out(source, target, (index % 2) + 1)
+                    live_feeders[target.pk] += 1
+
+        # A match nobody can reach, or that only one team can reach, is not a
+        # contest. Mark it so the scheduler skips it and propagation walks the
+        # single arrival straight through.
+        for match in created:
+            if live_feeders[match.pk] <= 1:
+                match.status = "bye"
+                match.save(update_fields=["status"])
+
+        losers_rounds.append(created)
+        survivors = created
+        all_matches.extend(created)
+
+    wb_final = wb_by_round[k][0]
+
+    grand_final = Match(
+        tournament=tournament,
+        match_number=next_match_number,
+        round_number=1,
+        bracket_position=0,
+        bracket_type="grand_final",
+        status="upcoming",
+    )
+    grand_final.save()
+    next_match_number += 1
+    all_matches.append(grand_final)
+
+    _link_out(wb_final, grand_final, 1)
+    if losers_rounds:
+        lb_final = losers_rounds[-1][0]
+        _link_out(lb_final, grand_final, 2)
+    else:
+        # Two-team bracket: the winners final's loser is the losers champion.
+        _link_out(wb_final, grand_final, 2, losing_side=True)
+
+    if tournament.enable_bracket_reset:
+        decider = Match(
+            tournament=tournament,
+            match_number=next_match_number,
+            round_number=2,
+            bracket_position=0,
+            bracket_type="grand_final",
+            status="upcoming",
+        )
+        decider.save()
+        all_matches.append(decider)
+        # Deliberately not linked: the decider is played only if the losers
+        # champion wins the grand final, which advance_winner decides.
+
+    _assign_round_based_schedule(tournament, all_matches)
+    return all_matches
 
 
 def generate_consolation(tournament):
@@ -735,11 +919,15 @@ def estimate_required_matches(tournament, team_count=None):
     if tournament.format in ("knockout", "consolation"):
         return n - 1
     if tournament.format == "double_elimination":
-        # Only a winners bracket is generated (see generate_double_elimination),
-        # so this must match single elimination. Reserving 2n-2 made
-        # _validate_tournament_ready demand roughly double the court
-        # availability that would ever be used, falsely blocking the start.
-        return n - 1
+        # Every team but the champion must lose twice, and the champion may
+        # lose once: n-1 winners-bracket matches, n-2 losers-bracket matches
+        # and one grand final, plus the decider when bracket reset is on.
+        #
+        # This was briefly n-1 while only a winners bracket existed. The
+        # original 2n-2 was right for the format and wrong for the code; now
+        # the code generates the losers bracket, it is right for both.
+        base = (2 * n) - 2
+        return base + 1 if tournament.enable_bracket_reset else base
     if tournament.format == "hybrid":
         num_groups = max(1, min(tournament.num_groups or 1, n))
         base_size = n // num_groups

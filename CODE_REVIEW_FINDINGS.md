@@ -339,6 +339,40 @@ Elimination: Winners and losers brackets."
 double the court availability that will actually be used.
 `DoubleEliminationBracketTests` only asserts winners-bracket behaviour.
 
+**Status (2026-09-20): implemented.** T-4.4 first took the honest downgrade —
+label, estimate and README were made to agree that the format was single
+elimination — and the losers bracket has now been built on top of that.
+
+`generate_double_elimination` produces a winners bracket, a losers bracket fed
+by its losers, a grand final, and a decider when `enable_bracket_reset` is set.
+`Match.next_loser_match` routes the losing side, with explicit slot fields
+because a losers-bracket match is fed from two directions and the slot cannot
+be inferred from `previous_matches` ordering the way a single-elimination
+bracket can. Loser routing lives inside `advance_winner` rather than in a new
+function, so all six call sites that finalise a match get it without a seventh
+call at each — which is the drift this finding is an instance of.
+
+`estimate_required_matches` returns to `2n-2` (`2n-1` with bracket reset). The
+original `2n-2` was right for the format and wrong for the code; it is now
+right for both.
+
+Two things the implementation turned up:
+
+- The completion check in `_check_and_finalize_tournament` looked for a
+  winners-bracket final with no `next_match`. The winners final now feeds the
+  grand final, so that query matched nothing and a double-elimination
+  tournament would never have completed. It now keys on the last live
+  grand-final match.
+- Byes are resolved structurally at generation. A winners round-1 bye produces
+  no loser, so the losers-bracket match expecting it has one feeder instead of
+  two and is marked a walkover; a match whose feeders are all byes is
+  vestigial. This has to be settled at generation time, because "no team is
+  coming" and "the team has not arrived yet" are indistinguishable later.
+
+Verified across 2, 4, 5, 6, 7, 8, 11 and 16 teams: every bracket plays out to
+exactly `2n-2` matches with no unreachable fixtures, and every eliminated team
+has lost exactly twice.
+
 ### 3.5 Head-to-head tiebreaker is a no-op
 
 `_sort_key` (`core/standings.py:104-116`):
@@ -632,7 +666,7 @@ be able to get out.
 
 ### 6.2 README overstates three behaviours
 
-- "Double Elimination — Winners and losers brackets": no losers bracket exists
+- "Double Elimination — Winners and losers brackets": no losers bracket existed at the time of the review. One does now (see §3.4), so the README claim is accurate again.
   (§3.4).
 - "Organizer tools: analytics, backups, audit log": analytics and the audit log
   are open to every authenticated user (§2.2); backups crash (§1.2).

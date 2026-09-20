@@ -26,24 +26,27 @@ def build_tournament(fmt, team_count, name="F"):
     return tournament
 
 
-class DoubleEliminationHonestyTests(TestCase):
-    """The format generates a winners bracket only. Until a real losers bracket
-    exists, every part of the system must say so consistently."""
+class DoubleEliminationTests(TestCase):
+    """The format generates a winners bracket, a losers bracket and a grand
+    final. Generator, slot estimate and user-facing label must stay in step.
 
-    def test_no_losers_bracket_is_generated(self):
+    These replace the guards that pinned the honest single-elimination
+    downgrade of T-4.4. That downgrade existed because no losers bracket was
+    generated; now one is, and the failure message those guards carried said
+    exactly this should happen.
+    """
+
+    def test_a_losers_bracket_is_generated(self):
         tournament = build_tournament("double_elimination", 8, name="DE")
         generate_fixtures(tournament)
 
-        self.assertEqual(
-            tournament.matches.filter(bracket_type="losers").count(), 0,
-            "if a losers bracket is now generated, T-4.4 Option B has landed — "
-            "update this test, estimate_required_matches and the format label",
-        )
         self.assertEqual(tournament.matches.filter(bracket_type="winners").count(), 7)
+        self.assertEqual(tournament.matches.filter(bracket_type="losers").count(), 6)
+        self.assertEqual(tournament.matches.filter(bracket_type="grand_final").count(), 2)
 
     def test_slot_estimate_matches_what_is_generated(self):
-        """Reserving 2n-2 made _validate_tournament_ready demand roughly double
-        the availability that would ever be used."""
+        """The estimate and the generator drifting apart is what made
+        _validate_tournament_ready falsely block organizers before."""
         tournament = build_tournament("double_elimination", 8, name="DE2")
         generate_fixtures(tournament)
 
@@ -52,10 +55,22 @@ class DoubleEliminationHonestyTests(TestCase):
             tournament.matches.exclude(bracket_type="third_place").count(),
         )
 
-    def test_label_does_not_promise_a_losers_bracket(self):
+    def test_slot_estimate_matches_generation_without_bracket_reset(self):
+        tournament = build_tournament("double_elimination", 8, name="DE4")
+        tournament.enable_bracket_reset = False
+        tournament.save(update_fields=["enable_bracket_reset"])
+        generate_fixtures(tournament)
+
+        self.assertEqual(
+            estimate_required_matches(tournament, team_count=8),
+            tournament.matches.exclude(bracket_type="third_place").count(),
+        )
+
+    def test_label_no_longer_disclaims_the_losers_bracket(self):
         tournament = build_tournament("double_elimination", 2, name="DE3")
         label = tournament.get_format_display().lower()
-        self.assertIn("not yet implemented", label)
+        self.assertEqual(label, "double elimination")
+        self.assertNotIn("not yet implemented", label)
 
 
 class SingleEliminationEstimateTests(TestCase):

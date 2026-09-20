@@ -174,7 +174,7 @@
 {% if tournament and tournament.format == 'hybrid' and hybrid_group_complete %}
 {% else %}
 <div class="card mt-2">
-    <div class="card-header">Knockout Bracket</div>
+    <div class="card-header">{% if tournament.format == 'double_elimination' %}Winners Bracket{% else %}Knockout Bracket{% endif %}</div>
     <div class="card-body">
         <div class="bracket-container" style="display:flex; align-items:flex-start;">
             {% for round_num, round_matches in bracket.items %}
@@ -264,6 +264,101 @@
     </div>
 </div>
 {% endif %}
+{% endif %}
+
+{% if losers_bracket %}
+<div class="card mt-2">
+    <div class="card-header">Losers Bracket</div>
+    <div class="card-body">
+        <p class="text-muted" style="margin-top:0;">
+            A defeat in the winners bracket drops a team here. A second defeat ends its tournament.
+        </p>
+        <div class="bracket-container" style="display:flex; align-items:flex-start;">
+            {% for round_num, round_matches in losers_bracket.items %}
+            <div class="bracket-round">
+                <div class="bracket-round-title">
+                    {% if forloop.last %}Losers Final{% else %}Losers Round {{ round_num }}{% endif %}
+                </div>
+                {% for m in round_matches %}
+                <div class="bracket-match-wrap">
+                <div class="bracket-match">
+                    <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
+                        <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ m.score_team1|default_if_none:"" }}</span>
+                    </div>
+                    <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
+                        <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ m.score_team2|default_if_none:"" }}</span>
+                    </div>
+                </div>
+                {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
+                {% if m.scheduled_time or m.court %}
+                <div class="bracket-match-info" aria-label="Match schedule and location">
+                    {% if m.scheduled_time %}
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Date</span><span>{{ m.scheduled_time|date:"M d" }}</span></span>
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Time</span><span>{{ m.scheduled_time|date:"H:i" }}</span></span>
+                    {% endif %}
+                    {% if m.court %}
+                    <span class="bracket-info-chip bracket-info-chip-place"><span class="bracket-info-label">Court</span><span>{{ m.court.name }}</span></span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if grand_final_matches %}
+<div class="card mt-2">
+    <div class="card-header">Grand Final</div>
+    <div class="card-body">
+        <div class="bracket-container" style="display:flex; align-items:flex-start;">
+            {% for m in grand_final_matches %}
+            <div class="bracket-round">
+                <div class="bracket-round-title">
+                    {% if m.round_number == 1 %}Grand Final{% else %}Decider{% endif %}
+                </div>
+                <div class="bracket-match-wrap">
+                <div class="bracket-match">
+                    <div class="bracket-team {% if m.winner == m.team1 %}winner{% endif %}">
+                        <span>{% if m.team1_id %}{{ team_name_map|dict_get:m.team1_id|default:m.team1.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ m.score_team1|default_if_none:"" }}</span>
+                    </div>
+                    <div class="bracket-team {% if m.winner == m.team2 %}winner{% endif %}">
+                        <span>{% if m.team2_id %}{{ team_name_map|dict_get:m.team2_id|default:m.team2.name }}{% else %}TBD{% endif %}</span>
+                        <span class="bracket-score">{{ m.score_team2|default_if_none:"" }}</span>
+                    </div>
+                </div>
+                {% if m.status not in "confirmed,forfeited,bye,cancelled" %}
+                {% if m.scheduled_time or m.court %}
+                <div class="bracket-match-info" aria-label="Match schedule and location">
+                    {% if m.scheduled_time %}
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Date</span><span>{{ m.scheduled_time|date:"M d" }}</span></span>
+                    <span class="bracket-info-chip"><span class="bracket-info-label">Time</span><span>{{ m.scheduled_time|date:"H:i" }}</span></span>
+                    {% endif %}
+                    {% if m.court %}
+                    <span class="bracket-info-chip bracket-info-chip-place"><span class="bracket-info-label">Court</span><span>{{ m.court.name }}</span></span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+                </div>
+                {% if m.round_number == 2 %}
+                <p class="text-muted" style="font-size:0.85em; max-width:16em;">
+                    Played only because the losers-bracket champion won the grand final,
+                    levelling both finalists at one defeat.
+                </p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
 {% endif %}
 
 {% if not standings and not group_standings and not bracket %}

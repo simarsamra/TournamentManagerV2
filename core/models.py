@@ -11,7 +11,7 @@ class Tournament(models.Model):
         ("round_robin", "Round Robin"),
         ("double_round_robin", "Double Round Robin"),
         ("knockout", "Knockout"),
-        ("double_elimination", "Double Elimination (losers bracket not yet implemented)"),
+        ("double_elimination", "Double Elimination"),
         ("consolation", "Consolation"),
         ("hybrid", "Hybrid (Groups + Knockout)"),
     ]
@@ -131,6 +131,15 @@ class Tournament(models.Model):
     enable_third_place_match = models.BooleanField(
         default=False,
         help_text="Generate a 3rd-place match between semi-final losers (knockout & hybrid only)",
+    )
+    enable_bracket_reset = models.BooleanField(
+        default=True,
+        help_text="Double elimination only. The losers-bracket champion reaches "
+                  "the grand final with one defeat and the winners-bracket "
+                  "champion with none, so a single grand final would eliminate "
+                  "the former on one loss. With this on, a grand final won by "
+                  "the losers-bracket champion is followed by a decider. Turn "
+                  "it off for a fixed match count at the cost of that asymmetry.",
     )
 
     def get_tiebreaker_order(self):
@@ -617,6 +626,21 @@ class Match(models.Model):
     next_match = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="previous_matches"
     )
+    # Double elimination: where this match's LOSER goes. Single-elimination
+    # formats leave this null and are unaffected.
+    next_loser_match = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="previous_loser_matches",
+    )
+    # Which slot the outgoing team fills in next_match / next_loser_match.
+    #
+    # A losers-bracket match is fed from two different directions -- a winner
+    # from the losers bracket and a loser dropping down from the winners
+    # bracket -- so the slot cannot be inferred from previous_matches ordering
+    # the way a single-elimination bracket can. Null means "infer", which is
+    # what every pre-existing bracket does.
+    next_match_slot = models.PositiveSmallIntegerField(null=True, blank=True)
+    next_loser_match_slot = models.PositiveSmallIntegerField(null=True, blank=True)
     group = models.CharField(max_length=5, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)

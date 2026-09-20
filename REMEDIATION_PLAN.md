@@ -3150,7 +3150,7 @@ python manage.py audit_participant_integrity
 | T-4.1 | Court preferences persisted at team creation | ☑ |
 | T-4.2 | Invite path enforces roster rules | ☑ |
 | T-4.3 | Reschedule responses idempotent + re-checked | ☑ |
-| T-4.4 | Double elimination honest or implemented | ☑ (Option A) |
+| T-4.4 | Double elimination honest or implemented | ☑ (Option A, then Option B) |
 | T-4.5 | Head-to-head tiebreaker implemented | ☑ |
 | T-4.6 | Individual registration sync | ☑ |
 | T-4.7 | JSON seeding fixed | ☑ |
@@ -3180,7 +3180,7 @@ survives the branch:
 | T-1.1 | History purge + password rotation | **Purged on this branch.** `backups/` *and* `db.sqlite3` (a second, larger source found during the purge: 17 blobs, 53 hashes, 21 emails) removed with `git filter-repo`. HEAD tree unchanged, 297 tests pass, verified clean from a fresh GitHub clone. `main` must be **reset** onto this branch, not merged — the affected commits are shared ancestors. Password rotation remains the owner's to do | Repo owner ("these were just created to test things") | 2026-09-20 |
 | T-3.1 | Ownership policy (a/b/c) | **(a) strict ownership** — organizers are independent parties (the app has an application/approval flow); site admins keep global access | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Double elimination: downgrade or implement | **Option A — honest downgrade.** A real losers bracket is a feature, not a bug fix; spec recorded in the generator docstring | Delegated to Claude by the repo owner | 2026-09-19 |
-| T-4.4 | Grand final: bracket reset or single match | | | |
+| T-4.4 | Grand final: bracket reset or single match | **Bracket reset, on by default, per-tournament switch** (`Tournament.enable_bracket_reset`). The losers-bracket champion reaches the grand final with one defeat and the winners champion with none; a single grand final would eliminate the former on one loss, which is the thing the format's name says does not happen. Organizers who want a fixed match count can turn it off | Delegated to Claude by the repo owner | 2026-09-20 |
 | T-4.8 | Substitutes: scope the model or counts only | **Scoped — via a new `TournamentSubstitute` model rather than a nullable FK on `TeamMembership`.** The FK approach would have required auditing 40+ membership queries; a separate table leaves roster arithmetic untouched | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-6.1 | Open-availability horizon: 120 or 365 days | **365 kept, but made configurable** (`DJANGO_OPEN_AVAILABILITY_DAYS`). Shortening it changes scheduling outcomes for tournaments with no end date and sparse availability — they would start reporting "not enough availability" where slots exist further out. That is an operator's trade-off, not a default worth changing silently | Delegated to Claude by the repo owner | 2026-09-20 |
 | T-6.1 | Where the suite's ~200s actually went | **The plan's diagnosis was wrong.** It blamed `_build_slots`; measurement showed PBKDF2 password hashing. Optimising slot building left the suite at 197s vs a 198s baseline; a test-only fast hasher took it to 7.6s. Both changes kept — the slot work is still a real page-load cost | Measured, not delegated | 2026-09-20 |
@@ -3196,7 +3196,7 @@ State these explicitly so nobody assumes they were handled:
 - Purging git history on branches other than `claude/code-docs-review-26pjjx`
   (T-1.1). Done on this branch; the owner is deleting the other branches and
   resetting `main` onto this history.
-- A full double-elimination implementation, unless Option B was chosen (T-4.4).
+- ~~A full double-elimination implementation, unless Option B was chosen (T-4.4).~~ Implemented 2026-09-20: losers bracket, grand final and optional decider.
 - Migrating off SQLite. `DatabaseCache` and `select_for_update` behave
   differently on SQLite; several concurrency fixes here are correct but inert
   until the database is Postgres.

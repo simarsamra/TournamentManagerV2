@@ -11,9 +11,8 @@ Tested against **Django 5.2 LTS on Python 3.11**.
 
 ## Highlights
 
-- Multiple formats: round robin, double round robin, knockout, consolation and
-  hybrid (double elimination is present but currently behaves as single
-  elimination — see [Tournament Formats](#tournament-formats)).
+- Multiple formats: round robin, double round robin, knockout, double
+  elimination, consolation and hybrid.
 - Registration modes: team-based and individual-based tournaments.
 - Team lifecycle: create standalone teams, enter teams into open tournaments,
   manage memberships, and invite members.
@@ -216,6 +215,22 @@ Notes:
   roster, so a substitute for one tournament is not silently a member of the
   team everywhere else.
 
+### Double elimination and the grand final
+
+- A defeat in the winners bracket drops a team into the losers bracket. A
+  second defeat eliminates it.
+- The losers-bracket champion reaches the grand final with one defeat; the
+  winners-bracket champion reaches it with none. With `enable_bracket_reset`
+  on (the default), a grand final won by the losers-bracket champion is
+  followed by a decider, so nobody is eliminated on a single defeat. Turn it
+  off for a fixed match count at the cost of that asymmetry.
+- Slot reservation accounts for the decider: `2n-2` matches, or `2n-1` with
+  bracket reset enabled.
+- When the field is not a power of two, byes in the first winners round leave
+  losers-bracket slots that nothing can fill. Those matches are resolved as
+  walkovers at generation time — they are never scheduled and are hidden from
+  the bracket display.
+
 ## Organizer Flow
 
 1. Create a tournament and choose format and registration mode.
@@ -252,7 +267,7 @@ the ribbon — see [`DUAL_ROLE_TOGGLE_FEATURE.md`](DUAL_ROLE_TOGGLE_FEATURE.md).
 | Round Robin | All teams play each other; standings are points-based. |
 | Double Round Robin | As above, twice — home and away. |
 | Knockout | Single elimination bracket. |
-| Double Elimination | **Currently single elimination.** The losers bracket is not implemented — a team is out after one defeat. See `REMEDIATION_PLAN.md` T-4.4. |
+| Double Elimination | Winners bracket, losers bracket and a grand final. A team is out after two defeats. |
 | Consolation | Knockout, plus a secondary bracket generated from the first-round losers once round 1 completes. |
 | Hybrid | Group phase followed by knockout playoffs. |
 

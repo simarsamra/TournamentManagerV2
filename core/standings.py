@@ -215,12 +215,78 @@ def _apply_head_to_head(tournament, ordered_rows, scalar_key, group=None):
     return result
 
 
+def _match_loser(match):
+    """Return the team that lost `match`, or None if it cannot be determined."""
+    if not match.winner_id:
+        return None
+    if match.winner_id == match.team1_id:
+        return match.team2
+    if match.winner_id == match.team2_id:
+        return match.team1
+    return None
+
+
+def _place_team(target, team, slot=None, _depth=0):
+    """Put `team` into `target`, walking it straight through a walkover.
+
+    A losers-bracket match marked "bye" has at most one feeder that can ever
+    deliver a team -- the others were byes in the winners bracket -- so the
+    single arrival advances without playing. That can cascade through several
+    rounds, hence the recursion, bounded because each step moves strictly
+    forward through a finite bracket.
+    """
+    if team is None or target is None or _depth > 64:
+        return
+
+    if slot == 1:
+        target.team1 = team
+    elif slot == 2:
+        target.team2 = team
+    elif not target.team1_id:
+        target.team1 = team
+    else:
+        target.team2 = team
+    target.save(update_fields=["team1", "team2"])
+
+    if target.status == "bye" and not target.winner_id:
+        target.winner = team
+        target.save(update_fields=["winner"])
+        if target.next_match_id:
+            _place_team(
+                Match.objects.get(pk=target.next_match_id), team,
+                target.next_match_slot, _depth + 1,
+            )
+
+
 def advance_winner(match):
-    """After a match is confirmed, advance winner in knockout bracket."""
+    """Propagate a decided match to whatever comes next.
+
+    The winner moves to `next_match`, and in double elimination the loser moves
+    to `next_loser_match`. Both are handled here rather than in a separate
+    call, because the six places that finalise a match all call this one and a
+    seventh call at each of them is exactly the kind of drift this codebase has
+    already been bitten by.
+    """
+    if match.next_loser_match_id:
+        loser = _match_loser(match)
+        if loser is not None:
+            _place_team(
+                Match.objects.get(pk=match.next_loser_match_id), loser,
+                match.next_loser_match_slot,
+            )
+
+    _resolve_grand_final(match)
+
     if not match.next_match:
         return
 
     next_match = match.next_match
+    if match.next_match_slot in (1, 2):
+        # Explicit routing: a losers-bracket match is fed from two directions,
+        # so previous_matches ordering cannot say which slot this is.
+        _place_team(next_match, match.winner, match.next_match_slot)
+        return
+
     # Determine which slot (team1 or team2) the winner fills
     prev_matches = list(next_match.previous_matches.order_by("bracket_position"))
     if len(prev_matches) >= 1 and prev_matches[0].id == match.id:
@@ -236,6 +302,46 @@ def advance_winner(match):
     next_match.save(update_fields=["team1", "team2"])
 
 
+def _resolve_grand_final(match):
+    """Decide whether a double-elimination decider is played or cancelled.
+
+    The grand final is the one match where the two sides arrive unequal: the
+    winners-bracket champion has no defeats, the losers-bracket champion has
+    one. If the winners champion wins, the title is settled and the decider is
+    cancelled. If the losers champion wins, both have one defeat and the
+    decider is played.
+    """
+    if match.bracket_type != "grand_final" or match.round_number != 1:
+        return
+    if not match.winner_id:
+        return
+
+    decider = (
+        Match.objects.filter(
+            tournament_id=match.tournament_id,
+            bracket_type="grand_final",
+            round_number=2,
+        )
+        .exclude(pk=match.pk)
+        .first()
+    )
+    if decider is None:
+        return
+
+    # team1 is the winners-bracket champion; see generate_double_elimination.
+    if match.winner_id == match.team1_id:
+        if decider.status not in ("confirmed", "forfeited"):
+            decider.status = "cancelled"
+            decider.save(update_fields=["status"])
+        return
+
+    decider.team1 = match.team1
+    decider.team2 = match.team2
+    if decider.status == "cancelled":
+        decider.status = "upcoming"
+    decider.save(update_fields=["team1", "team2", "status"])
+
+
 def get_bracket_data(tournament):
     """Build bracket structure for display."""
     matches = tournament.matches.filter(bracket_type="winners", group="").order_by("round_number", "bracket_position")
@@ -243,6 +349,37 @@ def get_bracket_data(tournament):
     for m in matches:
         rounds[m.round_number].append(m)
     return dict(sorted(rounds.items()))
+
+
+def get_losers_bracket_data(tournament):
+    """Build the losers-bracket structure for display, keyed by round.
+
+    Walkover and vestigial matches (status "bye") are left out: they exist so
+    the bracket's shape stays regular when the field is not a power of two, but
+    nobody plays them and showing them reads as a bug.
+    """
+    matches = (
+        tournament.matches
+        .filter(bracket_type="losers")
+        .exclude(status="bye")
+        .select_related("team1", "team2", "winner", "court")
+        .order_by("round_number", "bracket_position")
+    )
+    rounds = defaultdict(list)
+    for match in matches:
+        rounds[match.round_number].append(match)
+    return dict(sorted(rounds.items()))
+
+
+def get_grand_final_matches(tournament):
+    """Return the grand final, plus the decider when one is still live."""
+    return list(
+        tournament.matches
+        .filter(bracket_type="grand_final")
+        .exclude(status="cancelled")
+        .select_related("team1", "team2", "winner", "court")
+        .order_by("round_number")
+    )
 
 
 def get_third_place_match(tournament):
@@ -441,6 +578,23 @@ def _determine_champion(tournament):
         standings = calculate_standings(tournament)
         if standings:
             return standings[0]["team"]
+        return None
+
+    if fmt == "double_elimination":
+        # The winners-bracket final decides nothing on its own: its loser drops
+        # into the losers bracket. The title is the last grand-final match
+        # actually played -- the decider when there was one, otherwise the
+        # grand final itself.
+        decided = (
+            tournament.matches
+            .filter(bracket_type="grand_final",
+                    status__in=["confirmed", "forfeited"],
+                    winner__isnull=False)
+            .order_by("-round_number")
+            .first()
+        )
+        if decided:
+            return decided.winner
         return None
 
     # Bracket-based formats: winner of the winners-bracket final
