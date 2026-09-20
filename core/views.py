@@ -452,14 +452,27 @@ def _match_display_str(match):
 
 
 def _is_organizer(user):
-    """Check if user is an approved organizer."""
+    """Check if user is an approved organizer.
+
+    This is the authorisation predicate the whole application leans on, so it
+    denies rather than raises when handed something that is not a user-like
+    object. It no longer swallows *everything*: a database failure used to come
+    back here as a plain "not an organizer", which would have taken every
+    organizer's tools away with nothing in the logs to say why.
+    """
+    if not user:
+        return False
     try:
-        if not user or not user.is_authenticated:
+        if not user.is_authenticated:
             return False
         if user.is_superuser or user.is_staff:
             return True
-        return hasattr(user, 'organizer_profile') and user.organizer_profile.verified
-    except:
+        # Django's reverse one-to-one accessor raises RelatedObjectDoesNotExist,
+        # which subclasses AttributeError, so hasattr is a valid test for
+        # "this user has no organizer profile" -- and the same AttributeError
+        # is what a non-user argument produces.
+        return hasattr(user, "organizer_profile") and user.organizer_profile.verified
+    except AttributeError:
         return False
 
 
@@ -503,25 +516,23 @@ def _is_captain(user, team=None):
     """Check if user is captain of their active team, or of a specific team if provided."""
     if not user.is_authenticated:
         return False
-    try:
-        if team is None:
-            # Check if captain of active team
-            if not hasattr(user, 'team_assignment') or not user.team_assignment.active_team:
-                return False
-            return TeamMembership.objects.filter(
-                user=user, 
-                team=user.team_assignment.active_team, 
-                role="captain"
-            ).exists()
-        else:
-            # Check if captain of specific team
-            return TeamMembership.objects.filter(
-                user=user, 
-                team=team, 
-                role="captain"
-            ).exists()
-    except:
-        return False
+
+    if team is None:
+        # Fall back to the user's active team. A user with no assignment row
+        # raises RelatedObjectDoesNotExist (an AttributeError); that is "no
+        # active team", not an error.
+        try:
+            team = user.team_assignment.active_team
+        except AttributeError:
+            return False
+        if not team:
+            return False
+
+    # Deliberately outside the try: a database failure here is a real fault and
+    # must surface, not quietly read as "not a captain".
+    return TeamMembership.objects.filter(
+        user=user, team=team, role="captain"
+    ).exists()
 
 
 def _can_manage_reschedule(user, tournament, team):
@@ -543,11 +554,11 @@ def _get_active_team(user):
     if not user.is_authenticated:
         return None
     try:
-        if hasattr(user, 'team_assignment') and user.team_assignment.active_team:
-            return user.team_assignment.active_team
-    except:
-        pass
-    return None
+        assignment = user.team_assignment
+    except AttributeError:
+        # No UserTeamAssignment row for this user.
+        return None
+    return assignment.active_team or None
 
 
 def _get_team(user, tournament=None):
