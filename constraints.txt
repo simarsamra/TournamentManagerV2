@@ -1,0 +1,17 @@
+# Exact versions CI and production install, on top of the ranges in
+# requirements.txt and requirements-postgres.txt. A range says what's
+# compatible; this says what's actually been tested.
+#
+#     pip install -r requirements.txt -r requirements-postgres.txt -c constraints.txt
+#
+# To upgrade: bump the range in requirements.txt (or requirements-postgres.txt)
+# if the new version falls outside it, then regenerate this file against a
+# clean install and let CI validate the result before merging:
+#
+#     python -m venv /tmp/upgrade-venv
+#     /tmp/upgrade-venv/bin/pip install -r requirements.txt -r requirements-postgres.txt
+#     /tmp/upgrade-venv/bin/pip freeze --exclude-editable > constraints.txt
+asgiref==3.12.1
+django==5.2.17
+psycopg2-binary==2.9.13
+sqlparse==0.6.0

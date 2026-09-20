@@ -32,11 +32,12 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 
       - name: Lint
         run: ruff check .
@@ -123,11 +124,12 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-postgres.txt
+            constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-postgres.txt
+          pip install -r requirements.txt -r requirements-postgres.txt -c constraints.txt
 
       - name: Migrations apply to an empty PostgreSQL database
         run: python manage.py migrate --no-input
