@@ -178,7 +178,10 @@ class LoginThrottleTests(TestCase):
         throttling is a degradation; refusing every login is an outage."""
         from unittest import mock
 
-        with mock.patch("core.views.django_cache") as broken:
+        # The throttle helpers live in core.views.helpers, so that is where the
+        # cache has to be replaced -- patching the package re-export would not
+        # reach the name they actually call.
+        with mock.patch("core.views.helpers.django_cache") as broken:
             broken.get.side_effect = Exception("no such table: tm_cache_table")
             broken.set.side_effect = Exception("no such table: tm_cache_table")
             broken.incr.side_effect = Exception("no such table: tm_cache_table")

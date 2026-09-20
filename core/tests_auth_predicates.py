@@ -154,14 +154,28 @@ class GetActiveTeamTests(TestCase):
 class NoBareExceptsTests(TestCase):
     """A bare `except:` in the request path hides the next bug like this one."""
 
-    def test_views_has_no_bare_except(self):
+    def test_core_has_no_bare_except(self):
         from pathlib import Path
         import re
 
-        source = (Path(__file__).resolve().parent / "views.py").read_text()
-        offenders = [
-            index + 1
-            for index, line in enumerate(source.splitlines())
-            if re.match(r"\s*except\s*:", line)
-        ]
-        self.assertEqual(offenders, [], f"bare except at views.py lines {offenders}")
+        core = Path(__file__).resolve().parent
+        offenders = []
+        for path in sorted(core.rglob("*.py")):
+            if "migrations" in path.parts or path.name.startswith("test"):
+                continue
+            for index, line in enumerate(path.read_text().splitlines(), start=1):
+                if re.match(r"\s*except\s*:", line):
+                    offenders.append(f"{path.relative_to(core)}:{index}")
+
+        self.assertEqual(offenders, [], f"bare except at {offenders}")
+
+    def test_the_scan_actually_reads_the_view_modules(self):
+        """Guard against the scan silently covering nothing, which is how it
+        would rot after core/views.py became core/views/."""
+        from pathlib import Path
+
+        views_pkg = Path(__file__).resolve().parent / "views"
+        self.assertTrue(views_pkg.is_dir())
+        modules = {p.name for p in views_pkg.glob("*.py")}
+        self.assertIn("helpers.py", modules)
+        self.assertGreaterEqual(len(modules), 8)

@@ -297,7 +297,16 @@ by a version that stored a team-to-court relation which no longer exists;
 ```text
 core/
 	models.py            domain models
-	views.py             all request handling
+	views/               request handling, split by domain
+		helpers.py       authorisation predicates, lookup, match finalisation
+		auth.py          sign-in, registration, profile, dashboard
+		tournaments.py   setup, courts, availability, lifecycle
+		teams.py         rosters, invitations, captaincy
+		matches.py       fixtures, scores, disputes, reschedules
+		registration.py  joining, registration review, seeding
+		reporting.py     standings, analytics, backups, public pages
+		admin_tools.py   settings, user management, impersonation
+		test_maker.py    development-only data generator
 	forms.py             forms and validation
 	urls.py              URLconf
 	apps.py              app config; connects signals
