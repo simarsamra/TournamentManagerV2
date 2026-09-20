@@ -714,7 +714,7 @@ class UXAndLogicRegressionTests(TestCase):
 		self.assertEqual(response.context.get("tournament"), tournament)
 
 	def test_public_views_support_tournament_query_selection(self):
-		first = self._create_tournament(name="Public A")
+		self._create_tournament(name="Public A")
 		second = self._create_tournament(name="Public B")
 
 		response = self.client.get(reverse("public_standings"), {"tournament": second.pk})
@@ -729,7 +729,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_teams_page_shows_only_active_teams_in_selected_tournament(self):
 		tournament = self._create_tournament(name="Visibility Cup")
-		active_team = self._create_team(tournament, "Active Team")
+		self._create_team(tournament, "Active Team")
 		withdrawn_team = self._create_team(tournament, "Withdrawn Team")
 		p = TeamTournamentParticipation.objects.get(team=withdrawn_team, tournament=tournament)
 		p.status = "withdrawn"
@@ -1803,7 +1803,7 @@ class UXAndLogicRegressionTests(TestCase):
 		team9 = self._create_team(tournament, "Team 9", username="same_day_team9")
 		team10 = self._create_team(tournament, "Team 10", username="same_day_team10")
 		other_team = self._create_team(tournament, "Other Team", username="same_day_other")
-		third_team = self._create_team(tournament, "Third Team", username="same_day_third")
+		self._create_team(tournament, "Third Team", username="same_day_third")
 		match = Match.objects.create(
 			tournament=tournament,
 			match_number=7,
@@ -1978,7 +1978,7 @@ class UXAndLogicRegressionTests(TestCase):
 
 	def test_public_hybrid_standings_includes_bracket_after_group_stage(self):
 		tournament = self._create_tournament(fmt="hybrid")
-		teams = [self._create_team(tournament, f"Team {i}", seed=i) for i in range(1, 5)]
+		[self._create_team(tournament, f"Team {i}", seed=i) for i in range(1, 5)]
 		generate_fixtures(tournament)
 
 		# Complete group stage with non-draw confirmed scores.
@@ -2193,7 +2193,7 @@ class DoubleEliminationBracketTests(TestCase):
 	def test_double_elim_winners_bracket_progression(self):
 		"""Verify winners bracket matches advance correctly."""
 		tournament = self._create_tournament()
-		teams = [self._create_team(tournament, f"Team {i}", seed=i) for i in range(1, 5)]
+		[self._create_team(tournament, f"Team {i}", seed=i) for i in range(1, 5)]
 		generate_fixtures(tournament)
 
 		# Get first round winners bracket matches
@@ -2230,7 +2230,6 @@ class DoubleEliminationBracketTests(TestCase):
 
 		# Look for all bracket types initially
 		matches = tournament.matches.all()
-		bracket_types = set(m.bracket_type for m in matches)
 
 		# In double-elimination, both winners and losers brackets should exist
 		# after fixture generation or be generated during tournament progression
@@ -2258,11 +2257,10 @@ class DoubleEliminationBracketTests(TestCase):
 
 		# Manually set up losers bracket matches
 		from .scheduling import generate_knockout
-		winners_bracket = tournament.matches.filter(bracket_type="winners")
 
 		# Create a losers bracket with the losers from winners round 1
 		losers = teams[1::2]  # Teams 2, 4 (lower seeds, would lose to 1, 3)
-		generated_losers = generate_knockout(
+		generate_knockout(
 			tournament,
 			teams=losers,
 			start_match=100,
@@ -2296,9 +2294,6 @@ class DoubleEliminationBracketTests(TestCase):
 		tournament = self._create_tournament()
 		teams = [self._create_team(tournament, f"Team {i}", seed=i) for i in range(1, 5)]
 		generate_fixtures(tournament)
-
-		# Get all matches
-		all_matches = tournament.matches.all()
 
 		# Mark winners bracket round 1 as confirmed
 		winners_r1 = tournament.matches.filter(bracket_type="winners", round_number=1)
@@ -2405,8 +2400,8 @@ class WithdrawalPolicyTests(TestCase):
 		tournament.started_at = timezone.now()
 		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
-		team2 = self._create_team(tournament, "Team B", seed=2)
-		team3 = self._create_team(tournament, "Team C", seed=3)
+		self._create_team(tournament, "Team B", seed=2)
+		self._create_team(tournament, "Team C", seed=3)
 
 		generate_fixtures(tournament)
 
@@ -2442,8 +2437,8 @@ class WithdrawalPolicyTests(TestCase):
 		tournament.started_at = timezone.now()
 		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
-		team2 = self._create_team(tournament, "Team B", seed=2)
-		team3 = self._create_team(tournament, "Team C", seed=3)
+		self._create_team(tournament, "Team B", seed=2)
+		self._create_team(tournament, "Team C", seed=3)
 
 		generate_fixtures(tournament)
 
@@ -2475,7 +2470,7 @@ class WithdrawalPolicyTests(TestCase):
 		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
-		team3 = self._create_team(tournament, "Team C", seed=3)
+		self._create_team(tournament, "Team C", seed=3)
 
 		generate_fixtures(tournament)
 
@@ -2492,9 +2487,6 @@ class WithdrawalPolicyTests(TestCase):
 		# Withdraw team1
 		request = self._create_mock_request()
 		handle_withdrawal(request, team1, tournament)
-
-		# Get standings after withdrawal
-		standings_after = calculate_standings(tournament)
 
 		# Verify team1 is withdrawn
 		team1.refresh_from_db()
@@ -2518,7 +2510,7 @@ class WithdrawalPolicyTests(TestCase):
 		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
 		team2 = self._create_team(tournament, "Team B", seed=2)
-		team3 = self._create_team(tournament, "Team C", seed=3)
+		self._create_team(tournament, "Team C", seed=3)
 
 		generate_fixtures(tournament)
 
@@ -2557,7 +2549,7 @@ class WithdrawalPolicyTests(TestCase):
 		tournament.started_at = timezone.now()
 		tournament.save(update_fields=["status", "started_at"])
 		team1 = self._create_team(tournament, "Team A", seed=1)
-		team2 = self._create_team(tournament, "Team B", seed=2)
+		self._create_team(tournament, "Team B", seed=2)
 
 		# Add court and time slot
 		court = Court.objects.create(tournament=tournament, name="Court 1")
@@ -3686,7 +3678,7 @@ class TournamentCompletionTests(TestCase):
 	def test_round_robin_auto_complete(self):
 		"""Confirming the last RR match should mark tournament completed with champion."""
 		t = self._create_tournament(fmt="round_robin")
-		teams = [self._create_team(t, f"RR{i}") for i in range(1, 4)]
+		[self._create_team(t, f"RR{i}") for i in range(1, 4)]
 		generate_fixtures(t)
 
 		matches = list(t.matches.filter(team1__isnull=False, team2__isnull=False).order_by("match_number"))
@@ -3709,7 +3701,7 @@ class TournamentCompletionTests(TestCase):
 	def test_double_round_robin_auto_complete(self):
 		"""DRR completion check works correctly."""
 		t = self._create_tournament(fmt="double_round_robin", name="DRRComp")
-		teams = [self._create_team(t, f"DRR{i}") for i in range(1, 4)]
+		[self._create_team(t, f"DRR{i}") for i in range(1, 4)]
 		generate_fixtures(t)
 
 		matches = list(t.matches.filter(team1__isnull=False, team2__isnull=False).order_by("match_number"))
@@ -3836,7 +3828,7 @@ class TournamentCompletionTests(TestCase):
 		from .models import Court
 		court = Court.objects.create(tournament=t, name="C1")
 		from .models import TimeSlot
-		ts = TimeSlot.objects.create(
+		TimeSlot.objects.create(
 			tournament=t,
 			court=court,
 			start_time=timezone.now() + timedelta(days=1),
@@ -3952,7 +3944,7 @@ class TournamentCompletionTests(TestCase):
 	def test_forfeit_triggers_completion(self):
 		"""Forfeiting the last match of a RR tournament should complete it."""
 		t = self._create_tournament(fmt="round_robin", name="ForfeitComp")
-		teams = [self._create_team(t, f"Forf{i}") for i in range(1, 3)]
+		[self._create_team(t, f"Forf{i}") for i in range(1, 3)]
 		generate_fixtures(t)
 
 		matches = list(t.matches.filter(team1__isnull=False, team2__isnull=False).order_by("match_number"))

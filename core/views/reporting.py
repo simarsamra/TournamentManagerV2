@@ -757,7 +757,6 @@ def user_public_profile(request, username):
         .order_by("-tournament__created_at")
     )
     # Win / loss counts from confirmed matches
-    teams = [m.team for m in memberships]
     # Count only matches played after this user joined each team — otherwise a
     # newcomer inherits the team's entire history.
     wins = 0
