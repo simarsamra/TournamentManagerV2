@@ -39,6 +39,7 @@ from .helpers import (
     _throttle_clear,
     _throttle_get,
     _tournament_context,
+    throttled,
 )
 
 
@@ -108,6 +109,7 @@ def toggle_view_preference(request):
     return redirect("dashboard")
 
 
+@throttled("account_register", limit=5, window=3600)
 def account_register_view(request):
     """Create a user account only — no team created here."""
     if request.user.is_authenticated:

@@ -324,3 +324,48 @@ class TestOnlyPasswordHasherTests(TestCase):
             namespace["PASSWORD_HASHERS"],
             ["django.contrib.auth.hashers.MD5PasswordHasher"],
         )
+
+
+@override_settings(CACHES=LOCMEM)
+class AccountRegistrationThrottleTests(TestCase):
+    """account_register_view has no @login_required -- it's the one genuinely
+    open write endpoint (F-4 step 3). limit=5, window=3600 (per hour)."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def _register(self, username, ip="203.0.113.10"):
+        return self.client.post(
+            "/register/",
+            {
+                "full_name": "Throttle Test",
+                "username": username,
+                "password": "Regression-Pass-1",
+                "password_confirm": "Regression-Pass-1",
+            },
+            REMOTE_ADDR=ip,
+        )
+
+    def test_registration_is_rate_limited_per_ip(self):
+        for i in range(5):
+            self._register(f"throttleuser{i}")
+            # Registering logs the new account in; log out so the next
+            # attempt reaches the throttle/form again instead of being
+            # short-circuited by the "already authenticated" redirect.
+            self.client.logout()
+
+        self._register("throttleuser_blocked")
+
+        self.assertFalse(User.objects.filter(username="throttleuser_blocked").exists())
+        self.assertEqual(User.objects.filter(username__startswith="throttleuser").count(), 5)
+
+    def test_a_different_ip_has_its_own_budget(self):
+        for i in range(5):
+            self._register(f"budgetuser{i}", ip="203.0.113.10")
+            self.client.logout()
+
+        self._register("budgetuser_from_elsewhere", ip="203.0.113.20")
+
+        self.assertTrue(User.objects.filter(username="budgetuser_from_elsewhere").exists())
