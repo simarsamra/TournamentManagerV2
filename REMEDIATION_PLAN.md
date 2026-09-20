@@ -3177,7 +3177,7 @@ survives the branch:
 
 | Task | Question | Decision | Decided by | Date |
 |---|---|---|---|---|
-| T-1.1 | History purge + password rotation | | | |
+| T-1.1 | History purge + password rotation | **Purged on this branch.** `backups/` *and* `db.sqlite3` (a second, larger source found during the purge: 17 blobs, 53 hashes, 21 emails) removed with `git filter-repo`. HEAD tree unchanged, 297 tests pass, verified clean from a fresh GitHub clone. `main` must be **reset** onto this branch, not merged — the affected commits are shared ancestors. Password rotation remains the owner's to do | Repo owner ("these were just created to test things") | 2026-09-20 |
 | T-3.1 | Ownership policy (a/b/c) | **(a) strict ownership** — organizers are independent parties (the app has an application/approval flow); site admins keep global access | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Double elimination: downgrade or implement | **Option A — honest downgrade.** A real losers bracket is a feature, not a bug fix; spec recorded in the generator docstring | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Grand final: bracket reset or single match | | | |
@@ -3191,8 +3191,11 @@ survives the branch:
 
 State these explicitly so nobody assumes they were handled:
 
-- Rotating the leaked password hashes (human action — T-1.1).
-- Purging git history (human action — T-1.1).
+- Rotating the leaked password hashes (human action — T-1.1). The owner has
+  stated these were test accounts.
+- Purging git history on branches other than `claude/code-docs-review-26pjjx`
+  (T-1.1). Done on this branch; the owner is deleting the other branches and
+  resetting `main` onto this history.
 - A full double-elimination implementation, unless Option B was chosen (T-4.4).
 - Migrating off SQLite. `DatabaseCache` and `select_for_update` behave
   differently on SQLite; several concurrency fixes here are correct but inert

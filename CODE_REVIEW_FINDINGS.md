@@ -35,6 +35,40 @@ points at this same directory so new backups land there too.
 (`git filter-repo` / BFG), rotate every account password, and move
 `BACKUP_DIR` outside the working tree.
 
+**Status (2026-09-20): purged on `claude/code-docs-review-26pjjx`.**
+
+> **This finding understated the leak.** Purging `backups/` turned up a second
+> and larger source: **`db.sqlite3` was itself committed**, across 18 commits
+> and 17 distinct blobs. `.gitignore` lists it, but the entries were added
+> after the file had already been tracked. One representative blob holds
+> **63 `auth_user` rows, 53 password hashes, the `admin` superuser and 21
+> distinct email addresses** — more accounts than any of the JSON backups.
+> A `.gitignore` entry never removes what is already tracked.
+>
+> Both paths were removed with
+> `git filter-repo --path backups/ --path db.sqlite3 --invert-paths`.
+> Verified against a fresh clone from GitHub: zero `backups/` objects, zero
+> `sqlite3` objects, and no full `pbkdf2_sha256$...` string in any blob in the
+> branch's history.
+>
+> The rewrite preserved content exactly — the HEAD tree hash is unchanged
+> (`6cda8dc6`) and all 297 tests pass. Two commits disappeared, from 62 to 60:
+> `BACKUP MADE: OLD TOURNAMENTS AND USERS DELETED` and
+> `chore: Update database schema in db.sqlite3`, each of which touched nothing
+> but the purged files and so became empty.
+>
+> **Still outstanding, and neither is something a branch rewrite can do:**
+>
+> 1. `main` and the other branches still carry the original commits. Because
+>    the affected commits are *shared ancestors*, merging this branch into
+>    `main` normally will **not** purge anything — `main` keeps its own copy of
+>    that history. `main` has to be moved onto this rewritten history
+>    (`git checkout main && git reset --hard claude/code-docs-review-26pjjx &&
+>    git push --force`), not merged with it.
+> 2. GitHub retains unreachable objects until it garbage-collects, and any
+>    existing clone or fork still has them. For a repository that has been
+>    public or shared, treat the hashes as disclosed and rotate regardless.
+
 Related: `teams.txt` at the repo root contains plaintext seed passwords
 (`Alpha Squad,team9,pass123,...`), and `username.txt` / `teamnames.txt` are
 loose data dumps of real-looking tournament participants.
