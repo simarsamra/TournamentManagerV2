@@ -1,5 +1,4 @@
 """Sign-in, registration, profile and the dashboard."""
-"""Core views for tournament management."""
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required

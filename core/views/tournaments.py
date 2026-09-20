@@ -1,5 +1,4 @@
 """Tournament setup, courts, availability and lifecycle transitions."""
-"""Core views for tournament management."""
 import math
 from datetime import datetime, timedelta
 

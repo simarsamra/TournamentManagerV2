@@ -1,5 +1,4 @@
 """Standings, analytics, backups, notifications, search and public pages."""
-"""Core views for tournament management."""
 import json
 import os
 from collections import defaultdict

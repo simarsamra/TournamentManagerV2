@@ -1,5 +1,4 @@
 """Site-administrator tools: settings, user management and impersonation."""
-"""Core views for tournament management."""
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required

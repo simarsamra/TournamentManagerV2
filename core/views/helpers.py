@@ -4,7 +4,6 @@ Authorisation predicates, tournament/team lookup, match finalisation and
 the small rendering utilities. These are imported by every module in this
 package and must not import from them in return.
 """
-"""Core views for tournament management."""
 from collections import defaultdict
 from datetime import datetime, timedelta
 

@@ -1,5 +1,4 @@
 """Fixtures, scores, disputes, reschedules and no-shows."""
-"""Core views for tournament management."""
 from datetime import datetime, timedelta
 
 from django.contrib import messages

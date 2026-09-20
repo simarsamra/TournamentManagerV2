@@ -1,5 +1,4 @@
 """Joining tournaments, registration review and participant seeding."""
-"""Core views for tournament management."""
 import json
 
 from django.contrib import messages
