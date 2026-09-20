@@ -1,5 +1,7 @@
 # Tournament Manager
 
+[![CI](https://github.com/simarsamra/TournamentManagerV2/actions/workflows/ci.yml/badge.svg)](https://github.com/simarsamra/TournamentManagerV2/actions/workflows/ci.yml)
+
 Tournament Manager is a Django web app for running sports tournaments (table
 tennis by default) on a local network. Organizers configure tournaments,
 schedules and rules; players register, join teams, submit scores and manage
@@ -83,10 +85,25 @@ python manage.py runserver 0.0.0.0:8000
 python manage.py test
 ```
 
-The suite is ~286 tests and runs in well under a minute. `settings.py`
+The suite is ~297 tests and runs in under ten seconds. `settings.py`
 substitutes a fast password hasher when — and only when — the first argument to
 `manage.py` is `test`; without it the suite spends almost all of its time in
 PBKDF2.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
+
+| Step | What it catches |
+|---|---|
+| `manage.py check` | Broken settings, app or model configuration |
+| `manage.py makemigrations --check --dry-run` | A model change committed without its migration |
+| `manage.py test --verbosity=2` | The whole suite |
+| `manage.py check --deploy --fail-level WARNING` | A production setting regressing — cookie flags, HSTS, SSL redirect |
+| Fallback-key probe | The startup guard failing to refuse the committed `SECRET_KEY` outside `DEBUG` |
+
+The last two run with `DJANGO_DEBUG=False`, so the non-debug branch of
+`settings.py` is exercised on every run rather than only in a deployment.
 
 ## Configuration
 
