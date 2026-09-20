@@ -6,6 +6,7 @@ package and must not import from them in return.
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import wraps
 
 from django.core.cache import cache as django_cache
 from django.contrib import messages
@@ -46,7 +47,7 @@ from ..standings import (
     advance_winner,
     check_group_stage_complete,
 )
-from ..audit import log_action
+from ..audit import log_action, _client_ip
 from ..services.enrollment import active_participant_count, is_registration_capacity_reached
 
 SEARCH_RESULT_LIMIT = 30
@@ -124,6 +125,7 @@ __all__ = [
     "_throttle_get",
     "_tournament_context",
     "_validate_tournament_ready",
+    "throttled",
 ]
 
 def _throttle_get(key):
@@ -139,17 +141,17 @@ def _throttle_get(key):
         return 0
 
 
-def _throttle_bump(key):
+def _throttle_bump(key, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
     """Increment a counter on a fixed window, ignoring cache failures."""
     try:
         if django_cache.get(key) is None:
-            django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+            django_cache.set(key, 1, timeout=window)
         else:
             # incr() preserves the existing TTL, so the window stays fixed
             # rather than sliding forward on every failed attempt.
             django_cache.incr(key)
     except ValueError:
-        django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+        django_cache.set(key, 1, timeout=window)
     except Exception:
         pass
 
@@ -160,6 +162,40 @@ def _throttle_clear(*keys):
             django_cache.delete(key)
     except Exception:
         pass
+
+
+def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
+    """Limit POSTs to `limit` per `window` seconds per client IP.
+
+    Only POST is counted -- a GET that just loads the form passes through
+    untouched. Every POST counts against the limit whether it succeeds or
+    fails, unlike the login throttle (which only counts failures): this is
+    guarding against write volume, not brute-forcing a credential.
+
+    Fails open: a cache outage degrades throttling rather than taking the
+    endpoint down. Same trade-off as the login throttle, for the same
+    reason -- see _throttle_get's docstring.
+
+    `scope` namespaces the cache key so two decorated views never share a
+    counter by accident.
+    """
+
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(request, *args, **kwargs):
+            if request.method == "POST":
+                key = f"throttle_{scope}_{_client_ip(request) or 'unknown'}"
+                if _throttle_get(key) >= limit:
+                    messages.error(
+                        request, "Too many requests. Please wait a while before trying again."
+                    )
+                    return redirect(request.path)
+                _throttle_bump(key, window=window)
+            return view_func(request, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
 
 
 
