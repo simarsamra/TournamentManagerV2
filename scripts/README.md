@@ -1,48 +1,49 @@
-# Ad-hoc scripts
+# scripts/
 
-One-off diagnostic, seeding and verification scripts. These are **not** tests and
-are not run by `manage.py test` — several of them execute database queries at
-import time, which is why they live outside the project root where Django's
-`test*.py` discovery would otherwise pick them up.
+The thirteen ad-hoc diagnostic, seeding and verification scripts that used to
+live here are gone (FOLLOWUP_PLAN.md F-6). None of them were tests — several
+hardcoded primary keys or usernames from one developer's database (for
+example `Tournament.objects.get(pk=12)`, or the user `t2p1`), and one
+(`seed_tt1.py`) had stopped working entirely: it referenced `Team` fields
+(`tournament=`, `user=`) that don't exist since the
+Team/TeamTournamentParticipation split.
 
-Run them from anywhere; each puts the project root on `sys.path` itself:
+Where each one went:
 
-```bash
-python scripts/<name>.py
-```
-
-They operate on whatever database `DJANGO_SETTINGS_MODULE` resolves to — by
-default the real `db.sqlite3`, **not** a test database. Several of them write.
-Read a script before running it.
-
-Several hardcode primary keys or usernames from one developer's database (for
-example `Tournament.objects.get(pk=12)`, or the user `t2p1`) and will not work
-unmodified elsewhere.
-
-| Script | What it does | Writes? |
-|---|---|---|
-| `check_db.py` | Prints tournaments, courts and availability rows | no |
-| `check_delete_fix.py` | Exercises the team-delete path through the test client | yes |
-| `check_knockout.py` | Prints knockout bracket state for the active tournament | no |
-| `check_perms.py` | Dumps one upcoming knockout match plus the roster and status flags that gate score entry | no |
-| `check_upcoming.py` | Lists upcoming knockout matches for the active tournament | no |
-| `diagnose_get_team.py` | Traces `core.views._get_team` for a given user | no |
-| `diagnose_knockout.py` | Dumps knockout round/scheduling detail | no |
-| `diagnose_match_195.py` | Inspects one hardcoded match (pk 195) | no |
-| `promote_t2p1.py` | Legacy: sets `is_staff` on user `t2p1` | **yes** |
-| `seed_tt1.py` | Seeds teams/members into tournament pk 12 | **yes** |
-| `verify_completion_feature.py` | Prints tournament counts by status and standings for completed ones | no |
-| `verify_dual_role_toggle.py` | Checks dual-role detection | no |
-| `verify_role_separation.py` | Checks organizer/team role separation | no |
-
-`promote_t2p1.py` predates the `OrganizerProfile` model: it grants organizer
-access by setting `is_staff`, which is no longer the primary organizer signal.
-Prefer promoting through the Settings page, or by creating
-`OrganizerProfile(user=..., verified=True)`. See `DUAL_ROLE_TOGGLE_FEATURE.md`.
+- **Read-only dumps** (`check_db.py`, `check_knockout.py`, `check_upcoming.py`,
+  `check_perms.py`) — deleted. The Django admin and `manage.py shell` already
+  cover this ground.
+- **Diagnostics for a bug that was fixed** (`diagnose_match_195.py`,
+  `diagnose_get_team.py`, `diagnose_knockout.py`, `promote_t2p1.py`) —
+  deleted. Bound to one developer's data.
+- **`check_delete_fix.py`** — deleted.
+- **`verify_dual_role_toggle.py`** — deleted. Everything it printed is
+  already covered, more thoroughly, by `core/tests_dual_role.py`.
+- **`verify_role_separation.py`** — deleted, not converted. Its printed
+  claims ("join_team_view - Blocks organizers", "create_team_view - Blocks
+  organizers") don't match the current code: neither view checks
+  `_is_organizer` at all. Rather than encode a false claim as a test, it was
+  removed; `_is_organizer` itself is already covered by
+  `core/tests_auth_predicates.py`. If blocking organizers from
+  joining/creating teams is still wanted, that's a real feature gap, not a
+  test-coverage one.
+- **`verify_completion_feature.py`** — converted to
+  `core/tests_dashboard_completion.py`. Writing the test surfaced a real bug
+  it fixed along the way: `dashboard_content.html` unconditionally resolved
+  `tournament.champion.name` as a filter argument even when
+  `tournament.champion` is `None` -- the normal case for a completed
+  round-robin tournament -- which 500'd the dashboard for exactly the
+  scenario this script existed to demonstrate.
+- **`seed_tt1.py`** — promoted to `python manage.py seed_demo`, rewritten
+  against the current schema (the old script no longer ran). See
+  `core/management/commands/seed_demo.py` and `core/tests_seed_demo.py`.
 
 ## fixtures/
 
-Sample data used by the seeding scripts and for manual testing.
+Sample data for manual testing. Nothing currently imports these files
+programmatically — including `seed_demo`, which generates its own
+`t<N>p1`/`t<N>p2` usernames rather than reading them, the same as the script
+it replaced.
 
 **`fixtures/teams.txt` contains plaintext passwords** (`pass123`) in its
 `team_name,username,password,players` rows. It is sample data for local testing

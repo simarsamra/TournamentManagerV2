@@ -425,13 +425,13 @@ core/
 	admin.py, admin_config.py
 	services/            enrollment
 	templatetags/        core_extras
-	management/commands/ backfill and integrity commands
+	management/commands/ seed_demo, backfill and integrity commands
 	migrations/
 	tests*.py            the test suite
 templates/core/          templates, with partials/ for HTMX fragments
 static/
 docs/                    reference-workflows.txt
-scripts/                 ad-hoc diagnostics and seeding (see scripts/README.md)
+scripts/                 fixtures/ sample data only (see scripts/README.md)
 tournament_manager/      settings, root URLconf, WSGI/ASGI
 manage.py
 requirements.txt
@@ -478,4 +478,5 @@ requirements.txt
   organizer/team view toggle.
 - [`docs/reference-workflows.txt`](docs/reference-workflows.txt) — the workflow
   specification the app is built against.
-- [`scripts/README.md`](scripts/README.md) — the ad-hoc scripts.
+- [`scripts/README.md`](scripts/README.md) — where the old ad-hoc scripts
+  went (deleted, converted to tests, or promoted to `manage.py seed_demo`).
