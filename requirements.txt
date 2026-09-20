@@ -1,1 +1,4 @@
-django>=4.2
+# Verified against Django 5.2.17 on Python 3.11.
+# 5.2 is an LTS series; the upper bound keeps a future 6.x from installing
+# silently into an environment this suite has never been run against.
+django>=5.2,<5.3
