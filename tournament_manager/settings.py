@@ -141,10 +141,10 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Backups serialize auth.User including password hashes, so they default to a
-# location outside the git working tree. Override with DJANGO_BACKUP_DIR.
 # Login throttling counts attempts in the cache. LocMemCache is per-process and
 # wiped on restart, which makes the limit worth 5 x worker_count in production.
+# DatabaseCache needs `manage.py createcachetable`; without it the throttle
+# helpers fail open rather than locking everybody out.
 CACHES = {
     "default": {
         "BACKEND": os.environ.get(
@@ -157,6 +157,8 @@ CACHES = {
     }
 }
 
+# Backups serialize auth.User including password hashes, so they default to a
+# location outside the git working tree. Override with DJANGO_BACKUP_DIR.
 BACKUP_DIR = Path(
     os.environ.get(
         "DJANGO_BACKUP_DIR", BASE_DIR.parent / "tournament_manager_backups"
