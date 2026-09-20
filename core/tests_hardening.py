@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 
 from core.models import OrganizerProfile, Tournament
+from core.views.helpers import LOGIN_ATTEMPTS_PER_IP
 
 LOCMEM = {
     "default": {
@@ -196,6 +197,60 @@ class LoginThrottleTests(TestCase):
         self.client.post("/login/", {"username": "target", "password": "wrong"})
         self.client.post(
             "/login/", {"username": "target", "password": "Regression-Pass-1"}
+        )
+        self.assertIn("_auth_user_id", self.client.session)
+
+    def test_forwarded_header_cannot_bypass_the_ip_limit_without_a_trusted_proxy(self):
+        """TRUSTED_PROXY_COUNT defaults to 0: an attacker must not be able to
+        dodge the IP throttle by sending a new X-Forwarded-For on every
+        request. Without a real proxy in front, the header is just ignored --
+        everything lands on REMOTE_ADDR's single counter."""
+        # Blank username: only the IP counter is touched, not a per-account
+        # one, so this isolates the IP limit rather than the account limit
+        # that's already covered above.
+        for i in range(LOGIN_ATTEMPTS_PER_IP):
+            self.client.post(
+                "/login/",
+                {"username": "", "password": "wrong"},
+                HTTP_X_FORWARDED_FOR=f"203.0.113.{i}",
+            )
+
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.250",
+        )
+
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @override_settings(TRUSTED_PROXY_COUNT=1)
+    def test_ip_counter_is_keyed_on_the_forwarded_client_behind_a_trusted_proxy(self):
+        """Behind a real, configured proxy, the counter must follow the
+        client X-Forwarded-For names, not the proxy's own REMOTE_ADDR --
+        otherwise every visitor shares one site-wide budget (the bug this
+        test pins: login_view used to read REMOTE_ADDR directly instead of
+        the proxy-aware core.audit._client_ip)."""
+        for i in range(LOGIN_ATTEMPTS_PER_IP):
+            self.client.post(
+                "/login/",
+                {"username": "", "password": "wrong"},
+                HTTP_X_FORWARDED_FOR="203.0.113.1",
+            )
+
+        # That client is now IP-throttled...
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.1",
+        )
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+        # ...but a second client behind the same proxy, forwarding a
+        # different address, has its own, untouched budget.
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.2",
         )
         self.assertIn("_auth_user_id", self.client.session)
 

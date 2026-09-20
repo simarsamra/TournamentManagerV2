@@ -16,7 +16,7 @@ from ..models import (
 )
 from ..forms import AccountRegistrationForm, ProfileUpdateForm, SelfPasswordChangeForm
 from ..standings import calculate_standings, get_third_place_match
-from ..audit import log_action
+from ..audit import log_action, _client_ip
 from ..services.enrollment import active_participant_count
 
 from .helpers import (
@@ -49,7 +49,7 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
     if request.method == "POST":
-        ip = request.META.get("REMOTE_ADDR", "unknown")
+        ip = _client_ip(request) or "unknown"
         username = request.POST.get("username", "").strip()
         # Two counters: one per IP (blunt) and one per account, so spraying one
         # password across many usernames from a single IP still trips a limit,
