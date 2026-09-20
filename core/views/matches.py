@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -686,80 +687,87 @@ def respond_reschedule(request, pk):
     # A request that has already been answered must not be answered again: the
     # reschedule has been applied to the match, so flipping the request's status
     # afterwards leaves the audit trail and the schedule disagreeing.
-    if rr.status != "pending":
-        messages.info(
-            request,
-            f"That reschedule request was already {rr.get_status_display().lower()}.",
-        )
-        return _redirect_to_match_detail(request, match.pk)
-
-    if action == "approve":
-        duration = timedelta(minutes=match.tournament.default_match_duration)
-        target_court = rr.new_court or match.court
-        end_dt = rr.new_time + duration
-        active_match_statuses = ["upcoming", "in_progress", "pending_confirmation", "disputed"]
-
-        # Conflicts were only checked when the request was created. Two pending
-        # requests can target the same free slot, so re-check at approval time.
-        court_conflict = Match.objects.filter(
-            tournament=match.tournament,
-            court=target_court,
-            scheduled_time__lt=end_dt,
-            scheduled_end_time__gt=rr.new_time,
-            status__in=active_match_statuses,
-        ).exclude(pk=match.pk).exists()
-
-        team_conflict = Match.objects.filter(
-            tournament=match.tournament,
-            scheduled_time__lt=end_dt,
-            scheduled_end_time__gt=rr.new_time,
-            status__in=active_match_statuses,
-        ).filter(
-            Q(team1=match.team1) | Q(team2=match.team1)
-            | Q(team1=match.team2) | Q(team2=match.team2)
-        ).exclude(pk=match.pk).exists()
-
-        if court_conflict or team_conflict:
-            rr.status = "cancelled"
-            rr.responded_at = timezone.now()
-            rr.save(update_fields=["status", "responded_at"])
-            messages.error(
+    #
+    # The row is locked for the re-read, not merely re-checked. Reading the
+    # status and then acting on it is the same check-then-act that let two
+    # concurrent registrations overfill a tournament on PostgreSQL; SQLite hid
+    # it behind table-level locking, PostgreSQL commits both.
+    with transaction.atomic():
+        rr = RescheduleRequest.objects.select_for_update().get(pk=rr.pk)
+        if rr.status != "pending":
+            messages.info(
                 request,
-                "That slot is no longer free — the request has been cancelled. "
-                "Please submit a new one.",
+                f"That reschedule request was already {rr.get_status_display().lower()}.",
             )
             return _redirect_to_match_detail(request, match.pk)
 
-        rr.status = "approved"
-        rr.responded_at = timezone.now()
-        rr.save()
-        if match.scheduled_time and match.court:
-            OpenSlot.objects.get_or_create(
-                tournament=match.tournament, court=match.court,
-                start_time=match.scheduled_time,
-                end_time=match.scheduled_end_time or match.scheduled_time,
-                defaults={"reason": f"Rescheduled: {match}"},
-            )
-        OpenSlot.objects.filter(
-            tournament=match.tournament,
-            court=target_court,
-            start_time=rr.new_time,
-        ).delete()
-        match.scheduled_time = rr.new_time
-        match.scheduled_end_time = rr.new_time + duration
-        if rr.new_court:
-            match.court = rr.new_court
-        match.save()
-        log_action(request, "reschedule_approved", f"Reschedule approved for {_match_display_str(match)}",
-                   tournament=match.tournament)
-        messages.success(request, "Reschedule approved!")
-    elif action == "reject":
-        rr.status = "rejected"
-        rr.responded_at = timezone.now()
-        rr.save()
-        log_action(request, "reschedule_rejected", f"Reschedule rejected for {_match_display_str(match)}",
-                   tournament=match.tournament)
-        messages.info(request, "Reschedule rejected.")
+        if action == "approve":
+            duration = timedelta(minutes=match.tournament.default_match_duration)
+            target_court = rr.new_court or match.court
+            end_dt = rr.new_time + duration
+            active_match_statuses = ["upcoming", "in_progress", "pending_confirmation", "disputed"]
+
+            # Conflicts were only checked when the request was created. Two pending
+            # requests can target the same free slot, so re-check at approval time.
+            court_conflict = Match.objects.filter(
+                tournament=match.tournament,
+                court=target_court,
+                scheduled_time__lt=end_dt,
+                scheduled_end_time__gt=rr.new_time,
+                status__in=active_match_statuses,
+            ).exclude(pk=match.pk).exists()
+
+            team_conflict = Match.objects.filter(
+                tournament=match.tournament,
+                scheduled_time__lt=end_dt,
+                scheduled_end_time__gt=rr.new_time,
+                status__in=active_match_statuses,
+            ).filter(
+                Q(team1=match.team1) | Q(team2=match.team1)
+                | Q(team1=match.team2) | Q(team2=match.team2)
+            ).exclude(pk=match.pk).exists()
+
+            if court_conflict or team_conflict:
+                rr.status = "cancelled"
+                rr.responded_at = timezone.now()
+                rr.save(update_fields=["status", "responded_at"])
+                messages.error(
+                    request,
+                    "That slot is no longer free — the request has been cancelled. "
+                    "Please submit a new one.",
+                )
+                return _redirect_to_match_detail(request, match.pk)
+
+            rr.status = "approved"
+            rr.responded_at = timezone.now()
+            rr.save()
+            if match.scheduled_time and match.court:
+                OpenSlot.objects.get_or_create(
+                    tournament=match.tournament, court=match.court,
+                    start_time=match.scheduled_time,
+                    end_time=match.scheduled_end_time or match.scheduled_time,
+                    defaults={"reason": f"Rescheduled: {match}"},
+                )
+            OpenSlot.objects.filter(
+                tournament=match.tournament,
+                court=target_court,
+                start_time=rr.new_time,
+            ).delete()
+            match.scheduled_time = rr.new_time
+            match.scheduled_end_time = rr.new_time + duration
+            if rr.new_court:
+                match.court = rr.new_court
+            match.save()
+            log_action(request, "reschedule_approved", f"Reschedule approved for {_match_display_str(match)}",
+                       tournament=match.tournament)
+            messages.success(request, "Reschedule approved!")
+        elif action == "reject":
+            rr.status = "rejected"
+            rr.responded_at = timezone.now()
+            rr.save()
+            log_action(request, "reschedule_rejected", f"Reschedule rejected for {_match_display_str(match)}",
+                       tournament=match.tournament)
+            messages.info(request, "Reschedule rejected.")
     if _is_htmx_request(request):
         return match_detail(request, pk=match.pk)
     return _redirect_to_match_detail(request, match.pk)

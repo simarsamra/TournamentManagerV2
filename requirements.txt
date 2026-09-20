@@ -2,3 +2,5 @@
 # 5.2 is an LTS series; the upper bound keeps a future 6.x from installing
 # silently into an environment this suite has never been run against.
 django>=5.2,<5.3
+
+# PostgreSQL support is optional: see requirements-postgres.txt.

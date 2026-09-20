@@ -3,7 +3,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -33,6 +33,7 @@ from ..audit import log_action
 from ..services.enrollment import active_participant_count, is_registration_capacity_reached
 
 from .helpers import (
+    _claim_participant_slot,
     _check_roster_minimum,
     _ensure_shadow_team_for_registration,
     _get_team,
@@ -216,9 +217,20 @@ def create_team_view(request, pk):
                             **_tournament_context(request, tournament),
                         },
                     )
-                participation = TeamTournamentParticipation.objects.create(
-                    team=team, tournament=tournament, status=initial_status
-                )
+                # Same race as enter_existing_team_view: hold the tournament
+                # row while re-checking capacity, so two concurrent joins
+                # cannot both pass. Waitlisted entries take no slot.
+                with transaction.atomic():
+                    if initial_status == "active" and not _claim_participant_slot(tournament):
+                        messages.error(
+                            request,
+                            f"Registration filled up while you were entering your "
+                            f"details. '{team_name}' was not registered.",
+                        )
+                        return redirect("join_tournament", pk=pk)
+                    participation = TeamTournamentParticipation.objects.create(
+                        team=team, tournament=tournament, status=initial_status
+                    )
                 TeamMembership.objects.create(team=team, user=request.user, role="captain")
                 # The form requires a court selection whenever the tournament has
                 # courts; persist it, or _validate_tournament_ready will later
@@ -754,18 +766,20 @@ def enter_existing_team_view(request, pk):
         )
         return redirect("join_tournament", pk=pk)
 
-    if tournament.expected_teams_count:
-        current_count = TeamTournamentParticipation.objects.filter(
-            tournament=tournament, status="active", team__is_internal=False
-        ).count()
-        if current_count >= tournament.expected_teams_count:
+    # The capacity check and the insert have to be one atomic step, or two
+    # concurrent entries both pass the check. See _claim_participant_slot.
+    with transaction.atomic():
+        if not _claim_participant_slot(tournament):
             messages.error(
                 request,
-                f"Registration is full ({current_count}/{tournament.expected_teams_count}).",
+                f"Registration is full "
+                f"({active_participant_count(tournament)}/{tournament.expected_teams_count}).",
             )
             return redirect("join_tournament", pk=pk)
 
-    TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+        TeamTournamentParticipation.objects.create(
+            team=team, tournament=tournament, status="active"
+        )
     log_action(
         request,
         "team_entered_tournament",

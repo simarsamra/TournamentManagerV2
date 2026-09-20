@@ -115,6 +115,14 @@ parentheses are what you get with nothing set.
 | `DJANGO_DEBUG` | `True` | Debug mode. Set to `False` for any deployment; doing so also switches on the security settings listed below. |
 | `DJANGO_ALLOWED_HOSTS` | `127.0.0.1,localhost` | Comma-separated hostnames the app will serve. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `http://127.0.0.1,http://localhost` | Comma-separated origins (with scheme) trusted for CSRF. |
+| `DATABASE_URL` | unset | Full PostgreSQL connection URL. Takes precedence over every `DJANGO_DB_*` variable below. |
+| `DJANGO_DB_ENGINE` | `sqlite3` | `sqlite3` or `postgresql`. See [Running on PostgreSQL](#running-on-postgresql). |
+| `DJANGO_DB_NAME` | `db.sqlite3` / `tournament_manager` | Database file (SQLite) or name (PostgreSQL). |
+| `DJANGO_DB_USER` | `tournament_manager` | PostgreSQL role. Ignored on SQLite. |
+| `DJANGO_DB_PASSWORD` | empty | PostgreSQL password. Ignored on SQLite. |
+| `DJANGO_DB_HOST` | `127.0.0.1` | PostgreSQL host. Ignored on SQLite. |
+| `DJANGO_DB_PORT` | `5432` | PostgreSQL port. Ignored on SQLite. |
+| `DJANGO_CONN_MAX_AGE` | `60` | Seconds to reuse a database connection. `0` opens a new one per request. |
 | `DJANGO_BACKUP_DIR` | `../tournament_manager_backups` | Where backup JSON is written. Defaults **outside** the working tree because backups contain password hashes. |
 | `DJANGO_CACHE_BACKEND` | `LocMemCache` in debug, `DatabaseCache` otherwise | Cache backend. Login throttling counts attempts here. |
 | `DJANGO_CACHE_LOCATION` | `tm_cache_table` | Cache location — the table name for `DatabaseCache`. |
@@ -168,9 +176,81 @@ Notes:
 - Set `DJANGO_TRUSTED_PROXY_COUNT` to the number of proxies in front of the
   app, or audit-log IPs will record the proxy rather than the client.
 - The default database is SQLite, which is a poor fit for concurrent writes.
-  Several locking behaviours in this codebase (`select_for_update`) are correct
-  but inert on SQLite.
+  See [Running on PostgreSQL](#running-on-postgresql).
 - `manage.py runserver` is never appropriate for a deployment.
+
+## Running on PostgreSQL
+
+SQLite is the default and needs no configuration. PostgreSQL is what a
+deployment with more than one concurrent user wants.
+
+```bash
+pip install -r requirements.txt -r requirements-postgres.txt
+
+export DJANGO_DB_ENGINE=postgresql
+export DJANGO_DB_NAME=tournament_manager
+export DJANGO_DB_USER=tournament_manager
+export DJANGO_DB_PASSWORD=...
+export DJANGO_DB_HOST=127.0.0.1
+export DJANGO_DB_PORT=5432
+
+python manage.py migrate
+```
+
+A `DATABASE_URL` takes precedence over all of the above, so a platform that
+injects one needs nothing else:
+
+```bash
+export DATABASE_URL="postgres://user:password@host:5432/tournament_manager"
+```
+
+### Why it matters more than performance
+
+SQLite was not making concurrent writes safe — it was making them *fail*. It
+locks whole tables, so a second simultaneous writer got
+`database table is locked` and gave up. That accidentally preserved some
+invariants the code never enforced itself.
+
+PostgreSQL commits both writers. Registration was a check-then-act — count the
+participants, then create one — and on PostgreSQL two people joining at once
+both passed the check, filling a one-slot tournament with two teams and no
+error anywhere. Both behaviours were reproduced before the fix.
+
+Registration and reschedule responses now take an explicit row lock
+(`SELECT ... FOR UPDATE`) so the check and the write are one step.
+`core/tests_concurrency.py` covers this and runs only on PostgreSQL, where row
+locking is real; it is skipped on SQLite.
+
+**If you write new code that reads a count and then writes based on it, take
+the lock.** `core/views/helpers._claim_participant_slot` is the pattern.
+
+### Moving existing data from SQLite
+
+```bash
+# 1. Dump from SQLite. Content types and permissions are recreated by migrate,
+#    so excluding them avoids primary-key collisions on load.
+DJANGO_DB_ENGINE=sqlite3 python manage.py dumpdata \
+    --natural-foreign --natural-primary \
+    --exclude contenttypes --exclude auth.permission --exclude sessions.session \
+    --indent 2 -o dump.json
+
+# 2. Create the database and schema.
+createdb tournament_manager
+DJANGO_DB_ENGINE=postgresql python manage.py migrate --no-input
+
+# 3. Load.
+DJANGO_DB_ENGINE=postgresql python manage.py loaddata dump.json
+```
+
+Verified end to end on PostgreSQL 16: row counts, foreign keys and bracket
+structure all survive, and `loaddata` resets the sequences, so the next insert
+gets a fresh primary key rather than colliding.
+
+Two differences to expect. PostgreSQL enforces `NOT NULL` where SQLite may have
+let a null through, so a dump from a long-lived SQLite file can fail to load on
+a column the schema always declared as required — fix the offending rows in the
+dump. And `dump.json` contains password hashes, so treat it like a backup file
+and delete it once the load succeeds.
 
 ## Current Behaviour Rules
 

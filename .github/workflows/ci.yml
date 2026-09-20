@@ -71,3 +71,56 @@ jobs:
             exit 1
           fi
           echo "startup correctly refused the fallback key"
+
+  postgres:
+    name: Tests on PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # SQLite hid a registration race behind table-level locking; PostgreSQL
+    # commits both writers. The concurrency tests only run here, so this job is
+    # the one that can catch that class of bug at all.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tournament_manager
+          POSTGRES_USER: tm_user
+          POSTGRES_PASSWORD: tm_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DJANGO_DB_ENGINE: postgresql
+      DJANGO_DB_NAME: tournament_manager
+      DJANGO_DB_USER: tm_user
+      DJANGO_DB_PASSWORD: tm_pass
+      DJANGO_DB_HOST: 127.0.0.1
+      DJANGO_DB_PORT: "5432"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-postgres.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-postgres.txt
+
+      - name: Migrations apply to an empty PostgreSQL database
+        run: python manage.py migrate --no-input
+
+      - name: Tests
+        run: python manage.py test --verbosity=2

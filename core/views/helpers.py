@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache as django_cache
 from django.contrib import messages
 from django.contrib.auth.models import User
-from django.db import models as db_models
+from django.db import models as db_models, transaction
 from django.db.models import Count, Q
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -75,6 +75,7 @@ __all__ = [
     "_can_override_match",
     "_check_and_finalize_tournament",
     "_check_roster_minimum",
+    "_claim_participant_slot",
     "_create_open_slot_for_completed_match",
     "_create_teams_from_data",
     "_dispute_window_minutes_for_match",
@@ -1282,6 +1283,30 @@ def _check_roster_minimum(team):
                     link=f"/team/{team.pk}/",
                     tournament=tournament,
                 )
+
+
+def _claim_participant_slot(tournament):
+    """Lock the tournament row and re-check capacity. True if a slot is free.
+
+    Must be called inside transaction.atomic(), and the caller must create the
+    participation before that transaction commits: the row lock is what stops a
+    second request slipping in between the check and the insert.
+
+    Registration was a plain check-then-act -- count the active participants,
+    then create one -- with nothing in between. On SQLite that was masked by
+    accident: SQLite locks the whole table, so the losing request died with
+    "database table is locked" rather than overfilling the tournament.
+    PostgreSQL commits both, so a one-slot tournament ends up with two
+    participants and no error anywhere. Both were reproduced before this was
+    written.
+
+    select_for_update is a no-op on SQLite, so there the old table-level
+    locking still decides the outcome.
+    """
+    locked = Tournament.objects.select_for_update().get(pk=tournament.pk)
+    if not locked.expected_teams_count:
+        return True
+    return active_participant_count(locked) < locked.expected_teams_count
 
 
 def _roster_conflicts_for_joining(user, team):

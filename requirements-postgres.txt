@@ -1,0 +1,9 @@
+# PostgreSQL driver. Install alongside requirements.txt when running on
+# PostgreSQL; SQLite needs nothing extra.
+#
+#     pip install -r requirements.txt -r requirements-postgres.txt
+#
+# psycopg2-binary ships prebuilt wheels and is the least troublesome choice.
+# Swap it for psycopg2 (source) if your platform policy requires building
+# against the system libpq.
+psycopg2-binary>=2.9,<3

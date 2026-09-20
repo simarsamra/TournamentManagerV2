@@ -115,12 +115,74 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "tournament_manager.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# Database.
+#
+# SQLite remains the default so an existing checkout keeps working with no
+# configuration. Set DJANGO_DB_ENGINE=postgresql (or give a DATABASE_URL) to
+# run on PostgreSQL, which is what a deployment with concurrent writers wants.
+#
+# Note the direction of the risk. SQLite was not protecting concurrency here by
+# design; it was doing so by accident, locking whole tables so that a second
+# concurrent writer failed loudly. PostgreSQL commits both, so check-then-act
+# code that looked safe on SQLite can silently corrupt on PostgreSQL. The
+# registration and reschedule paths take explicit row locks for exactly this
+# reason -- see core/views/helpers._claim_participant_slot.
+#
+# DATABASE_URL wins when set, so a platform that injects one (Heroku, Render,
+# Fly, docker-compose) needs nothing else.
+
+def _database_from_url(url):
+    """Parse postgres://user:password@host:port/name into Django's format."""
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("postgres", "postgresql", "postgresql+psycopg2"):
+        raise ImproperlyConfigured(
+            f"DATABASE_URL must be a postgres:// URL, got {parsed.scheme!r}://"
+        )
+    name = parsed.path.lstrip("/")
+    if not name:
+        raise ImproperlyConfigured("DATABASE_URL is missing a database name")
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": name,
+        "USER": unquote(parsed.username or ""),
+        "PASSWORD": unquote(parsed.password or ""),
+        "HOST": parsed.hostname or "",
+        "PORT": str(parsed.port or ""),
+        "CONN_MAX_AGE": int(os.environ.get("DJANGO_CONN_MAX_AGE", "60")),
     }
-}
+
+
+_DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+_DB_ENGINE = os.environ.get("DJANGO_DB_ENGINE", "sqlite3").strip().lower()
+
+if _DATABASE_URL:
+    DATABASES = {"default": _database_from_url(_DATABASE_URL)}
+elif _DB_ENGINE in ("postgresql", "postgres", "psql"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("DJANGO_DB_NAME", "tournament_manager"),
+            "USER": os.environ.get("DJANGO_DB_USER", "tournament_manager"),
+            "PASSWORD": os.environ.get("DJANGO_DB_PASSWORD", ""),
+            "HOST": os.environ.get("DJANGO_DB_HOST", "127.0.0.1"),
+            "PORT": os.environ.get("DJANGO_DB_PORT", "5432"),
+            # Reuse connections between requests; 0 opens a new one each time.
+            "CONN_MAX_AGE": int(os.environ.get("DJANGO_CONN_MAX_AGE", "60")),
+        }
+    }
+elif _DB_ENGINE in ("sqlite3", "sqlite"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.environ.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
+        }
+    }
+else:
+    raise ImproperlyConfigured(
+        f"DJANGO_DB_ENGINE must be 'sqlite3' or 'postgresql', got {_DB_ENGINE!r}"
+    )
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

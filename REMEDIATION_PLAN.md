@@ -3197,8 +3197,15 @@ State these explicitly so nobody assumes they were handled:
   (T-1.1). Done on this branch; the owner is deleting the other branches and
   resetting `main` onto this history.
 - ~~A full double-elimination implementation, unless Option B was chosen (T-4.4).~~ Implemented 2026-09-20: losers bracket, grand final and optional decider.
-- Migrating off SQLite. `DatabaseCache` and `select_for_update` behave
+- ~~Migrating off SQLite. `DatabaseCache` and `select_for_update` behave
   differently on SQLite; several concurrency fixes here are correct but inert
-  until the database is Postgres.
+  until the database is Postgres.~~
+  **Done 2026-09-20, and the claim above was wrong.** There was no
+  `select_for_update` anywhere in the codebase, so nothing was "inert". What
+  SQLite was actually doing was masking a missing guard: registration is a
+  check-then-act, and SQLite's table-level locking made the losing writer fail
+  with `database table is locked` instead of overfilling the tournament.
+  PostgreSQL commits both. Reproduced on both backends before the row locks
+  were added; see `core/tests_concurrency.py`.
 - Rate limiting anything other than login.
 - Any change to the HTMX front-end beyond the template edits named in the tasks.
