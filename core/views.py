@@ -1003,7 +1003,9 @@ def _validate_tournament_ready(tournament):
         errors.append("Add court availability or manual time slots before starting.")
     else:
         required_matches = estimate_required_matches(tournament, team_count=active_count)
-        available_slots = count_available_slots(tournament)
+        # Only the comparison matters here, so stop counting at the threshold.
+        # A short count is exact, which keeps the error message below honest.
+        available_slots = count_available_slots(tournament, limit=required_matches or None)
         if required_matches and available_slots < required_matches:
             errors.append(
                 f"Not enough court availability to schedule this tournament "
@@ -7173,10 +7175,13 @@ def impersonate_user(request, user_pk):
     # Store original user pk before switching
     original_pk = request.user.pk
     request.session["impersonating_original_user_pk"] = original_pk
-    # Store the original admin's session auth hash so we can restore it exactly.
-    # Without this, if the admin's password changes during the impersonation session,
-    # Django would invalidate the session when we try to restore it (HASH_SESSION_KEY
-    # must match get_session_auth_hash() for the session to remain valid).
+    # Store the admin's session auth hash as it is *now*, so stop_impersonating
+    # restores exactly the session that was suspended rather than minting a
+    # fresh one. If the admin's password is rotated while the impersonation is
+    # running, this stale hash no longer matches get_session_auth_hash() and
+    # Django flushes the session on the next request — the admin has to log in
+    # again. That is deliberate: a credential rotation must not be survivable
+    # by resuming a suspended session.
     request.session["impersonating_original_hash"] = request.user.get_session_auth_hash()
     # Switch session to target user (manually update Django's internal session keys)
     request.session["_auth_user_id"] = str(target.pk)
@@ -7187,8 +7192,18 @@ def impersonate_user(request, user_pk):
     return redirect("dashboard")
 
 
+@require_POST
 def stop_impersonating(request):
-    """Stop impersonation and restore original admin session (no login_required — impersonated user may be inactive)."""
+    """Stop impersonation and restore the original admin session.
+
+    Deliberately not @login_required: the impersonated account may have been
+    deactivated mid-session, and the admin still has to be able to get back
+    out. Authorisation comes from the session key instead, which only
+    impersonate_user (superuser-only, POST-only) can set.
+
+    @require_POST is present so a third-party page cannot end an admin's
+    impersonation by pointing them at this URL.
+    """
     original_pk = request.session.get("impersonating_original_user_pk")
     if not original_pk:
         messages.info(request, "You are not impersonating anyone.")

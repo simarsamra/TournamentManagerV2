@@ -195,3 +195,74 @@ class LoginThrottleTests(TestCase):
             "/login/", {"username": "target", "password": "Regression-Pass-1"}
         )
         self.assertIn("_auth_user_id", self.client.session)
+
+
+class TestOnlyPasswordHasherTests(TestCase):
+    """settings.py swaps in MD5 for the test suite, because PBKDF2 was ~95% of
+    the runtime. That is only ever acceptable under `manage.py test`, so pin
+    the guard that decides it."""
+
+    def test_the_guard_matches_only_an_exact_test_invocation(self):
+        import tournament_manager.settings as app_settings
+
+        decide = lambda argv: argv[1:2] == ["test"]  # noqa: E731 - mirrors settings.py
+
+        self.assertTrue(decide(["manage.py", "test"]))
+        self.assertTrue(decide(["manage.py", "test", "core.tests_hardening"]))
+
+        # Things that must NOT weaken hashing:
+        self.assertFalse(decide(["manage.py", "runserver"]))
+        self.assertFalse(decide(["manage.py", "testmaker"]))
+        self.assertFalse(decide(["manage.py", "migrate", "test"]))
+        self.assertFalse(decide(["gunicorn", "tournament_manager.wsgi"]))
+        self.assertFalse(decide(["gunicorn"]))
+        self.assertFalse(decide([]))
+
+        # And the module really does expose the flag it gates on.
+        self.assertTrue(hasattr(app_settings, "RUNNING_TESTS"))
+
+    def test_a_non_test_process_keeps_the_default_hashers(self):
+        """Execute settings.py in a fresh namespace with a production-shaped
+        argv and confirm it never defines the weak hasher list.
+
+        A fresh namespace rather than importlib.reload: reload re-executes into
+        the existing module dict, where PASSWORD_HASHERS would still be set
+        from this very test run.
+        """
+        import sys as real_sys
+        from pathlib import Path
+
+        source = Path(__file__).resolve().parent.parent / "tournament_manager" / "settings.py"
+        namespace = {"__file__": str(source), "__name__": "settings_under_test"}
+
+        original = real_sys.argv
+        try:
+            real_sys.argv = ["gunicorn", "tournament_manager.wsgi"]
+            exec(compile(source.read_text(), str(source), "exec"), namespace)
+        finally:
+            real_sys.argv = original
+
+        self.assertFalse(namespace["RUNNING_TESTS"])
+        self.assertNotIn("PASSWORD_HASHERS", namespace)
+
+    def test_a_test_process_does_swap_the_hasher(self):
+        """The other half of the same check, so a broken guard fails loudly
+        rather than silently leaving the suite slow."""
+        import sys as real_sys
+        from pathlib import Path
+
+        source = Path(__file__).resolve().parent.parent / "tournament_manager" / "settings.py"
+        namespace = {"__file__": str(source), "__name__": "settings_under_test"}
+
+        original = real_sys.argv
+        try:
+            real_sys.argv = ["manage.py", "test"]
+            exec(compile(source.read_text(), str(source), "exec"), namespace)
+        finally:
+            real_sys.argv = original
+
+        self.assertTrue(namespace["RUNNING_TESTS"])
+        self.assertEqual(
+            namespace["PASSWORD_HASHERS"],
+            ["django.contrib.auth.hashers.MD5PasswordHasher"],
+        )

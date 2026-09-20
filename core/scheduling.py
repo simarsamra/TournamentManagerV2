@@ -3,6 +3,7 @@ import math
 import itertools
 from collections import defaultdict
 from datetime import datetime, timedelta, time
+from django.conf import settings
 from django.db import models
 from django.db.models import F
 from django.utils import timezone
@@ -754,12 +755,19 @@ def estimate_required_matches(tournament, team_count=None):
     return n - 1
 
 
-def count_available_slots(tournament):
-    """Return the number of currently schedulable court-bound slots."""
+def count_available_slots(tournament, limit=None):
+    """Return the number of currently schedulable court-bound slots.
+
+    Pass `limit` when the caller only needs to know whether the count reaches
+    some threshold: the build then stops there and the return value is capped
+    at `limit` rather than being the true total. A result below `limit` is
+    always exact, which is what lets the readiness check report a real number
+    in its error message while never paying for the full slot list.
+    """
     courts = list(tournament.courts.filter(is_available=True))
     if not courts:
         return 0
-    return len(_build_slots(tournament, courts))
+    return len(_build_slots(tournament, courts, max_slots=limit))
 
 
 def _assign_schedule(tournament, matches_data):
@@ -882,15 +890,25 @@ def _find_preferred_slot(t1, t2, slots, used_slots, pending_matches, tournament=
     return None
 
 
-def _build_slots(tournament, courts):
-    """Build available time slots for scheduling."""
+def _build_slots(tournament, courts, max_slots=None):
+    """Build available time slots for scheduling.
+
+    `max_slots` stops the build as soon as that many slots exist. The result is
+    then a truncated, arbitrary subset of the schedulable slots — enough to
+    answer "are there at least N?", never enough to schedule from. Only
+    ``count_available_slots`` should pass it; every scheduling caller needs the
+    complete list.
+    """
     duration = timedelta(minutes=tournament.default_match_duration)
     base_date = tournament.start_date or timezone.localdate()
     slots = []
     seen = set()
 
-    # Default horizon for open-ended availability when no usable end date is present.
-    open_fallback_days = 365
+    def _full():
+        return max_slots is not None and len(slots) >= max_slots
+
+    # Horizon for open-ended availability when no usable end date is present.
+    open_fallback_days = getattr(settings, "OPEN_AVAILABILITY_HORIZON_DAYS", 365)
 
     availabilities = list(
         CourtAvailability.objects.filter(
@@ -901,6 +919,8 @@ def _build_slots(tournament, courts):
     )
     if availabilities:
         for availability in availabilities:
+            if _full():
+                break
             range_start = max(base_date, availability.start_date or base_date)
             if availability.end_date:
                 range_end = availability.end_date
@@ -908,55 +928,74 @@ def _build_slots(tournament, courts):
                 range_end = tournament.end_date
             else:
                 range_end = range_start + timedelta(days=open_fallback_days)
-            current_date = range_start
+
+            # Parse the extra start times once per availability row. This used
+            # to be re-parsed for every matching day in the range.
+            explicit_times = None
+            if availability.additional_start_times:
+                explicit_times = [availability.start_time]
+                for part in availability.additional_start_times.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    try:
+                        explicit_times.append(datetime.strptime(part, "%H:%M").time())
+                    except ValueError:
+                        continue
+                explicit_times = sorted(set(explicit_times))
+
+            # Step from one matching weekday to the next, rather than walking
+            # every date in the range and discarding six days in seven.
+            current_date = range_start + timedelta(
+                days=(availability.weekday - range_start.weekday()) % 7
+            )
             while current_date <= range_end:
-                if current_date.weekday() == availability.weekday:
-                    if availability.additional_start_times:
-                        explicit_times = [availability.start_time]
-                        for part in availability.additional_start_times.split(","):
-                            part = part.strip()
-                            if not part:
-                                continue
-                            try:
-                                explicit_times.append(datetime.strptime(part, "%H:%M").time())
-                            except ValueError:
-                                continue
-                        explicit_times = sorted(set(explicit_times))
-                        for start_time in explicit_times:
-                            slot_start = timezone.make_aware(datetime.combine(current_date, start_time))
-                            slot_end = slot_start + duration
-                            if slot_end.date() != current_date:
-                                continue
-                            slot_key = (slot_start, availability.court_id)
-                            if slot_key not in seen:
-                                slots.append((slot_start, slot_end, availability.court))
-                                seen.add(slot_key)
-                    else:
-                        slot_start = timezone.make_aware(datetime.combine(current_date, availability.start_time))
-                        slot_limit = timezone.make_aware(datetime.combine(current_date, availability.end_time))
-                        current = slot_start
-                        duration_minutes = duration.total_seconds() / 60
-                        max_daily_slots = int((slot_limit - slot_start).total_seconds() / 60 // duration_minutes)
-                        slots_to_allocate = max_daily_slots
-                        if availability.matches_per_court_per_day and availability.matches_per_court_per_day < max_daily_slots:
-                            slots_to_allocate = availability.matches_per_court_per_day
-                        slot_count = 0
-                        while current + duration <= slot_limit and slot_count < slots_to_allocate:
-                            slot_key = (current, availability.court_id)
-                            if slot_key not in seen:
-                                slots.append((current, current + duration, availability.court))
-                                seen.add(slot_key)
-                                slot_count += 1
-                            current += duration
-                current_date += timedelta(days=1)
+                if _full():
+                    break
+                if explicit_times is not None:
+                    for start_time in explicit_times:
+                        slot_start = timezone.make_aware(datetime.combine(current_date, start_time))
+                        slot_end = slot_start + duration
+                        if slot_end.date() != current_date:
+                            continue
+                        slot_key = (slot_start, availability.court_id)
+                        if slot_key not in seen:
+                            slots.append((slot_start, slot_end, availability.court))
+                            seen.add(slot_key)
+                            if _full():
+                                break
+                else:
+                    slot_start = timezone.make_aware(datetime.combine(current_date, availability.start_time))
+                    slot_limit = timezone.make_aware(datetime.combine(current_date, availability.end_time))
+                    current = slot_start
+                    duration_minutes = duration.total_seconds() / 60
+                    max_daily_slots = int((slot_limit - slot_start).total_seconds() / 60 // duration_minutes)
+                    slots_to_allocate = max_daily_slots
+                    if availability.matches_per_court_per_day and availability.matches_per_court_per_day < max_daily_slots:
+                        slots_to_allocate = availability.matches_per_court_per_day
+                    slot_count = 0
+                    while current + duration <= slot_limit and slot_count < slots_to_allocate:
+                        slot_key = (current, availability.court_id)
+                        if slot_key not in seen:
+                            slots.append((current, current + duration, availability.court))
+                            seen.add(slot_key)
+                            slot_count += 1
+                            if _full():
+                                break
+                        current += duration
+                current_date += timedelta(days=7)
         return sorted(slots, key=lambda item: (item[0], item[2].id))
 
     time_slots = list(tournament.time_slots.select_related("court").order_by("start_time"))
     if time_slots:
         for ts in time_slots:
+            if _full():
+                break
             current = ts.start_time
             target_courts = [ts.court] if ts.court else courts
             while current + duration <= ts.end_time:
+                if _full():
+                    break
                 for court in target_courts:
                     slot_key = (current, court.id)
                     if slot_key not in seen:
@@ -967,8 +1006,12 @@ def _build_slots(tournament, courts):
 
     start = timezone.make_aware(datetime.combine(base_date, time(hour=9, minute=0)))
     for day_offset in range(30):
+        if _full():
+            break
         day_start = start + timedelta(days=day_offset)
         for hour_offset in range(12):
+            if _full():
+                break
             slot_start = day_start + timedelta(minutes=30 * hour_offset)
             slot_end = slot_start + duration
             for court in courts:

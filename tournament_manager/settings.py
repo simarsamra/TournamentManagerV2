@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -24,6 +25,28 @@ TEST_MAKER_USER_PREFIX = os.environ.get("DJANGO_TEST_MAKER_PREFIX", "tm_")
 # untrusted and REMOTE_ADDR is used directly. Setting this higher than the real
 # proxy count lets clients spoof their recorded IP again.
 TRUSTED_PROXY_COUNT = int(os.environ.get("DJANGO_TRUSTED_PROXY_COUNT", "0"))
+
+# How far ahead the scheduler projects a court-availability row that has no end
+# date, when the tournament has no usable end date either. Slot building is
+# linear in this, so lowering it speeds up scheduling on large tournaments --
+# but a tournament with sparse availability may then report "not enough court
+# availability" where a longer horizon would have found slots further out.
+OPEN_AVAILABILITY_HORIZON_DAYS = int(
+    os.environ.get("DJANGO_OPEN_AVAILABILITY_DAYS", "365")
+)
+
+# The suite creates hundreds of users and logs them in, and PBKDF2 at Django's
+# default work factor is by far the largest cost in it -- roughly 190 of the
+# ~200 seconds a full run took before this. Swap in a fast hasher, but only for
+# an actual `manage.py test` invocation.
+#
+# The guard is an exact match on the first argument. A WSGI or ASGI server
+# never reaches this module through manage.py, so this cannot weaken password
+# storage in a deployment; a management command whose name merely contains
+# "test" will not trip it either.
+RUNNING_TESTS = sys.argv[1:2] == ["test"]
+if RUNNING_TESTS:
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 
 if not DEBUG and SECRET_KEY == _DEV_SECRET_KEY:
