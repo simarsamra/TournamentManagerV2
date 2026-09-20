@@ -6,7 +6,7 @@ FOLLOWUP_PLAN.md F-3.
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from ..models import (
     Team,
     Match,
@@ -161,7 +161,12 @@ class RescheduleRequestFlowTests(UXRegressionTestCase):
             scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
             status="upcoming",
         )
-        slot_start = timezone.now() + timedelta(days=3, hours=2)
+        # Pinned to a fixed hour on the target date -- see the comment on the
+        # equivalent line in test_match_detail_reschedule_uses_display_names_
+        # for_individual_mode for why timezone.now() + timedelta(hours=2) is
+        # unsafe here.
+        slot_date = (timezone.now() + timedelta(days=3)).date()
+        slot_start = timezone.make_aware(datetime.combine(slot_date, time(14, 0)))
         Match.objects.create(
             tournament=tournament,
             match_number=41,
@@ -256,7 +261,15 @@ class RescheduleRequestFlowTests(UXRegressionTestCase):
             scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
             status="upcoming",
         )
-        slot_start = timezone.now() + timedelta(days=3, hours=2)
+        # Pinned to a fixed hour (14:00 UTC) on the target date rather than
+        # timezone.now() + timedelta(hours=2): with TIME_ZONE = "UTC", an
+        # offset that close to midnight rolls onto a different calendar date
+        # whenever the suite happens to run late in the UTC day, and the
+        # same-day match below (deliberately 1 hour earlier) would then land
+        # on the *previous* date and silently drop out of the "same day"
+        # check this test exists to exercise.
+        slot_date = (timezone.now() + timedelta(days=3)).date()
+        slot_start = timezone.make_aware(datetime.combine(slot_date, time(14, 0)))
         Match.objects.create(
             tournament=tournament,
             match_number=402,
