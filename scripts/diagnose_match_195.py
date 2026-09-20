@@ -2,6 +2,12 @@
 import os
 import django
 
+import sys
+
+# Scripts live in scripts/; put the project root on sys.path so that
+# `tournament_manager` and `core` import no matter where this is run from.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tournament_manager.settings")
 django.setup()
 

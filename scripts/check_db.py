@@ -4,7 +4,8 @@ import sys
 import django
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tournament_manager.settings')
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Scripts live in scripts/; put the project root on sys.path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 django.setup()
 
 from core.models import Tournament, Court, CourtAvailability
