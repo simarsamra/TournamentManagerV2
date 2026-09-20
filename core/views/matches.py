@@ -6,6 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -54,6 +55,7 @@ from .helpers import (
     _team_display_label,
     _team_display_map,
     _tournament_context,
+    throttled,
 )
 
 
@@ -169,6 +171,14 @@ def _redirect_to_match_detail(request, match_pk):
     return redirect("match_detail", pk=match_pk)
 
 
+def _throttled_match_redirect(request, *args, **kwargs):
+    """redirect_to for @throttled on submit_score/dispute_score: both are
+    POST-only (@require_POST, no GET view at that path), so the decorator's
+    default of "redirect back to this same URL" would 405. Send a blocked
+    request to the match detail page instead -- a real, GET-able page."""
+    return reverse("match_detail", kwargs={"pk": kwargs["pk"]})
+
+
 @login_required
 def match_detail(request, pk):
     match = get_object_or_404(
@@ -275,6 +285,7 @@ def match_detail(request, pk):
 
 @login_required
 @require_POST
+@throttled("submit_score", limit=30, window=3600, redirect_to=_throttled_match_redirect)
 def submit_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
     _expire_pending_score_disputes(match.tournament)
@@ -416,6 +427,7 @@ def confirm_score(request, pk):
 
 @login_required
 @require_POST
+@throttled("dispute_score", limit=30, window=3600, redirect_to=_throttled_match_redirect)
 def dispute_score(request, pk):
     match = get_object_or_404(Match, pk=pk)
     _expire_pending_score_disputes(match.tournament)

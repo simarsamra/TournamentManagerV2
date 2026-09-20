@@ -112,3 +112,99 @@ class ThrottledDecoratorTests(TestCase):
         allowed = short_window_view(request)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(self.calls, 2)
+
+
+@override_settings(CACHES=LOCMEM)
+class EndpointThrottleWiringTests(TestCase):
+    """Confirms the decorator is actually applied where F-4 step 3 says it
+    should be -- these are wiring smoke tests (wrong scope, wrong limit,
+    wrong redirect target), not another copy of the decorator's own tests
+    above."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from django.core.cache import cache
+
+        from core.models import Court, Match, Team, TeamMembership, TeamTournamentParticipation, Tournament
+
+        cache.clear()
+        self.tournament = Tournament.objects.create(
+            name="Throttle Wiring", format="round_robin", status="active",
+            players_per_team=1, default_match_duration=30,
+        )
+        court = Court.objects.create(tournament=self.tournament, name="C1")
+        self.teams = []
+        self.users = []
+        for i in range(2):
+            team = Team.objects.create(name=f"ThrottleTeam{i}")
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active"
+            )
+            user = User.objects.create_user(username=f"throttleplayer{i}", password="Regression-Pass-1")
+            TeamMembership.objects.create(team=team, user=user, role="captain")
+            self.teams.append(team)
+            self.users.append(user)
+
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.match = Match.objects.create(
+            tournament=self.tournament, match_number=1,
+            team1=self.teams[0], team2=self.teams[1], court=court,
+            scheduled_time=timezone.now() + timedelta(days=1),
+            scheduled_end_time=timezone.now() + timedelta(days=1, minutes=30),
+            status="upcoming",
+        )
+
+    def test_submit_score_is_rate_limited_per_ip(self):
+        self.client.force_login(self.users[0])
+        for _ in range(30):
+            self.client.post(
+                f"/match/{self.match.pk}/submit-score/",
+                {"score_team1": 3, "score_team2": 1, "notes": ""},
+            )
+
+        response = self.client.post(
+            f"/match/{self.match.pk}/submit-score/",
+            {"score_team1": 3, "score_team2": 1, "notes": ""},
+        )
+
+        self.assertRedirects(response, f"/match/{self.match.pk}/")
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertTrue(any("Too many requests" in m for m in messages))
+
+    def test_dispute_score_is_rate_limited_per_ip(self):
+        self.client.force_login(self.users[0])
+        self.client.post(
+            f"/match/{self.match.pk}/submit-score/",
+            {"score_team1": 3, "score_team2": 1, "notes": ""},
+        )
+        self.client.force_login(self.users[1])
+        for _ in range(30):
+            self.client.post(
+                f"/match/{self.match.pk}/dispute-score/", {"dispute_notes": "x"}
+            )
+
+        response = self.client.post(
+            f"/match/{self.match.pk}/dispute-score/", {"dispute_notes": "x"}
+        )
+
+        self.assertRedirects(response, f"/match/{self.match.pk}/")
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertTrue(any("Too many requests" in m for m in messages))
+
+    def test_team_invite_is_rate_limited_per_ip(self):
+        self.client.force_login(self.users[0])
+        for _ in range(20):
+            self.client.post(
+                f"/team/{self.teams[0].pk}/invite/", {"username": "does-not-exist"}
+            )
+
+        response = self.client.post(
+            f"/team/{self.teams[0].pk}/invite/", {"username": "does-not-exist"}
+        )
+
+        self.assertRedirects(response, f"/team/{self.teams[0].pk}/invite/")
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertTrue(any("Too many requests" in m for m in messages))

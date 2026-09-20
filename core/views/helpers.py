@@ -164,7 +164,7 @@ def _throttle_clear(*keys):
         pass
 
 
-def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
+def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS, redirect_to=None):
     """Limit POSTs to `limit` per `window` seconds per client IP.
 
     Only POST is counted -- a GET that just loads the form passes through
@@ -178,6 +178,13 @@ def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
 
     `scope` namespaces the cache key so two decorated views never share a
     counter by accident.
+
+    `redirect_to(request, *args, **kwargs) -> url` picks where a blocked
+    request lands. Defaults to the view's own path, which only works for a
+    view that renders something on GET too (the login/register/invite
+    pattern: same URL handles both methods). A POST-only view -- decorated
+    with @require_POST, nothing to GET -- must pass one explicitly, or the
+    default sends the browser to a redirect that 405s.
     """
 
     def decorator(view_func):
@@ -189,7 +196,8 @@ def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
                     messages.error(
                         request, "Too many requests. Please wait a while before trying again."
                     )
-                    return redirect(request.path)
+                    target = redirect_to(request, *args, **kwargs) if redirect_to else request.path
+                    return redirect(target)
                 _throttle_bump(key, window=window)
             return view_func(request, *args, **kwargs)
 
