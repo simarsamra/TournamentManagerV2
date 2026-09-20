@@ -3163,12 +3163,12 @@ python manage.py audit_participant_integrity
 | T-5.4 | Deployment defaults hardened | ☑ |
 | T-5.5 | Logout requires POST | ☑ |
 | T-5.6 | Login throttling durable | ☑ |
-| T-6.1 | `_build_slots` cost reduced | ☐ |
-| T-6.2 | Coverage gaps closed | ☐ |
-| T-6.3 | Repository hygiene | ☐ |
-| T-6.4 | Dependencies pinned | ☐ |
-| T-6.5 | Dual-role doc rewritten | ☐ |
-| T-6.6 | README corrected and extended | ☐ |
+| T-6.1 | `_build_slots` cost reduced | ☑ |
+| T-6.2 | Coverage gaps closed | ☑ |
+| T-6.3 | Repository hygiene | ☑ |
+| T-6.4 | Dependencies pinned | ☑ |
+| T-6.5 | Dual-role doc rewritten | ☑ |
+| T-6.6 | README corrected and extended | ☑ |
 
 ### Decision log
 
@@ -3182,7 +3182,10 @@ survives the branch:
 | T-4.4 | Double elimination: downgrade or implement | **Option A — honest downgrade.** A real losers bracket is a feature, not a bug fix; spec recorded in the generator docstring | Delegated to Claude by the repo owner | 2026-09-19 |
 | T-4.4 | Grand final: bracket reset or single match | | | |
 | T-4.8 | Substitutes: scope the model or counts only | **Scoped — via a new `TournamentSubstitute` model rather than a nullable FK on `TeamMembership`.** The FK approach would have required auditing 40+ membership queries; a separate table leaves roster arithmetic untouched | Delegated to Claude by the repo owner | 2026-09-19 |
-| T-6.1 | Open-availability horizon: 120 or 365 days | | | |
+| T-6.1 | Open-availability horizon: 120 or 365 days | **365 kept, but made configurable** (`DJANGO_OPEN_AVAILABILITY_DAYS`). Shortening it changes scheduling outcomes for tournaments with no end date and sparse availability — they would start reporting "not enough availability" where slots exist further out. That is an operator's trade-off, not a default worth changing silently | Delegated to Claude by the repo owner | 2026-09-20 |
+| T-6.1 | Where the suite's ~200s actually went | **The plan's diagnosis was wrong.** It blamed `_build_slots`; measurement showed PBKDF2 password hashing. Optimising slot building left the suite at 197s vs a 198s baseline; a test-only fast hasher took it to 7.6s. Both changes kept — the slot work is still a real page-load cost | Measured, not delegated | 2026-09-20 |
+| T-6.2 | `stop_impersonating` POST-only | **Added `@require_POST`**, ribbon control converted to a form. `@login_required` deliberately still absent: the impersonated account may be deactivated mid-session and the admin must still be able to get out | Delegated to Claude by the repo owner | 2026-09-20 |
+| T-6.3 | `eam_A,...txt`: delete or keep | **Kept**, as `scripts/fixtures/sample_match_results.csv`. The filename was a truncated shell redirect, but the 187 rows under it are real sample data | Delegated to Claude by the repo owner | 2026-09-20 |
 
 ### What is deliberately out of scope
 

@@ -514,11 +514,69 @@ finding in §1 and §3.1–§3.3 sits in one of these untested views.
 
 ### 5.4 The suite takes 260 seconds for 139 tests
 
+> **Corrected 2026-09-20 (T-6.1).** The attribution below was wrong, and it is
+> left in place rather than quietly rewritten because the correction is the
+> useful part.
+>
+> The claim was that `_build_slots` dominated the runtime. Measured: after
+> optimising slot building, a 247-test run took **197.1s** against a **198.2s**
+> baseline — no meaningful change. The real cost is **PBKDF2 password
+> hashing**. The suite creates hundreds of users and logs them in, and Django's
+> default hasher is deliberately expensive. `core.tests_impersonation` alone
+> went from 16.8s to 0.3s under a fast hasher; the full suite went from 198s to
+> **7.6s**.
+>
+> The lesson is narrow but real: "this loop looks expensive" is a hypothesis,
+> not a measurement. Nothing in the original finding was based on a profile.
+
+The original claim, for the record:
+
 Most of the cost is `_build_slots`, which materializes a tuple per court per
 slot per day over a 365-day fallback horizon for open-ended availability rows.
 `count_available_slots` calls it on every `tournament_config` page load and
 `_validate_tournament_ready` calls it again — this is a production page-load
 cost, not only a test cost.
+
+Two secondary claims there were also imprecise: `tournament_config` calls
+`count_available_slots` **once**, not twice. The genuine double-build is in
+`generate_schedule` and `start_tournament`, which run
+`_validate_tournament_ready` and then `generate_fixtures`, each building the
+full slot list.
+
+The slot-building work was kept regardless, because the per-request cost is
+real even though it was not the suite's bottleneck: the date walk now steps
+weekday-to-weekday instead of discarding six days in seven, extra start times
+are parsed once per availability row rather than once per matching day, and
+the readiness check stops counting once it reaches `required_matches`.
+
+### 5.5 Impersonation has no tests, and its central comment is backwards **[verified]**
+
+`impersonate_user` and `stop_impersonating` hand-edit Django's session auth
+keys (`_auth_user_id`, `_auth_user_backend`, `_auth_user_hash`) and had zero
+test coverage.
+
+The comment on the stored hash claimed:
+
+> Without this, if the admin's password changes during the impersonation
+> session, Django would invalidate the session when we try to restore it.
+
+It is the reverse. Storing the admin's hash *as it was* and restoring it later
+is precisely what makes Django reject the session after a password change —
+verified: the admin is redirected to `/login/` and the session is flushed.
+Without the stored hash, the fallback recomputes a fresh hash and the session
+would survive.
+
+**The behaviour is correct; only the comment was wrong.** A credential
+rotation must not be survivable by resuming a suspended session, so restoring
+the stale hash is the safer of the two. Fixed by correcting the comment and
+pinning both rotation paths with tests (T-6.2).
+
+Separately, `stop_impersonating` had no `@require_POST`, so a third-party page
+could end an admin's impersonation via a GET. It cannot escalate — the session
+key it reads can only be set by the superuser-only `impersonate_user` — but it
+is now POST-only. It deliberately still has no `@login_required`: the
+impersonated account may be deactivated mid-session, and the admin must still
+be able to get out.
 
 ---
 
