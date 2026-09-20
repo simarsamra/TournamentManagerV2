@@ -50,7 +50,12 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
 
       - name: Tests
-        run: python manage.py test --verbosity=2
+        run: coverage run manage.py test --verbosity=2
+
+      # Informational only — does not fail the build. See FOLLOWUP_PLAN.md F-2
+      # for the baseline this is measured against and why it isn't gated yet.
+      - name: Coverage
+        run: coverage report
 
       # Runs the checks that only apply outside DEBUG: cookie flags, HSTS,
       # SSL redirect, and the guard that refuses to boot on the committed
