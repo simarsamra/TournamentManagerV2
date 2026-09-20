@@ -3151,7 +3151,7 @@ python manage.py audit_participant_integrity
 | T-4.2 | Invite path enforces roster rules | ☑ |
 | T-4.3 | Reschedule responses idempotent + re-checked | ☑ |
 | T-4.4 | Double elimination honest or implemented | ☑ (Option A) |
-| T-4.5 | Head-to-head tiebreaker implemented | ☐ |
+| T-4.5 | Head-to-head tiebreaker implemented | ☑ |
 | T-4.6 | Individual registration sync | ☑ |
 | T-4.7 | JSON seeding fixed | ☑ |
 | T-4.8 | Substitutes scoped | ☑ |

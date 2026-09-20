@@ -97,9 +97,28 @@ def calculate_standings(tournament, group=None):
     for s in standings.values():
         s["game_diff"] = s["games_won"] - s["games_lost"]
 
-    # Sort by tiebreaker
+    # Sort by tiebreaker.
+    #
+    # Head-to-head is meaningful only *between* the teams that are tied, so it
+    # cannot be a per-team scalar computed before sorting. Sort on the scalar
+    # tiebreakers first, then re-order each run of still-tied teams using their
+    # mutual results.
     tiebreakers = tournament.get_tiebreaker_order()
-    result = sorted(standings.values(), key=lambda s: _sort_key(s, tiebreakers), reverse=True)
+    scalar_tiebreakers = [tb for tb in tiebreakers if tb != "head_to_head"]
+
+    def scalar_key(standing):
+        return _sort_key(standing, scalar_tiebreakers)
+
+    # -team.id so that, with reverse=True, a lower id ranks first. Without a
+    # final deterministic component the order of fully-tied teams came out of
+    # dict iteration and was not stable.
+    result = sorted(
+        standings.values(),
+        key=lambda s: (scalar_key(s), -s["team"].id),
+        reverse=True,
+    )
+    if "head_to_head" in tiebreakers:
+        result = _apply_head_to_head(tournament, result, scalar_key, group=group)
 
     for idx, s in enumerate(result):
         s["rank"] = idx + 1
@@ -107,16 +126,93 @@ def calculate_standings(tournament, group=None):
 
 
 def _sort_key(standing, tiebreakers):
-    """Build a tuple sort key from tiebreaker config."""
+    """Build a tuple sort key from the scalar tiebreakers.
+
+    Only tiebreakers that reduce to a per-team number belong here.
+    "head_to_head" does not, and is handled by _apply_head_to_head after this
+    key has been sorted on.
+    """
     key = [standing["points"]]
     for tb in tiebreakers:
         if tb == "game_diff":
             key.append(standing["game_diff"])
         elif tb == "games_won":
             key.append(standing["games_won"])
-        elif tb == "head_to_head":
-            key.append(0)  # Simplified; would need pairwise comparison
     return tuple(key)
+
+
+def _head_to_head_points(tournament, team_ids, group=None):
+    """Return {team_id: points} counting only matches among `team_ids`.
+
+    Scoring mirrors calculate_standings exactly, including points_per_loss and
+    points_per_draw, so a head-to-head table is the same table restricted to
+    the tied teams' mutual fixtures.
+    """
+    points = {tid: 0 for tid in team_ids}
+
+    confirmed = tournament.matches.filter(
+        status="confirmed", team1_id__in=team_ids, team2_id__in=team_ids
+    )
+    forfeits = tournament.matches.filter(
+        status="forfeited", team1_id__in=team_ids, team2_id__in=team_ids
+    )
+    if group:
+        confirmed = confirmed.filter(group=group)
+        forfeits = forfeits.filter(group=group)
+
+    for match in confirmed:
+        if match.score_team1 is None or match.score_team2 is None:
+            continue
+        if match.score_team1 > match.score_team2:
+            points[match.team1_id] += tournament.points_per_win
+            points[match.team2_id] += tournament.points_per_loss
+        elif match.score_team2 > match.score_team1:
+            points[match.team2_id] += tournament.points_per_win
+            points[match.team1_id] += tournament.points_per_loss
+        else:
+            points[match.team1_id] += tournament.points_per_draw
+            points[match.team2_id] += tournament.points_per_draw
+
+    for match in forfeits:
+        if match.winner_id not in points:
+            continue
+        points[match.winner_id] += tournament.points_per_win
+        loser_id = (
+            match.team2_id if match.winner_id == match.team1_id else match.team1_id
+        )
+        if loser_id in points:
+            points[loser_id] += tournament.points_per_loss
+
+    return points
+
+
+def _apply_head_to_head(tournament, ordered_rows, scalar_key, group=None):
+    """Re-order runs of rows that tie on `scalar_key` using mutual results.
+
+    Note the ordering semantics: head-to-head is applied *after* the scalar
+    tiebreakers, matching the configured order "points, game_diff, games_won,
+    head_to_head". Some competition rules apply head-to-head before game
+    difference; that would be a different tiebreaker_order, not a change here.
+    """
+    result = []
+    index = 0
+    while index < len(ordered_rows):
+        end = index + 1
+        while end < len(ordered_rows) and scalar_key(ordered_rows[end]) == scalar_key(
+            ordered_rows[index]
+        ):
+            end += 1
+        run = ordered_rows[index:end]
+        if len(run) > 1:
+            ids = [row["team"].id for row in run]
+            h2h = _head_to_head_points(tournament, ids, group=group)
+            run.sort(
+                key=lambda r: (h2h.get(r["team"].id, 0), -r["team"].id),
+                reverse=True,
+            )
+        result.extend(run)
+        index = end
+    return result
 
 
 def advance_winner(match):
