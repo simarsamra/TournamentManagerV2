@@ -276,6 +276,49 @@ passes.
 **Done when:** the baseline table is committed in this document and CI prints
 coverage on every run.
 
+### F-2 baseline
+
+Measured at `9dfa11d` with `coverage run manage.py test`, combined across both
+backends (`coverage run` on SQLite, then `coverage run -a` on PostgreSQL with
+the same env vars CI uses) so the 3 concurrency tests PostgreSQL alone runs are
+included. **Combining made no difference to the numbers below** — those tests
+exercise `_claim_participant_slot`, which the non-concurrency claim tests
+(`test_a_free_slot_is_claimable`, `test_a_full_tournament_is_not_claimable`)
+already reach identically; the branch coverage they'd add is inside a real
+race, not reachable from either backend's tests in a straight line. Both runs:
+371 tests, 0 failures.
+
+**Overall: 67%** (6,676 statements, 1,920 missed; branch coverage included).
+
+The ten least-covered modules:
+
+| Module | Coverage | Note |
+|---|---:|---|
+| `core/management/commands/backfill_organizer_and_team_assignment.py` | 0% | One-time data backfill, run once against production data and never again — not exercised by the request-response suite. Same for the row below. |
+| `core/management/commands/normalize_individual_registrations.py` | 0% | One-time legacy-data normalization command. |
+| `core/views/teams.py` | 45% | Largest views module (616 statements) and the worst-covered live code path. |
+| `core/views/tournaments.py` | 57% | Second-largest module (688 statements); setup/lifecycle transitions. |
+| `core/management/commands/audit_participant_integrity.py` | 58% | Diagnostic command; exercised only at the entry points the existing tests happen to hit. |
+| `core/views/test_maker.py` | 58% | Development-only data generator, disabled outside `DEBUG` — lower priority than user-facing code. |
+| `core/views/reporting.py` | 61% | Standings, analytics, backups, notifications, search, public pages — the broadest single module. |
+| `core/views/matches.py` | 63% | Fixtures, scores, disputes, reschedules, no-shows. |
+| `core/views/admin_tools.py` | 67% | Site-admin settings, user management, impersonation. |
+| `core/views/registration.py` | 68% | Joining tournaments, registration review, participant seeding. |
+
+**Reading this table.** The `core/views/` split (F-1's predecessor task)
+produced nine modules of very different sizes and very different coverage;
+the three biggest — `teams.py`, `tournaments.py`, `reporting.py` — are also
+among the worst-covered, which is the opposite of what you'd want. That's
+the strongest argument in this plan for F-3 (split `core/tests.py` so gaps
+like this are easier to see and assign) over doing F-4/F-5/F-6 first.
+
+The two 0%-covered management commands are not a coverage gap in the usual
+sense — they're one-shot scripts, not code a user request ever reaches — so
+raising their percentage isn't useful work. If a `--fail-under` threshold is
+added later (see the CI step above), omit them via `pyproject.toml`'s
+`[tool.coverage.report] exclude_also` or accept the file-level average they
+drag down; don't write tests for a backfill script just to move a number.
+
 ---
 
 ## F-3 — Split `core/tests.py`
