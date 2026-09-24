@@ -1136,3 +1136,124 @@ class ExplanationPipelineTests(TestCase):
     def test_explanations_can_be_switched_off(self):
         job, fake = self._run(_route_json("head_to_head", "T1", "T2"))
         self.assertEqual((job.status, job.answer, len(fake.requests)), ("done", "", 1))
+
+
+# AI-8
+
+class EvaluationTests(SimpleTestCase):
+    def setUp(self):
+        from core.ai.evaluation import load_questions
+
+        self.data = load_questions()
+
+    def test_question_set_is_well_formed(self):
+        from core.ai.facts import INTENTS, WINDOWS
+
+        teams = set(self.data["teams"])
+        self.assertGreaterEqual(len(self.data["questions"]), 40)
+        seen = set()
+        for item in self.data["questions"]:
+            with self.subTest(q=item["q"]):
+                expect = item["expect"]
+                self.assertIn(expect["intent"], INTENTS)
+                seen.add(expect["intent"])
+                if "team" in expect:
+                    self.assertIn(expect["team"], teams)
+                if "teams" in expect:
+                    self.assertEqual(len(set(expect["teams"])), 2)
+                    self.assertLessEqual(set(expect["teams"]), teams)
+                if "window" in expect:
+                    self.assertIn(expect["window"], WINDOWS)
+                if expect["intent"] == "what_if":
+                    self.assertIn(expect["winner"], [*expect["teams"], "draw"])
+        self.assertEqual(seen, set(INTENTS))
+        for case in self.data["explain_cases"]:
+            serialise(case["facts"])  # JSON-serialisable, as the pipeline sends it
+
+    def test_score_route(self):
+        from core.ai.evaluation import score_route
+
+        form = {"intent": "form", "team": "T1", "window": 10}
+        self.assertEqual(score_route(form, {"intent": "form", "team_a": "none", "team_b": "T1", "window": 10}), (True, ""))
+        self.assertEqual(score_route(form, {"intent": "form", "team_a": "T1", "window": 5}), (False, "window 5"))
+        self.assertEqual(score_route(form, {"intent": "standings"}), (False, "intent 'standings'"))
+        self.assertEqual(score_route(form, "not json"), (False, "reply is not a JSON object"))
+        h2h = {"intent": "head_to_head", "teams": ["T1", "T2"]}
+        self.assertTrue(score_route(h2h, {"intent": "head_to_head", "team_a": "T2", "team_b": "T1"})[0])
+        what_if = {"intent": "what_if", "teams": ["T3", "T1"], "winner": "T1"}
+        self.assertTrue(score_route(what_if, {"intent": "what_if", "team_a": "T1", "team_b": "T3", "winner": "team_a"})[0])
+        self.assertTrue(score_route(what_if, {"intent": "what_if", "team_a": "T3", "team_b": "T1", "winner": "team_b"})[0])
+        self.assertFalse(score_route(what_if, {"intent": "what_if", "team_a": "T3", "team_b": "T1", "winner": "team_a"})[0])
+
+    def test_percentile(self):
+        from core.ai.evaluation import percentile
+
+        self.assertEqual((percentile([], 50), percentile([5], 95)), (None, 5))
+        values = list(range(1, 101))
+        self.assertEqual((percentile(values, 50), percentile(values, 95)), (51, 95))
+
+    def _perfect_reply(self, expect):
+        reply = {"intent": expect["intent"], "team_a": "none", "team_b": "none",
+                 "window": expect.get("window", 5), "winner": "none"}
+        if "team" in expect:
+            reply["team_a"] = expect["team"]
+        if "teams" in expect:
+            reply["team_a"], reply["team_b"] = expect["teams"]
+        if expect["intent"] == "what_if":
+            reply["winner"] = "draw" if expect["winner"] == "draw" else (
+                "team_a" if expect["winner"] == reply["team_a"] else "team_b")
+        return json.dumps(reply)
+
+    @override_settings(**AI_SETTINGS)
+    def test_evaluate_scores_a_run(self):
+        from core.ai.evaluation import evaluate, summary_lines
+
+        questions = self.data["questions"]
+        with FakeOllama() as fake:
+            fake.respond_chat(self._perfect_reply(questions[0]["expect"]), load_ns=3_000_000_000)
+            for item in questions[1:-1]:
+                fake.respond_chat(self._perfect_reply(item["expect"]))
+            fake.respond_chat(_route_json("unknown"))                                   # last question misrouted
+            fake.respond_chat("The Aces won 2 of their last 5, a 40.0% win rate.")      # grounded
+            fake.respond_chat("They drew 0 and each won 1.")                            # grounded
+            fake.respond_chat("The Bolts play the Drakes next, on 2026-10-01.")          # grounded
+            fake.respond_chat("The Bolts would climb to 7 points.")                      # 7 isn't in the facts
+            fake.respond_chat("")                                                        # empty
+            fake.respond(client.OllamaTimeout("slow"))                                   # error, counted
+            report = evaluate("qwen3.5:9b", self.data)
+        self.assertEqual((report.routed, report.route_total), (len(questions) - 1, len(questions)))
+        self.assertEqual(report.misrouted[0][0], questions[-1]["q"])
+        self.assertEqual((report.explained, report.explain_total, report.explain_empty, report.errors), (3, 6, 1, 1))
+        self.assertEqual(report.explain_hidden[0][2], ["7"])
+        self.assertEqual(report.cold_load_ms, 3000)
+        self.assertEqual({r["body"]["model"] for r in fake.requests}, {"qwen3.5:9b"})
+        text = "\n".join(summary_lines(report))
+        self.assertIn(f"Routing       {len(questions) - 1}/{len(questions)}", text)
+        self.assertIn("Explanations  3/6 (50%) passed the number check (1 hidden, 1 empty)", text)
+        self.assertIn("MISROUTED", text)
+
+    @override_settings(**AI_SETTINGS)
+    def test_command_compares_models_and_writes_json(self):
+        import tempfile
+
+        with FakeOllama() as fake, tempfile.NamedTemporaryFile(suffix=".json") as out:
+            for _ in range(2):
+                for item in self.data["questions"][:3]:
+                    fake.respond_chat(self._perfect_reply(item["expect"]))
+            stdout = StringIO()
+            call_command("ai_eval", "--model", "qwen3.5:9b", "--model", "gemma4:12b", "--limit", "3",
+                         "--no-explain", "--json", out.name, stdout=stdout)
+            with open(out.name) as f:
+                results = json.load(f)
+        self.assertEqual([r["model"] for r in results], ["qwen3.5:9b", "gemma4:12b"])
+        self.assertEqual(results[1]["routing"], {"correct": 3, "total": 3, "misrouted": []})
+        self.assertEqual([r["body"]["model"] for r in fake.requests], ["qwen3.5:9b"] * 3 + ["gemma4:12b"] * 3)
+        self.assertIn("Model gemma4:12b", stdout.getvalue())
+        self.assertIn("Evaluating gemma4:12b on 3 questions…", stdout.getvalue())
+
+    @override_settings(**AI_SETTINGS)
+    def test_command_stops_when_ollama_is_down(self):
+        with FakeOllama() as fake:
+            fake.respond(urllib.error.URLError(ConnectionRefusedError(111, "refused")))
+            with self.assertRaises(CommandError):
+                call_command("ai_eval", "--limit", "1", stdout=StringIO())
