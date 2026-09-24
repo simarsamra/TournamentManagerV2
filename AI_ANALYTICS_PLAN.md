@@ -281,10 +281,10 @@ other widgets, independent of `form_team`.
 |---|---|---|---|
 | `AI_ANALYTICS_ENABLED` | `DJANGO_AI_ANALYTICS_ENABLED` | `False` | Master switch |
 | `OLLAMA_URL` | `DJANGO_OLLAMA_URL` | `http://127.0.0.1:11434` | Loopback only by default |
-| `OLLAMA_MODEL` | `DJANGO_OLLAMA_MODEL` | `""` | Required when enabled |
-| `OLLAMA_THINK` | `DJANGO_OLLAMA_THINK` | unset | Sent as `think` only when set (`false` for Qwen 3) |
-| `OLLAMA_NUM_CTX` | `DJANGO_OLLAMA_NUM_CTX` | `4096` | `options.num_ctx` |
-| `OLLAMA_TIMEOUT_SECONDS` | `DJANGO_OLLAMA_TIMEOUT_SECONDS` | `120` | Per-call HTTP timeout (worker side) |
+| `OLLAMA_MODEL` | `DJANGO_OLLAMA_MODEL` | `qwen3.5:9b` | D-1; an empty value with the feature enabled is a check error |
+| `OLLAMA_THINK` | `DJANGO_OLLAMA_THINK` | `false` | Sent as `think` unless set to empty (for models without the flag) |
+| `OLLAMA_NUM_CTX` | `DJANGO_OLLAMA_NUM_CTX` | `8192` | `options.num_ctx` (fits beside the 9B model in 12 GB VRAM) |
+| `OLLAMA_TIMEOUT_SECONDS` | `DJANGO_OLLAMA_TIMEOUT_SECONDS` | `60` | Per-call HTTP timeout (worker side); GPU-sized |
 | `OLLAMA_KEEP_ALIVE` | `DJANGO_OLLAMA_KEEP_ALIVE` | `"30m"` | Keeps the model loaded between questions |
 | `AI_ANALYTICS_AUDIENCE` | `DJANGO_AI_ANALYTICS_AUDIENCE` | `managers` | `managers` or `all` (D-3) |
 | `AI_QUESTIONS_PER_USER_PER_HOUR` | … | `10` | Quota |
@@ -689,7 +689,7 @@ README section **"AI analytics (optional)"**:
 
 | ID | Answer | Date |
 |---|---|---|
-| D-1 model / hardware | _pending_ | |
+| D-1 model / hardware | 12 GB NVIDIA GPU. Default `qwen3.5:9b` (~6.6 GB), thinking off, 8K context, 60 s timeout; compare `gemma4:12b` (~7.6 GB) in AI-8 before finalising | 2026-09-24 |
 | D-2 queue vs synchronous | _pending_ | |
 | D-3 audience | _pending_ | |
 | D-4 retention | _pending_ | |

@@ -254,3 +254,41 @@ if not DEBUG:
     X_FRAME_OPTIONS = "DENY"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# AI analytics: questions about a tournament answered by a local model served
+# by Ollama (AI_ANALYTICS_PLAN.md). Off unless enabled; `manage.py ai_doctor`
+# checks the configuration against the running Ollama.
+def _env_bool(name, default):
+    return os.environ.get(name, "True" if default else "False").lower() in ("true", "1", "yes")
+
+
+AI_ANALYTICS_ENABLED = _env_bool("DJANGO_AI_ANALYTICS_ENABLED", False)
+# Loopback by default: Ollama has no authentication, so it should never listen
+# on a public interface (OLLAMA_HOST=127.0.0.1:11434 is Ollama's own default).
+OLLAMA_URL = os.environ.get("DJANGO_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+# Default sized for a 12 GB GPU (D-1); compare alternatives with `ai_eval`.
+OLLAMA_MODEL = os.environ.get("DJANGO_OLLAMA_MODEL", "qwen3.5:9b").strip()
+# Sent as Ollama's `think` flag. "false" skips the hidden reasoning pass on
+# thinking models such as Qwen 3.5 (much faster); leave empty for models that
+# don't support the flag.
+_ollama_think = os.environ.get("DJANGO_OLLAMA_THINK", "false").strip().lower()
+OLLAMA_THINK = None if _ollama_think == "" else _ollama_think in ("true", "1", "yes")
+OLLAMA_NUM_CTX = int(os.environ.get("DJANGO_OLLAMA_NUM_CTX", "8192"))
+OLLAMA_TIMEOUT_SECONDS = int(os.environ.get("DJANGO_OLLAMA_TIMEOUT_SECONDS", "60"))
+OLLAMA_KEEP_ALIVE = os.environ.get("DJANGO_OLLAMA_KEEP_ALIVE", "30m")
+# Who may ask: "managers" (tournament managers only) or "all" (everyone who
+# can open the tournament's analytics).
+AI_ANALYTICS_AUDIENCE = os.environ.get("DJANGO_AI_ANALYTICS_AUDIENCE", "managers").strip().lower()
+if AI_ANALYTICS_AUDIENCE not in ("managers", "all"):
+    raise ImproperlyConfigured(
+        f"DJANGO_AI_ANALYTICS_AUDIENCE must be 'managers' or 'all', got {AI_ANALYTICS_AUDIENCE!r}"
+    )
+AI_QUESTIONS_PER_USER_PER_HOUR = int(os.environ.get("DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR", "10"))
+AI_MAX_PENDING = int(os.environ.get("DJANGO_AI_MAX_PENDING", "20"))
+AI_MAX_QUESTION_CHARS = int(os.environ.get("DJANGO_AI_MAX_QUESTION_CHARS", "300"))
+AI_JOB_STALE_SECONDS = int(os.environ.get("DJANGO_AI_JOB_STALE_SECONDS", "600"))
+AI_RETENTION_DAYS = int(os.environ.get("DJANGO_AI_RETENTION_DAYS", "30"))
+
+# Tests must never reach a real model; see core.test_runner.
+TEST_RUNNER = "core.test_runner.NoNetworkTestRunner"
