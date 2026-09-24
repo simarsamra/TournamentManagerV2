@@ -6,6 +6,7 @@ from io import StringIO
 from unittest import mock
 
 from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -14,11 +15,12 @@ from django.utils import timezone
 
 from core import analytics
 from core.ai import client, jobs
+from core.ai.facts import MAX_FACTS_CHARS, Route, build_facts, serialise, team_keys
 from core.ai.testing import FakeOllama, chat_reply, http_error
 from core.checks import check_ai_analytics_settings
 from core.models import (
-    AIQuestion, Match, OrganizerProfile, Team, TeamMembership, TeamTournamentParticipation,
-    Tournament,
+    AIQuestion, AuditLog, Match, OrganizerProfile, Player, Team, TeamMembership,
+    TeamTournamentParticipation, Tournament, TournamentIndividualRegistration,
 )
 from core.standings import calculate_standings
 from core.test_runner import NetworkAccessBlocked
@@ -487,3 +489,195 @@ class AIWorkerConnectionTests(TestCase):
             conn.in_atomic_block = False
             call_command("ai_worker", "--once", stdout=StringIO())
         close.assert_called_once()
+
+
+# AI-4
+
+class FactsBuilderTests(TestCase):
+    SECRETS = ("SECRET-NOTE", "SECRET-AVAIL", "secret@example.com", "SECRET-PLAYER",
+               "SECRET-AUDIT", "secretusername")
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.teams = []
+        for name in ("Aces", "Bolts", "Comets", "Drakes"):
+            team = Team.objects.create(name=name)
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active",
+                availability_notes="SECRET-AVAIL",
+            )
+            Player.objects.create(team=team, name="SECRET-PLAYER")
+            self.teams.append(team)
+        self.aces, self.bolts, self.comets, self.drakes = self.teams
+        member = User.objects.create_user(
+            username="secretusername", email="secret@example.com", password="Regression-Pass-1",
+        )
+        TeamMembership.objects.create(team=self.aces, user=member, role="captain")
+        self._match(1, self.aces, self.bolts, 3, 1)
+        self._match(2, self.aces, self.comets, 2, 2)
+        self._match(3, self.bolts, self.comets, 0, 1)
+        self.upcoming = Match.objects.create(
+            tournament=self.tournament, match_number=4, team1=self.bolts, team2=self.drakes,
+            status="upcoming", notes="SECRET-NOTE",
+        )
+        AuditLog.objects.create(user=self.organizer, action="x", details="SECRET-AUDIT",
+                                tournament=self.tournament)
+
+    def _match(self, number, t1, t2, s1, s2):
+        winner = t1 if s1 > s2 else t2 if s2 > s1 else None
+        return Match.objects.create(
+            tournament=self.tournament, match_number=number, team1=t1, team2=t2,
+            score_team1=s1, score_team2=s2, winner=winner, status="confirmed",
+            notes="SECRET-NOTE",
+        )
+
+    def _all_intent_facts(self):
+        return [
+            build_facts(self.tournament, self.organizer, route) for route in (
+                Route("head_to_head", self.aces, self.bolts),
+                Route("form", self.aces, window=3),
+                Route("next_match", self.bolts),
+                Route("what_if", match=self.upcoming, winner="team2"),
+                Route("standings"), Route("team_performance"), Route("unknown"),
+            )
+        ]
+
+    def test_route_facts_carry_the_computed_numbers(self):
+        h2h, form, next_match, what_if = self._all_intent_facts()[:4]
+        self.assertEqual(h2h["head_to_head"], {
+            "team_a": "Aces", "team_b": "Bolts", "meetings": 1, "team_a_wins": 1,
+            "team_b_wins": 0, "draws": 0, "team_a_avg_score": 3.0, "team_b_avg_score": 1.0,
+        })
+        self.assertEqual(form["form"]["matches"], [
+            {"opponent": "Bolts", "result": "W"}, {"opponent": "Comets", "result": "D"},
+        ])
+        self.assertEqual(form["form"]["win_rate_pct"], 50.0)
+        self.assertEqual((next_match["next_match"]["opponent"], next_match["next_match"]["when"]),
+                         ("Drakes", "not yet scheduled"))
+        self.assertEqual(what_if["what_if"]["assumed_result"], "Drakes beat Bolts")
+        drakes = next(r for r in what_if["what_if"]["projected_standings_top"] if r["team"] == "Drakes")
+        self.assertEqual((drakes["points"], drakes["points_change"]), (3, 3))
+        self.assertEqual(h2h["standings_top"][0], {
+            "rank": 1, "team": "Aces", "played": 2, "wins": 1, "draws": 1, "losses": 0,
+            "points": 4, "game_diff": 2,
+        })
+
+    def test_no_private_fields_in_any_intent(self):
+        for facts in self._all_intent_facts():
+            text = serialise(facts)
+            for secret in self.SECRETS:
+                self.assertNotIn(secret, text)
+
+    def test_outsider_is_refused(self):
+        with self.assertRaises(PermissionDenied):
+            build_facts(self.tournament, _make_organizer("other"), Route("standings"))
+
+    def test_only_active_teams_may_be_named(self):
+        TeamTournamentParticipation.objects.filter(team=self.drakes).update(status="withdrawn")
+        with self.assertRaises(ValueError):
+            build_facts(self.tournament, self.organizer, Route("form", self.drakes))
+        # ...though a withdrawn team still appears in the table, as on the page.
+        facts = build_facts(self.tournament, self.organizer, Route("standings"))
+        self.assertIn("Drakes", [row["team"] for row in facts["standings_top"]])
+
+    def test_what_if_needs_a_match_the_simulator_offers(self):
+        self.upcoming.status = "confirmed"
+        self.upcoming.save()
+        facts = build_facts(self.tournament, self.organizer,
+                            Route("what_if", match=self.upcoming, winner="team1"))
+        self.assertNotIn("what_if", facts)
+
+    def test_bracket_formats_get_results_not_points(self):
+        self.tournament.format = "knockout"
+        self.tournament.save()
+        facts = build_facts(self.tournament, self.organizer, Route("team_performance"))
+        self.assertNotIn("standings_top", facts)
+        self.assertEqual(facts["results_top"][0]["team"], "Aces")
+
+    def test_route_validation(self):
+        with self.assertRaises(ValueError):
+            Route("predict_the_future")
+        with self.assertRaises(ValueError):
+            Route("form", window=7)
+
+    def test_team_keys_are_opaque_and_in_page_order(self):
+        keys = team_keys(analytics.active_teams(self.tournament, {}))
+        self.assertEqual({k: t.name for k, t in keys.items()},
+                         {"T1": "Aces", "T2": "Bolts", "T3": "Comets", "T4": "Drakes"})
+
+
+class FactsSizeAndLabelTests(TestCase):
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+
+    def test_worst_case_fits_the_limit_for_every_intent(self):
+        """Maximum-length names (Team.name is 100 chars), 30 teams, a full
+        15-match form window: every intent fits without trimming."""
+        tournament = Tournament.objects.create(
+            name="L" * 200, format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        teams = []
+        for n in range(30):
+            team = Team.objects.create(name=f"{n:02d}" + "x" * 98)
+            TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+            teams.append(team)
+        for n, opponent in enumerate(teams[1:16], start=1):
+            Match.objects.create(
+                tournament=tournament, match_number=n, team1=teams[0], team2=opponent,
+                score_team1=2, score_team2=1, winner=teams[0], status="confirmed",
+            )
+        upcoming = Match.objects.create(
+            tournament=tournament, match_number=99, team1=teams[0], team2=teams[20], status="upcoming",
+        )
+        for route in (
+            Route("head_to_head", teams[0], teams[1]), Route("form", teams[0], window=15),
+            Route("next_match", teams[0]), Route("what_if", match=upcoming, winner="team2"),
+            Route("standings"),
+        ):
+            with self.subTest(intent=route.intent):
+                facts = build_facts(tournament, self.organizer, route)
+                self.assertLessEqual(len(serialise(facts)), MAX_FACTS_CHARS)
+                self.assertEqual(len(facts["standings_top"]), 8)  # nothing trimmed
+
+    def test_trimming_keeps_the_question_rows_and_three_table_rows(self):
+        from core.ai import facts as facts_module
+
+        rows = [{"rank": i, "team": "t" * 80} for i in range(8)]
+        facts = {"form": {"team": "Aces", "matches": ["W"] * 15}, "standings_top": rows}
+        with mock.patch.object(facts_module, "MAX_FACTS_CHARS", 500):
+            trimmed = facts_module._fit(facts)
+        self.assertLessEqual(len(serialise(trimmed)), 500)
+        self.assertLess(len(trimmed["standings_top"]), 8)
+        self.assertEqual(trimmed["form"]["matches"], ["W"] * 15)
+        with mock.patch.object(facts_module, "MAX_FACTS_CHARS", 100), self.assertRaises(ValueError):
+            facts_module._fit({"form": {"matches": ["W"] * 50}, "standings_top": rows})
+
+    def test_individual_mode_uses_display_names(self):
+        from core.views import _ensure_shadow_team_for_registration
+
+        tournament = Tournament.objects.create(
+            name="IND", format="round_robin", status="active", players_per_team=1,
+            registration_mode="individual", created_by=self.organizer,
+        )
+        shadows = []
+        for username, display in (("pa", "Player Alpha"), ("pb", "Player Bravo")):
+            user = User.objects.create_user(username=username, password="Regression-Pass-1")
+            reg = TournamentIndividualRegistration.objects.create(
+                tournament=tournament, user=user, display_name=display, status="active",
+            )
+            _ensure_shadow_team_for_registration(reg, tournament.sport_type)
+            reg.refresh_from_db()
+            shadows.append(reg.shadow_team)
+        Match.objects.create(
+            tournament=tournament, match_number=1, team1=shadows[0], team2=shadows[1],
+            score_team1=2, score_team2=0, winner=shadows[0], status="confirmed",
+        )
+        for route in (Route("head_to_head", *shadows), Route("form", shadows[1]), Route("standings")):
+            text = serialise(build_facts(tournament, self.organizer, route))
+            self.assertNotIn("__tm_shadow_", text)
+            self.assertIn("Player Alpha", text)
