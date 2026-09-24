@@ -76,7 +76,7 @@
         <tbody>
         {% for ts in team_stats %}
         <tr>
-            <td><a href="{% url 'team_detail' pk=ts.team.pk %}">{{ ts.display_label|default:ts.team.name }}</a></td>
+            <td>{% if ts.team.is_internal %}{{ ts.display_label }}{% else %}<a href="{% url 'team_detail' pk=ts.team.pk %}">{{ ts.display_label }}</a>{% endif %}</td>
             <td>{{ ts.played }}</td>
             <td>{{ ts.wins }}</td>
             {% if show_draws_column %}<td>{{ ts.draws }}</td>{% endif %}

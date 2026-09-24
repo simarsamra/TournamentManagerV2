@@ -176,13 +176,18 @@ def analytics_view(request):
     # Built from calculate_standings so draws and forfeits are counted the same
     # way as on the standings page (this used to set losses = played - wins).
     standings = calculate_standings(tournament)
+    # Every row needs a display label: in individual-registration mode the
+    # teams are internal shadows whose names must never reach the page.
+    label_map = _team_display_map(tournament, [row["team"].pk for row in standings])
+    for row in standings:
+        row["display_label"] = label_map.get(row["team"].pk, row["team"].name)
     active_ids = set(
         tournament.team_participations.filter(status="active").values_list("team_id", flat=True)
     )
     team_stats = [
         {
             "team": row["team"],
-            "display_label": _team_display_label(tournament, row["team"]),
+            "display_label": row["display_label"],
             "played": row["played"], "wins": row["wins"],
             "draws": row["draws"], "losses": row["losses"],
             "win_rate": round(row["wins"] / row["played"] * 100, 1) if row["played"] else 0,

@@ -1,12 +1,14 @@
 """Analytics page regressions (ANALYTICS_PLAN.md)."""
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.urls import reverse
 
 from core.models import (
     AuditLog, Match, OrganizerProfile, Team, TeamMembership,
-    TeamTournamentParticipation, Tournament,
+    TeamTournamentParticipation, Tournament, TournamentIndividualRegistration,
 )
 from core.standings import calculate_standings
+from core.views import _ensure_shadow_team_for_registration
 
 
 def _make_organizer(username):
@@ -180,6 +182,8 @@ class TeamPerformanceTests(TestCase):
         )
         response = self.client.get("/analytics/", {"tournament": tournament.pk})
         self.assertContains(response, "<th>Draws</th>", html=False)
+        # Regular (non-internal) teams keep their link to the team page.
+        self.assertContains(response, reverse("team_detail", kwargs={"pk": a.pk}))
 
     def test_draws_column_hidden_when_there_are_no_draws(self):
         tournament, (a, b) = self._tournament("round_robin", "A", "B")
@@ -210,3 +214,53 @@ class TeamPerformanceTests(TestCase):
         self._play(tournament, a, b, 1, 0)
         TeamTournamentParticipation.objects.filter(team=b).update(status="withdrawn")
         self.assertEqual([s["team"].pk for s in self._team_stats(tournament)], [a.pk])
+
+
+class IndividualModeLabelTests(TestCase):
+    """A-3: standings rows reached the template without display_label, so an
+    individual-registration tournament showed its internal shadow-team names
+    (__tm_shadow_...) in Points Overview, and Team Performance linked to
+    team pages non-organizers can't open."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="IND", format="round_robin", status="active",
+            players_per_team=1, registration_mode="individual",
+            created_by=self.organizer,
+        )
+        self.registrations = []
+        for username, display_name in (("pa", "Player Alpha"), ("pb", "Player Bravo")):
+            user = User.objects.create_user(username=username, password="Regression-Pass-1")
+            registration = TournamentIndividualRegistration.objects.create(
+                tournament=self.tournament, user=user,
+                display_name=display_name, status="active",
+            )
+            _ensure_shadow_team_for_registration(registration, self.tournament.sport_type)
+            registration.refresh_from_db()
+            self.registrations.append(registration)
+        alpha, bravo = (r.shadow_team for r in self.registrations)
+        Match.objects.create(
+            tournament=self.tournament, match_number=1, team1=alpha, team2=bravo,
+            score_team1=3, score_team2=1, winner=alpha, status="confirmed",
+        )
+
+    def _get(self, user):
+        self.client.force_login(user)
+        response = self.client.get("/analytics/", {"tournament": self.tournament.pk})
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def test_no_internal_team_names_in_the_page(self):
+        for user in (self.organizer, self.registrations[0].user):
+            response = self._get(user)
+            self.assertNotContains(response, "__tm_shadow_")
+            self.assertContains(response, "Player Alpha")
+            self.assertContains(response, "Player Bravo")
+
+    def test_internal_teams_are_not_linked(self):
+        response = self._get(self.organizer)
+        for registration in self.registrations:
+            self.assertNotContains(
+                response, reverse("team_detail", kwargs={"pk": registration.shadow_team.pk})
+            )
