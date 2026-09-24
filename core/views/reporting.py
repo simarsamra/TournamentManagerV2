@@ -1,7 +1,5 @@
 """Standings, analytics, backups, notifications, search and public pages."""
 import os
-from datetime import timedelta
-from collections import defaultdict
 
 from django.conf import settings
 from django.contrib import messages
@@ -34,7 +32,6 @@ from ..standings import (
     get_grand_final_matches,
     get_losers_bracket_data,
     get_third_place_match,
-    rank_standings,
 )
 from ..backup import (
     create_backup,
@@ -43,6 +40,7 @@ from ..backup import (
     restore_backup,
     validate_backup,
 )
+from .. import analytics
 from ..audit import log_action
 
 from .helpers import (
@@ -140,16 +138,9 @@ def standings_view(request):
 
 
 # -- Analytics --
-
-# Rolling-form pills: accessible name and theme-aware CSS class per result.
-_FORM_RESULT_LABELS = {"W": "Win", "L": "Loss", "D": "Draw"}
-_FORM_RESULT_CLASSES = {"W": "is-win", "L": "is-loss", "D": "is-draw"}
-
-# The what-if simulator offers at most this many upcoming matches.
-SIMULATOR_MATCH_LIMIT = 8
-
-# Schedule density switches from one bar per day to one per week beyond this.
-SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS = 45
+#
+# The calculations live in core/analytics.py (AI_ANALYTICS_PLAN.md AI-1); this
+# view only reads the query string, picks each widget's defaults and renders.
 
 # Query parameters each analytics widget's form owns. The simulator owns
 # sim_<match pk>. Every form carries the *other* widgets' current values as
@@ -199,146 +190,32 @@ def _analytics_hidden_state(request, tournament, simulator_matches):
     }
 
 
-def _schedule_density(scheduled_times):
-    """Return ([[label, count], ...] in date order, "day" | "week").
+def _pick_team(active_teams, raw_id):
+    """The active team whose pk matches the query-string value, or None."""
+    if not raw_id:
+        return None
+    return next((t for t in active_teams if str(t.pk) == str(raw_id)), None)
 
-    Daily buckets ("2026-03-02") while the schedule spans at most
-    SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS; beyond that, Monday-based weeks
-    ("Week of Mar 2", with the year added when the span crosses one), so a
-    months-long league doesn't render hundreds of bars.
-    """
-    days = sorted(timezone.localtime(t).date() for t in scheduled_times)
-    if not days:
-        return [], "day"
-    if (days[-1] - days[0]).days <= SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS:
-        counts = defaultdict(int)
-        for day in days:
-            counts[day] += 1
-        return [[day.isoformat(), n] for day, n in sorted(counts.items())], "day"
-
-    show_year = days[0].year != days[-1].year
-    counts = defaultdict(int)
-    for day in days:
-        counts[day - timedelta(days=day.weekday())] += 1
-    buckets = []
-    for week_start, n in sorted(counts.items()):
-        label = f"Week of {week_start:%b} {week_start.day}"
-        if show_year:
-            label += f", {week_start.year}"
-        buckets.append([label, n])
-    return buckets, "week"
 
 @login_required
 def analytics_view(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/analytics.html", _tournament_context(request, tournament))
-    # Organizers are independent parties: owning *a* tournament does not grant
-    # reads of another organizer's. Managers and enrolled players only.
-    can_manage = _can_manage_tournament(request.user, tournament)
-    if not can_manage and not _is_user_enrolled_in_tournament(request.user, tournament):
+    allowed, can_manage = analytics.can_view_analytics(request.user, tournament)
+    if not allowed:
         messages.error(request, "You do not have access to that tournament.")
         return redirect("dashboard")
     _expire_pending_score_disputes(tournament)
     matches = tournament.matches.all()
-    teams = Team.objects.filter(participations__tournament=tournament).distinct()
-    match_stats = {
-        "total": matches.count(),
-        "confirmed": matches.filter(status="confirmed").count(),
-        "upcoming": matches.filter(status="upcoming").count(),
-        "in_progress": matches.filter(status="in_progress").count(),
-        "pending": matches.filter(status="pending_confirmation").count(),
-        "disputed": matches.filter(status="disputed").count(),
-        "forfeited": matches.filter(status="forfeited").count(),
-        "cancelled": matches.filter(status="cancelled").count(),
-    }
-    # One grouped query for every court's counts, not two per court.
-    court_counts = {
-        row["court"]: row
-        for row in matches.filter(court__isnull=False).values("court").annotate(
-            total=db_models.Count("id"),
-            confirmed=db_models.Count("id", filter=Q(status="confirmed")),
-        )
-    }
-    court_stats = []
-    for court in tournament.courts.all():
-        counts = court_counts.get(court.pk, {})
-        total = counts.get("total", 0)
-        confirmed = counts.get("confirmed", 0)
-        court_stats.append({
-            "court": court, "total_matches": total, "confirmed_matches": confirmed,
-            # Share of this court's scheduled matches already played.
-            "completion_pct": round(confirmed / total * 100, 1) if total > 0 else 0,
-        })
-    # Built from calculate_standings so draws and forfeits are counted the same
-    # way as on the standings page (this used to set losses = played - wins).
     standings = calculate_standings(tournament)
-    # Every row needs a display label: in individual-registration mode the
-    # teams are internal shadows whose names must never reach the page.
-    label_map = _team_display_map(tournament, [row["team"].pk for row in standings])
-    for row in standings:
-        row["display_label"] = label_map.get(row["team"].pk, row["team"].name)
-    active_teams = list(
-        teams.filter(
-            participations__tournament=tournament,
-            participations__status="active",
-        ).distinct().order_by("name")
-    )
-    for team in active_teams:
-        team.display_label = label_map.get(team.pk) or _team_display_label(tournament, team)
-    active_ids = {team.pk for team in active_teams}
-    team_stats = [
-        {
-            "team": row["team"],
-            "display_label": row["display_label"],
-            "played": row["played"], "wins": row["wins"],
-            "draws": row["draws"], "losses": row["losses"],
-            "win_rate": round(row["wins"] / row["played"] * 100, 1) if row["played"] else 0,
-        }
-        for row in standings
-        if row["team"].pk in active_ids
-    ]
-    if tournament.format not in ("round_robin", "double_round_robin", "hybrid"):
-        # Standings points mean nothing in a bracket; rank on results instead.
-        team_stats.sort(key=lambda s: (
-            -s["wins"], -s["win_rate"], s["losses"], s["display_label"].lower(),
-        ))
-    show_draws_column = any(s["draws"] for s in team_stats)
-    # Points Overview bar widths, relative to the leader; all zero when nobody
-    # has points yet (rather than leaning on widthratio's divide-by-zero).
-    max_points = max((row["points"] for row in standings), default=0)
-    for row in standings:
-        row["points_pct"] = (
-            min(100, max(0, round(row["points"] / max_points * 100))) if max_points > 0 else 0
-        )
-    schedule_density, schedule_density_unit = _schedule_density(
+    label_map = analytics.label_standings(tournament, standings)
+    active_teams = analytics.active_teams(tournament, label_map)
+    team_stats, show_draws_column = analytics.team_performance(tournament, standings, active_teams)
+    analytics.set_points_pct(standings)
+    schedule_density, schedule_density_unit = analytics.schedule_density(
         matches.filter(scheduled_time__isnull=False).values_list("scheduled_time", flat=True)
     )
-    # Withdrawn teams: one query for the participations (with their teams) and
-    # one for the matches they forfeited or had cancelled, not two per team.
-    withdrawn_participations = list(
-        tournament.team_participations.filter(status="withdrawn")
-        .select_related("team").order_by("team__name")
-    )
-    withdrawn_ids = {p.team_id for p in withdrawn_participations}
-    affected_counts = defaultdict(int)
-    if withdrawn_ids:
-        for team1_id, team2_id in matches.filter(
-            Q(team1_id__in=withdrawn_ids) | Q(team2_id__in=withdrawn_ids),
-            status__in=["forfeited", "cancelled"],
-        ).values_list("team1_id", "team2_id"):
-            for team_id in {team1_id, team2_id} & withdrawn_ids:
-                affected_counts[team_id] += 1
-    withdrawal_info = [
-        {
-            "team": participation.team,
-            "display_label": label_map.get(participation.team_id)
-            or _team_display_label(tournament, participation.team),
-            "affected_matches": affected_counts[participation.team_id],
-            "withdrawn_at": participation.withdrawn_at,
-        }
-        for participation in withdrawn_participations
-    ]
     recent_logs = (
         AuditLog.objects.filter(tournament=tournament).order_by("-timestamp")[:20]
         if can_manage
@@ -346,80 +223,28 @@ def analytics_view(request):
     )
     context = {
         "tournament": tournament, "can_manage": can_manage,
-        "match_stats": match_stats, "court_stats": court_stats,
+        "match_stats": analytics.match_status_counts(matches),
+        "court_stats": analytics.court_progress(tournament, matches),
         "team_stats": team_stats, "show_draws_column": show_draws_column,
         "schedule_density": schedule_density,
         "schedule_density_unit": schedule_density_unit,
-        "withdrawal_info": withdrawal_info, "recent_logs": recent_logs,
+        "withdrawal_info": analytics.withdrawal_summary(tournament, matches, label_map),
+        "recent_logs": recent_logs,
     }
-    if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
+    if tournament.format in analytics.STANDINGS_FORMATS:
         context["standings"] = standings
 
-
     # --- Head-to-head matchup card ---
-    h2h_team1 = None
-    h2h_team2 = None
-    h2h_card = None
-    h2h_team1_id = request.GET.get("h2h_team1")
-    h2h_team2_id = request.GET.get("h2h_team2")
-    if h2h_team1_id:
-        h2h_team1 = next((t for t in active_teams if str(t.pk) == str(h2h_team1_id)), None)
-    if h2h_team2_id:
-        h2h_team2 = next((t for t in active_teams if str(t.pk) == str(h2h_team2_id)), None)
+    h2h_team1 = _pick_team(active_teams, request.GET.get("h2h_team1"))
+    h2h_team2 = _pick_team(active_teams, request.GET.get("h2h_team2"))
     if not h2h_team1 and active_teams:
         h2h_team1 = active_teams[0]
     if not h2h_team2 and len(active_teams) > 1:
         h2h_team2 = active_teams[1]
-    if h2h_team1 and h2h_team2 and h2h_team1 != h2h_team2:
-        h2h_matches = list(
-            matches.filter(
-                (
-                    Q(team1=h2h_team1) & Q(team2=h2h_team2)
-                ) | (
-                    Q(team1=h2h_team2) & Q(team2=h2h_team1)
-                ),
-                status__in=["confirmed", "forfeited"],
-            ).select_related("winner", "team1", "team2").order_by("-match_number")
-        )
-        h2h_t1_wins = 0
-        h2h_t2_wins = 0
-        h2h_draws = 0
-        h2h_t1_score_total = 0
-        h2h_t2_score_total = 0
-        h2h_scored_matches = 0
-        for m in h2h_matches:
-            if m.winner_id == h2h_team1.pk:
-                h2h_t1_wins += 1
-            elif m.winner_id == h2h_team2.pk:
-                h2h_t2_wins += 1
-            else:
-                h2h_draws += 1
-            if m.score_team1 is not None and m.score_team2 is not None:
-                if m.team1_id == h2h_team1.pk:
-                    h2h_t1_score_total += m.score_team1
-                    h2h_t2_score_total += m.score_team2
-                else:
-                    h2h_t1_score_total += m.score_team2
-                    h2h_t2_score_total += m.score_team1
-                h2h_scored_matches += 1
-        h2h_card = {
-            "total_matches": len(h2h_matches),
-            "team1_wins": h2h_t1_wins,
-            "team2_wins": h2h_t2_wins,
-            "draws": h2h_draws,
-            "team1_avg_score": round(h2h_t1_score_total / h2h_scored_matches, 1) if h2h_scored_matches > 0 else None,
-            "team2_avg_score": round(h2h_t2_score_total / h2h_scored_matches, 1) if h2h_scored_matches > 0 else None,
-            "last_match": h2h_matches[0] if h2h_matches else None,
-        }
-
-    h2h_team1_label = _team_display_label(tournament, h2h_team1) if h2h_team1 else ""
-    h2h_team2_label = _team_display_label(tournament, h2h_team2) if h2h_team2 else ""
+    h2h_card = analytics.head_to_head(tournament, h2h_team1, h2h_team2)
 
     # --- Rolling form trend ---
-    form_team = None
-    form_team_id = request.GET.get("form_team")
-    if form_team_id:
-        form_team = next((t for t in active_teams if str(t.pk) == str(form_team_id)), None)
+    form_team = _pick_team(active_teams, request.GET.get("form_team"))
     if not form_team and active_teams:
         form_team = active_teams[0]
     try:
@@ -427,181 +252,35 @@ def analytics_view(request):
     except (TypeError, ValueError):
         form_window = 5
     form_window = max(3, min(form_window, 15))
-    rolling_form_rows = []
-    if form_team:
-        recent_form_matches = list(
-            matches.filter(
-                Q(team1=form_team) | Q(team2=form_team),
-                status__in=["confirmed", "forfeited"],
-            ).select_related("team1", "team2", "winner").order_by("-match_number")[:form_window]
-        )[::-1]
-        wins = 0
-        for idx, m in enumerate(recent_form_matches, start=1):
-            opponent = m.get_opponent(form_team)
-            if m.winner_id == form_team.pk:
-                result = "W"
-                wins += 1
-            elif m.winner_id:
-                result = "L"
-            else:
-                result = "D"
-            rolling_form_rows.append({
-                "match_number": m.match_number,
-                "opponent": _team_display_label(tournament, opponent) if opponent else "TBD",
-                "result": result,
-                "result_label": _FORM_RESULT_LABELS[result],
-                "result_class": _FORM_RESULT_CLASSES[result],
-                "sequence": idx,
-                "win_rate": round(wins / idx * 100, 1),
-            })
 
     # --- Next-opponent prep sheet ---
-    prep_team = None
-    prep_team_id = request.GET.get("prep_team")
-    if prep_team_id:
-        prep_team = next((t for t in active_teams if str(t.pk) == str(prep_team_id)), None)
+    prep_team = _pick_team(active_teams, request.GET.get("prep_team"))
     if not prep_team:
         prep_team = form_team
-    next_opponent_prep = None
-    if prep_team:
-        prep_match = matches.filter(
-            Q(team1=prep_team) | Q(team2=prep_team),
-            status__in=["upcoming", "in_progress"],
-        ).select_related("team1", "team2", "court").order_by("scheduled_time", "match_number").first()
-        if prep_match:
-            opponent = prep_match.get_opponent(prep_team)
-            opponent_recent = []
-            opponent_record = {"wins": 0, "losses": 0, "draws": 0}
-            h2h_record = {"wins": 0, "losses": 0, "draws": 0}
-            if opponent:
-                recent_opp_matches = list(
-                    matches.filter(
-                        Q(team1=opponent) | Q(team2=opponent),
-                        status__in=["confirmed", "forfeited"],
-                    ).select_related("team1", "team2", "winner").order_by("-match_number")[:5]
-                )
-                for m in recent_opp_matches:
-                    opp_match_opp = m.get_opponent(opponent)
-                    if m.winner_id == opponent.pk:
-                        opp_result = "W"
-                        opponent_record["wins"] += 1
-                    elif m.winner_id:
-                        opp_result = "L"
-                        opponent_record["losses"] += 1
-                    else:
-                        opp_result = "D"
-                        opponent_record["draws"] += 1
-                    opponent_recent.append({
-                        "match_number": m.match_number,
-                        "opponent": _team_display_label(tournament, opp_match_opp) if opp_match_opp else "TBD",
-                        "result": opp_result,
-                    })
-
-                for m in matches.filter(
-                    (
-                        Q(team1=prep_team) & Q(team2=opponent)
-                    ) | (
-                        Q(team1=opponent) & Q(team2=prep_team)
-                    ),
-                    status__in=["confirmed", "forfeited"],
-                ):
-                    if m.winner_id == prep_team.pk:
-                        h2h_record["wins"] += 1
-                    elif m.winner_id == opponent.pk:
-                        h2h_record["losses"] += 1
-                    else:
-                        h2h_record["draws"] += 1
-            next_opponent_prep = {
-                "team": prep_team,
-                "team_label": _team_display_label(tournament, prep_team),
-                "match": prep_match,
-                "opponent": opponent,
-                "opponent_label": _team_display_label(tournament, opponent) if opponent else "",
-                "opponent_recent": opponent_recent,
-                "opponent_record": opponent_record,
-                "h2h": h2h_record,
-                "opponent_key_players": list(opponent.players.values_list("name", flat=True)[:3]) if opponent else [],
-            }
 
     # --- What-if standings simulator ---
-    simulator_matches = []
-    simulator_enabled = tournament.format in ("round_robin", "double_round_robin", "hybrid")
-    simulated_standings = None
-    simulator_has_choices = False
-    simulator_total = 0
-    if simulator_enabled:
-        candidates = matches.filter(
-            status="upcoming",
-            team1__isnull=False,
-            team2__isnull=False,
-        )
-        if tournament.format == "hybrid":
-            # Only group-stage matches earn standings points; knockout matches
-            # carry no group letter.
-            candidates = candidates.exclude(group="")
-        simulator_total = candidates.count()
-        simulator_matches = list(
-            candidates.select_related("team1", "team2").order_by(
-                "scheduled_time", "match_number"
-            )[:SIMULATOR_MATCH_LIMIT]
-        )
-        if simulator_matches:
-            by_team_id = {}
-            for row in standings:
-                # Copy: the simulator adjusts points and re-ranks, and the real
-                # rows are still shown in Points Overview.
-                row_copy = dict(row)
-                row_copy["point_change"] = 0
-                by_team_id[row["team"].pk] = row_copy
-
-            for m in simulator_matches:
-                m.team1_label = _team_display_label(tournament, m.team1)
-                m.team2_label = _team_display_label(tournament, m.team2)
-                outcome = request.GET.get(f"sim_{m.pk}")
-                # A draw is only possible in a group / round-robin match. Checked
-                # here as well as in the dropdown so a forged value is ignored.
-                m.draw_allowed = tournament.format != "hybrid" or bool(m.group)
-                allowed = ("team1", "team2", "draw") if m.draw_allowed else ("team1", "team2")
-                if outcome not in allowed:
-                    outcome = None
-                m.selected_outcome = outcome or ""
-                if outcome is None:
-                    continue
-                simulator_has_choices = True
-                if m.team1_id not in by_team_id or m.team2_id not in by_team_id:
-                    continue
-                if outcome == "team1":
-                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_win
-                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_loss
-                elif outcome == "team2":
-                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_win
-                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_loss
-                else:
-                    by_team_id[m.team1_id]["point_change"] += tournament.points_per_draw
-                    by_team_id[m.team2_id]["point_change"] += tournament.points_per_draw
-
-            simulated_standings = list(by_team_id.values())
-            for row in simulated_standings:
-                row["points"] += row["point_change"]
-            # Same tiebreakers as the real table (rank_standings sets "rank").
-            simulated_standings = rank_standings(tournament, simulated_standings)
+    simulator_matches, simulator_total = analytics.simulator_matches(tournament)
+    simulated_standings, simulator_has_choices = analytics.simulate(
+        tournament, standings, simulator_matches,
+        {m.pk: request.GET.get(f"sim_{m.pk}") for m in simulator_matches},
+    )
 
     context.update({
         "analytics_teams": active_teams,
         "h2h_team1": h2h_team1,
         "h2h_team2": h2h_team2,
-        "h2h_team1_label": h2h_team1_label,
-        "h2h_team2_label": h2h_team2_label,
+        "h2h_team1_label": _team_display_label(tournament, h2h_team1) if h2h_team1 else "",
+        "h2h_team2_label": _team_display_label(tournament, h2h_team2) if h2h_team2 else "",
         "h2h_card": h2h_card,
         "form_team": form_team,
         "form_window": form_window,
-        "rolling_form_rows": rolling_form_rows,
+        "rolling_form_rows": analytics.rolling_form(tournament, form_team, form_window),
         "prep_team": prep_team,
-        "next_opponent_prep": next_opponent_prep,
-        "simulator_enabled": simulator_enabled,
+        "next_opponent_prep": analytics.next_opponent_prep(tournament, prep_team),
+        "simulator_enabled": tournament.format in analytics.STANDINGS_FORMATS,
         "simulator_matches": simulator_matches,
         "simulator_total": simulator_total,
-        "simulator_limit": SIMULATOR_MATCH_LIMIT,
+        "simulator_limit": analytics.SIMULATOR_MATCH_LIMIT,
         "simulated_standings": simulated_standings,
         "simulator_has_choices": simulator_has_choices,
         "analytics_hidden": _analytics_hidden_state(request, tournament, simulator_matches),
