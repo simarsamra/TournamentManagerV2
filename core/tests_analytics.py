@@ -1,7 +1,10 @@
 """Analytics page regressions (ANALYTICS_PLAN.md)."""
+from datetime import datetime, timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from unittest import mock
 
 from core.models import (
@@ -495,3 +498,41 @@ class AnalyticsCleanupTests(TestCase):
         self.assertIn('<script id="schedule-density-data" type="application/json">', content)
         # No longer pasted inline as a JS literal through |safe.
         self.assertNotIn("var data = {", content)
+
+
+class ScheduleDensityTests(TestCase):
+    """A-10: schedule density drew one bar per calendar day, so a months-long
+    league rendered hundreds of rows. Spans over 45 days group by week."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.a, self.b = (Team.objects.create(name=n) for n in ("A", "B"))
+        self.client.force_login(self.organizer)
+
+    def _schedule(self, day_offsets):
+        start = timezone.make_aware(datetime(2026, 3, 2, 12, 0))  # a Monday
+        for number, offset in enumerate(day_offsets, start=1):
+            Match.objects.create(
+                tournament=self.tournament, match_number=number, team1=self.a, team2=self.b,
+                status="upcoming", scheduled_time=start + timedelta(days=offset),
+            )
+        response = self.client.get("/analytics/", {"tournament": self.tournament.pk})
+        return response, response.context["schedule_density"]
+
+    def test_short_span_is_daily(self):
+        response, buckets = self._schedule(range(10))
+        self.assertEqual(len(buckets), 10)
+        self.assertEqual(buckets[0], ["2026-03-02", 1])
+        self.assertContains(response, "Matches per Day")
+
+    def test_long_span_is_weekly(self):
+        # Two matches in each of the first two days, then one every 3 days to day 90.
+        response, buckets = self._schedule([0, 0, 1, 1] + list(range(3, 91, 3)))
+        self.assertEqual(buckets[0], ["Week of Mar 2", 6])  # Mon 2 - Sun 8: days 0,0,1,1,3,6
+        self.assertEqual(len(buckets), 13)  # 91 days from a Monday span 13 weeks
+        self.assertEqual(sum(count for _, count in buckets), 4 + len(range(3, 91, 3)))
+        self.assertContains(response, "Matches per Week")

@@ -319,7 +319,7 @@
 
 <!-- Schedule Density -->
 <div class="card mt-2">
-    <div class="card-header">Schedule Density (Matches per Day)</div>
+    <div class="card-header">Schedule Density (Matches per {% if schedule_density_unit == "week" %}Week{% else %}Day{% endif %})</div>
     <div class="card-body" id="schedule-density"></div>
 </div>
 
@@ -432,19 +432,21 @@
 
 // Simple bar chart for schedule density
 var densityData = document.getElementById('schedule-density-data');
-var data = densityData ? JSON.parse(densityData.textContent) : {};
+// [[label, count], ...] in date order; labels are days or "Week of ..." (A-10).
+var data = densityData ? JSON.parse(densityData.textContent) : [];
 var container = document.getElementById('schedule-density');
-if (container && data && Object.keys(data).length > 0) {
-    var maxVal = Math.max(...Object.values(data));
+if (container && data.length > 0) {
+    var maxVal = Math.max(...data.map(function(bucket) { return bucket[1]; }));
     var html = '';
-    for (var date in data) {
-        var pct = (data[date] / maxVal * 100);
+    data.forEach(function(bucket) {
+        var label = bucket[0], count = bucket[1];
+        var pct = (count / maxVal * 100);
         html += '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:4px;">';
-        html += '<span style="width:90px;font-size:0.8rem;text-align:right;">' + date + '</span>';
+        html += '<span style="width:130px;font-size:0.8rem;text-align:right;white-space:nowrap;">' + label + '</span>';
         html += '<div class="bar-track" style="flex:1;border-radius:3px;height:18px;">';
         html += '<div style="background:var(--info);border-radius:3px;height:18px;width:' + pct + '%;display:flex;align-items:center;padding-left:6px;">';
-        html += '<span style="color:white;font-size:0.7rem;">' + data[date] + '</span></div></div></div>';
-    }
+        html += '<span style="color:white;font-size:0.7rem;">' + count + '</span></div></div></div>';
+    });
     container.innerHTML = html;
 } else if (container) {
     container.innerHTML = '<p class="text-muted">No scheduled matches.</p>';

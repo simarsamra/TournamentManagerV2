@@ -1,5 +1,6 @@
 """Standings, analytics, backups, notifications, search and public pages."""
 import os
+from datetime import timedelta
 from collections import defaultdict
 
 from django.conf import settings
@@ -147,6 +148,39 @@ _FORM_RESULT_CLASSES = {"W": "is-win", "L": "is-loss", "D": "is-draw"}
 # The what-if simulator offers at most this many upcoming matches.
 SIMULATOR_MATCH_LIMIT = 8
 
+# Schedule density switches from one bar per day to one per week beyond this.
+SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS = 45
+
+
+def _schedule_density(scheduled_times):
+    """Return ([[label, count], ...] in date order, "day" | "week").
+
+    Daily buckets ("2026-03-02") while the schedule spans at most
+    SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS; beyond that, Monday-based weeks
+    ("Week of Mar 2", with the year added when the span crosses one), so a
+    months-long league doesn't render hundreds of bars.
+    """
+    days = sorted(timezone.localtime(t).date() for t in scheduled_times)
+    if not days:
+        return [], "day"
+    if (days[-1] - days[0]).days <= SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS:
+        counts = defaultdict(int)
+        for day in days:
+            counts[day] += 1
+        return [[day.isoformat(), n] for day, n in sorted(counts.items())], "day"
+
+    show_year = days[0].year != days[-1].year
+    counts = defaultdict(int)
+    for day in days:
+        counts[day - timedelta(days=day.weekday())] += 1
+    buckets = []
+    for week_start, n in sorted(counts.items()):
+        label = f"Week of {week_start:%b} {week_start.day}"
+        if show_year:
+            label += f", {week_start.year}"
+        buckets.append([label, n])
+    return buckets, "week"
+
 @login_required
 def analytics_view(request):
     tournament = _get_tournament(request)
@@ -222,11 +256,9 @@ def analytics_view(request):
         row["points_pct"] = (
             min(100, max(0, round(row["points"] / max_points * 100))) if max_points > 0 else 0
         )
-    schedule_density = defaultdict(int)
-    for m in matches.filter(scheduled_time__isnull=False):
-        day = timezone.localtime(m.scheduled_time).strftime("%Y-%m-%d")
-        schedule_density[day] += 1
-    schedule_density = dict(sorted(schedule_density.items()))
+    schedule_density, schedule_density_unit = _schedule_density(
+        matches.filter(scheduled_time__isnull=False).values_list("scheduled_time", flat=True)
+    )
     withdrawn = teams.filter(
         participations__tournament=tournament,
         participations__status="withdrawn",
@@ -251,6 +283,7 @@ def analytics_view(request):
         "match_stats": match_stats, "court_stats": court_stats,
         "team_stats": team_stats, "show_draws_column": show_draws_column,
         "schedule_density": schedule_density,
+        "schedule_density_unit": schedule_density_unit,
         "withdrawal_info": withdrawal_info, "recent_logs": recent_logs,
     }
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
