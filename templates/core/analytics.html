@@ -307,8 +307,7 @@
         <div class="d-flex align-center gap-1 mb-1">
             <span style="width:120px;font-size:0.85rem;">{{ s.display_label|default:s.team.name }}</span>
             <div class="bar-track" style="flex:1;height:24px;position:relative;">
-                {% widthratio s.points standings.0.points 100 as pct %}
-                <div style="background:var(--primary);border-radius:4px;height:24px;width:{% widthratio s.points standings.0.points 100 %}%;display:flex;align-items:center;padding-left:0.5rem;">
+                <div style="background:var(--primary);border-radius:4px;height:24px;width:{{ s.points_pct }}%;display:flex;align-items:center;padding-left:0.5rem;">
                     <span style="color:white;font-size:0.75rem;font-weight:600;">{{ s.points }} pts</span>
                 </div>
             </div>
@@ -372,6 +371,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ schedule_density|json_script:"schedule-density-data" }}
 <script>
 // Keep analytics position stable after widget form submissions.
 (function() {
@@ -431,9 +431,10 @@
 })();
 
 // Simple bar chart for schedule density
-var data = {{ schedule_density|safe }};
+var densityData = document.getElementById('schedule-density-data');
+var data = densityData ? JSON.parse(densityData.textContent) : {};
 var container = document.getElementById('schedule-density');
-if (data && Object.keys(data).length > 0) {
+if (container && data && Object.keys(data).length > 0) {
     var maxVal = Math.max(...Object.values(data));
     var html = '';
     for (var date in data) {
@@ -445,7 +446,7 @@ if (data && Object.keys(data).length > 0) {
         html += '<span style="color:white;font-size:0.7rem;">' + data[date] + '</span></div></div></div>';
     }
     container.innerHTML = html;
-} else {
+} else if (container) {
     container.innerHTML = '<p class="text-muted">No scheduled matches.</p>';
 }
 </script>

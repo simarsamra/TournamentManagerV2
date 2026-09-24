@@ -1,5 +1,4 @@
 """Standings, analytics, backups, notifications, search and public pages."""
-import json
 import os
 from collections import defaultdict
 
@@ -190,9 +189,15 @@ def analytics_view(request):
     label_map = _team_display_map(tournament, [row["team"].pk for row in standings])
     for row in standings:
         row["display_label"] = label_map.get(row["team"].pk, row["team"].name)
-    active_ids = set(
-        tournament.team_participations.filter(status="active").values_list("team_id", flat=True)
+    active_teams = list(
+        teams.filter(
+            participations__tournament=tournament,
+            participations__status="active",
+        ).distinct().order_by("name")
     )
+    for team in active_teams:
+        team.display_label = label_map.get(team.pk) or _team_display_label(tournament, team)
+    active_ids = {team.pk for team in active_teams}
     team_stats = [
         {
             "team": row["team"],
@@ -210,6 +215,13 @@ def analytics_view(request):
             -s["wins"], -s["win_rate"], s["losses"], s["display_label"].lower(),
         ))
     show_draws_column = any(s["draws"] for s in team_stats)
+    # Points Overview bar widths, relative to the leader; all zero when nobody
+    # has points yet (rather than leaning on widthratio's divide-by-zero).
+    max_points = max((row["points"] for row in standings), default=0)
+    for row in standings:
+        row["points_pct"] = (
+            min(100, max(0, round(row["points"] / max_points * 100))) if max_points > 0 else 0
+        )
     schedule_density = defaultdict(int)
     for m in matches.filter(scheduled_time__isnull=False):
         day = timezone.localtime(m.scheduled_time).strftime("%Y-%m-%d")
@@ -238,20 +250,12 @@ def analytics_view(request):
         "tournament": tournament, "can_manage": can_manage,
         "match_stats": match_stats, "court_stats": court_stats,
         "team_stats": team_stats, "show_draws_column": show_draws_column,
-        "schedule_density": json.dumps(schedule_density),
+        "schedule_density": schedule_density,
         "withdrawal_info": withdrawal_info, "recent_logs": recent_logs,
     }
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
         context["standings"] = standings
 
-    active_teams = list(
-        teams.filter(
-            participations__tournament=tournament,
-            participations__status="active",
-        ).distinct().order_by("name")
-    )
-    for team in active_teams:
-        team.display_label = _team_display_label(tournament, team)
 
     # --- Head-to-head matchup card ---
     h2h_team1 = None
@@ -443,11 +447,11 @@ def analytics_view(request):
             )[:SIMULATOR_MATCH_LIMIT]
         )
         if simulator_matches:
-            base_rows = calculate_standings(tournament)
             by_team_id = {}
-            for row in base_rows:
+            for row in standings:
+                # Copy: the simulator adjusts points and re-ranks, and the real
+                # rows are still shown in Points Overview.
                 row_copy = dict(row)
-                row_copy["display_label"] = _team_display_label(tournament, row["team"])
                 row_copy["point_change"] = 0
                 by_team_id[row["team"].pk] = row_copy
 

@@ -2,6 +2,7 @@
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from unittest import mock
 
 from core.models import (
     AuditLog, Court, Match, OrganizerProfile, Team, TeamMembership,
@@ -328,7 +329,8 @@ class PageScriptTests(TestCase):
         )
         self.client.force_login(organizer)
         response = self.client.get("/analytics/", {"tournament": tournament.pk})
-        self.assertEqual(response.content.decode().count("var data = "), 1)
+        # A-11 moved the chart data into a json_script element; count that.
+        self.assertEqual(response.content.decode().count('id="schedule-density-data"'), 1)
 
 
 class ThemeColourTests(TestCase):
@@ -439,3 +441,57 @@ class SimulatorTiebreakerTests(TestCase):
     def test_no_truncation_note_when_everything_fits(self):
         response = self.client.get("/analytics/", {"tournament": self.tournament.pk})
         self.assertNotContains(response, "Showing the next")
+
+
+class AnalyticsCleanupTests(TestCase):
+    """A-11: standings computed twice per request, Points Overview widths
+    relying on widthratio's divide-by-zero behaviour, and chart data passed
+    through |safe."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.teams = [Team.objects.create(name=n) for n in ("A", "B", "C")]
+        for team in self.teams:
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active"
+            )
+        self.client.force_login(self.organizer)
+
+    def _get(self):
+        return self.client.get("/analytics/", {"tournament": self.tournament.pk})
+
+    def test_standings_are_calculated_once(self):
+        a, b, _ = self.teams
+        Match.objects.create(
+            tournament=self.tournament, match_number=1, team1=a, team2=b, status="upcoming",
+        )
+        with mock.patch(
+            "core.views.reporting.calculate_standings", wraps=calculate_standings
+        ) as spy:
+            response = self._get()
+        self.assertTrue(response.context["simulator_matches"])
+        self.assertEqual(spy.call_count, 1)
+
+    def test_points_bars_are_zero_when_nobody_has_points(self):
+        widths = [row["points_pct"] for row in self._get().context["standings"]]
+        self.assertEqual(widths, [0, 0, 0])
+
+    def test_points_bars_scale_to_the_leader(self):
+        a, b, c = self.teams
+        for number, (t1, t2) in enumerate(((a, c), (b, c), (a, b)), start=1):
+            Match.objects.create(
+                tournament=self.tournament, match_number=number, team1=t1, team2=t2,
+                score_team1=1, score_team2=0, winner=t1, status="confirmed",
+            )
+        widths = {row["team"].pk: row["points_pct"] for row in self._get().context["standings"]}
+        self.assertEqual(widths, {a.pk: 100, b.pk: 50, c.pk: 0})
+
+    def test_schedule_density_is_passed_as_json_script(self):
+        content = self._get().content.decode()
+        self.assertIn('<script id="schedule-density-data" type="application/json">', content)
+        # No longer pasted inline as a JS literal through |safe.
+        self.assertNotIn("var data = {", content)
