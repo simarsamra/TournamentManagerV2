@@ -329,3 +329,31 @@ class PageScriptTests(TestCase):
         self.client.force_login(organizer)
         response = self.client.get("/analytics/", {"tournament": tournament.pk})
         self.assertEqual(response.content.decode().count("var data = "), 1)
+
+
+class ThemeColourTests(TestCase):
+    """A-6: bar tracks and form pills used hard-coded light colours, which
+    stayed pale on dark-theme cards."""
+
+    def test_no_hard_coded_light_colours_and_pills_are_labelled(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        a, b = (Team.objects.create(name=n) for n in ("A", "B"))
+        for team in (a, b):
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=tournament, status="active"
+            )
+        Match.objects.create(
+            tournament=tournament, match_number=1, team1=a, team2=b,
+            score_team1=2, score_team2=0, winner=a, status="confirmed",
+        )
+        self.client.force_login(organizer)
+        response = self.client.get(
+            "/analytics/", {"tournament": tournament.pk, "form_team": a.pk}
+        )
+        for colour in ("#e2e8f0", "#d1fae5", "#fecaca"):
+            self.assertNotContains(response, colour)
+        self.assertContains(response, 'class="form-pill is-win" aria-label="Win')

@@ -62,6 +62,16 @@ html[data-theme="dark"] .info-panel   { background: #1e293b; }
 html[data-theme="dark"] .info-success { background: #052e16; border-color: #166534; color: #bbf7d0; }
 html[data-theme="dark"] .info-warning { background: #1c1407; border-color: #92400e; color: #fcd34d; }
 
+/* Analytics bars and win/loss/draw form pills (theme-aware) */
+.bar-track { background: var(--border); border-radius: 4px; }
+.form-pill { width: 28px; height: 28px; border-radius: 50%; display: inline-flex;
+             align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; }
+.form-pill.is-win  { background: #d1fae5; color: #065f46; }
+.form-pill.is-loss { background: #fecaca; color: #991b1b; }
+.form-pill.is-draw { background: var(--border); color: var(--text-muted); }
+html[data-theme="dark"] .form-pill.is-win  { background: #064e3b; color: #a7f3d0; }
+html[data-theme="dark"] .form-pill.is-loss { background: #7f1d1d; color: #fecaca; }
+
 /* ── Emerald theme ────────────────────────────────── */
 html[data-theme="emerald"] {
     --primary: #059669;

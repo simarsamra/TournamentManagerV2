@@ -140,6 +140,10 @@ def standings_view(request):
 
 # -- Analytics --
 
+# Rolling-form pills: accessible name and theme-aware CSS class per result.
+_FORM_RESULT_LABELS = {"W": "Win", "L": "Loss", "D": "Draw"}
+_FORM_RESULT_CLASSES = {"W": "is-win", "L": "is-loss", "D": "is-draw"}
+
 @login_required
 def analytics_view(request):
     tournament = _get_tournament(request)
@@ -337,6 +341,8 @@ def analytics_view(request):
                 "match_number": m.match_number,
                 "opponent": _team_display_label(tournament, opponent) if opponent else "TBD",
                 "result": result,
+                "result_label": _FORM_RESULT_LABELS[result],
+                "result_class": _FORM_RESULT_CLASSES[result],
                 "sequence": idx,
                 "win_rate": round(wins / idx * 100, 1),
             })

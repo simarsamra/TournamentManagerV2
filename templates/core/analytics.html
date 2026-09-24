@@ -54,7 +54,7 @@
                     <td>{{ cs.total_matches }}</td>
                     <td>{{ cs.confirmed_matches }}</td>
                     <td>
-                        <div style="background:#e2e8f0;border-radius:4px;height:20px;width:100%;position:relative;">
+                        <div class="bar-track" style="height:20px;width:100%;position:relative;">
                             <div style="background:var(--primary);border-radius:4px;height:20px;width:{{ cs.utilization }}%;"></div>
                         </div>
                         {{ cs.utilization }}%
@@ -83,7 +83,7 @@
             <td>{{ ts.losses }}</td>
             <td>{{ ts.win_rate }}%</td>
             <td>
-                <div style="background:#e2e8f0;border-radius:4px;height:16px;width:120px;display:inline-block;position:relative;">
+                <div class="bar-track" style="height:16px;width:120px;display:inline-block;position:relative;">
                     <div style="background:var(--success);border-radius:4px;height:16px;width:{{ ts.win_rate }}%;"></div>
                 </div>
             </td>
@@ -165,7 +165,7 @@
             {% if rolling_form_rows %}
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.65rem;">
                 {% for row in rolling_form_rows %}
-                <span title="Match #{{ row.match_number }} vs {{ row.opponent }}" style="width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;{% if row.result == 'W' %}background:#d1fae5;color:#065f46;{% elif row.result == 'L' %}background:#fecaca;color:#991b1b;{% else %}background:#e2e8f0;color:#475569;{% endif %}">{{ row.result }}</span>
+                <span class="form-pill {{ row.result_class }}" aria-label="{{ row.result_label }}, match #{{ row.match_number }} vs {{ row.opponent }}" title="{{ row.result_label }} — match #{{ row.match_number }} vs {{ row.opponent }}">{{ row.result }}</span>
                 {% endfor %}
             </div>
             <table>
@@ -303,7 +303,7 @@
         {% for s in standings %}
         <div class="d-flex align-center gap-1 mb-1">
             <span style="width:120px;font-size:0.85rem;">{{ s.display_label|default:s.team.name }}</span>
-            <div style="flex:1;background:#e2e8f0;border-radius:4px;height:24px;position:relative;">
+            <div class="bar-track" style="flex:1;height:24px;position:relative;">
                 {% widthratio s.points standings.0.points 100 as pct %}
                 <div style="background:var(--primary);border-radius:4px;height:24px;width:{% widthratio s.points standings.0.points 100 %}%;display:flex;align-items:center;padding-left:0.5rem;">
                     <span style="color:white;font-size:0.75rem;font-weight:600;">{{ s.points }} pts</span>
@@ -437,7 +437,7 @@ if (data && Object.keys(data).length > 0) {
         var pct = (data[date] / maxVal * 100);
         html += '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:4px;">';
         html += '<span style="width:90px;font-size:0.8rem;text-align:right;">' + date + '</span>';
-        html += '<div style="flex:1;background:#e2e8f0;border-radius:3px;height:18px;">';
+        html += '<div class="bar-track" style="flex:1;border-radius:3px;height:18px;">';
         html += '<div style="background:var(--info);border-radius:3px;height:18px;width:' + pct + '%;display:flex;align-items:center;padding-left:6px;">';
         html += '<span style="color:white;font-size:0.7rem;">' + data[date] + '</span></div></div></div>';
     }
