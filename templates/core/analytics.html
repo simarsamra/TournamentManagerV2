@@ -260,7 +260,7 @@
                                     <option value="">No change</option>
                                     <option value="team1" {% if m.selected_outcome == "team1" %}selected{% endif %}>{{ m.team1_label|default:m.team1.name }} wins</option>
                                     <option value="team2" {% if m.selected_outcome == "team2" %}selected{% endif %}>{{ m.team2_label|default:m.team2.name }} wins</option>
-                                    <option value="draw" {% if m.selected_outcome == "draw" %}selected{% endif %}>Draw</option>
+                                    {% if m.draw_allowed %}<option value="draw" {% if m.selected_outcome == "draw" %}selected{% endif %}>Draw</option>{% endif %}
                                 </select>
                             </td>
                         </tr>

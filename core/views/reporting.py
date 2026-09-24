@@ -415,12 +415,17 @@ def analytics_view(request):
     simulated_standings = None
     simulator_has_choices = False
     if simulator_enabled:
+        candidates = matches.filter(
+            status="upcoming",
+            team1__isnull=False,
+            team2__isnull=False,
+        )
+        if tournament.format == "hybrid":
+            # Only group-stage matches earn standings points; knockout matches
+            # carry no group letter.
+            candidates = candidates.exclude(group="")
         simulator_matches = list(
-            matches.filter(
-                status="upcoming",
-                team1__isnull=False,
-                team2__isnull=False,
-            ).select_related("team1", "team2").order_by("scheduled_time", "match_number")[:8]
+            candidates.select_related("team1", "team2").order_by("scheduled_time", "match_number")[:8]
         )
         if simulator_matches:
             base_rows = calculate_standings(tournament)
@@ -435,8 +440,14 @@ def analytics_view(request):
                 m.team1_label = _team_display_label(tournament, m.team1)
                 m.team2_label = _team_display_label(tournament, m.team2)
                 outcome = request.GET.get(f"sim_{m.pk}")
+                # A draw is only possible in a group / round-robin match. Checked
+                # here as well as in the dropdown so a forged value is ignored.
+                m.draw_allowed = tournament.format != "hybrid" or bool(m.group)
+                allowed = ("team1", "team2", "draw") if m.draw_allowed else ("team1", "team2")
+                if outcome not in allowed:
+                    outcome = None
                 m.selected_outcome = outcome or ""
-                if outcome not in ("team1", "team2", "draw"):
+                if outcome is None:
                     continue
                 simulator_has_choices = True
                 if m.team1_id not in by_team_id or m.team2_id not in by_team_id:

@@ -264,3 +264,54 @@ class IndividualModeLabelTests(TestCase):
             self.assertNotContains(
                 response, reverse("team_detail", kwargs={"pk": registration.shadow_team.pk})
             )
+
+
+class SimulatorHybridTests(TestCase):
+    """A-4: the what-if simulator offered every upcoming match, including a
+    hybrid tournament's knockout matches, and applied a "draw" pick to them
+    (both teams +points_per_draw), though a knockout match cannot be drawn."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="Hybrid", format="hybrid", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.a, self.b = (Team.objects.create(name=n) for n in ("Aces", "Bolts"))
+        for team in (self.a, self.b):
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active", group="A"
+            )
+        self.group_match = Match.objects.create(
+            tournament=self.tournament, match_number=1, team1=self.a, team2=self.b,
+            status="upcoming", group="A",
+        )
+        self.knockout_match = Match.objects.create(
+            tournament=self.tournament, match_number=2, team1=self.a, team2=self.b,
+            status="upcoming", group="",
+        )
+        self.client.force_login(self.organizer)
+
+    def _get(self, **params):
+        return self.client.get("/analytics/", {"tournament": self.tournament.pk, **params})
+
+    def test_only_group_matches_are_offered(self):
+        offered = [m.pk for m in self._get().context["simulator_matches"]]
+        self.assertEqual(offered, [self.group_match.pk])
+        self.assertTrue(all(m.draw_allowed for m in self._get().context["simulator_matches"]))
+
+    def test_forged_knockout_draw_changes_nothing(self):
+        response = self._get(**{f"sim_{self.knockout_match.pk}": "draw"})
+        self.assertFalse(response.context["simulator_has_choices"])
+        self.assertEqual(
+            [row["point_change"] for row in response.context["simulated_standings"]], [0, 0]
+        )
+
+    def test_group_draw_still_applies(self):
+        response = self._get(**{f"sim_{self.group_match.pk}": "draw"})
+        changes = {row["team"].pk: row["point_change"] for row in response.context["simulated_standings"]}
+        self.assertEqual(changes, {
+            self.a.pk: self.tournament.points_per_draw,
+            self.b.pk: self.tournament.points_per_draw,
+        })
+
