@@ -1,0 +1,47 @@
+<div class="card" id="analytics-form">
+    <div class="card-header">Rolling Form Trend</div>
+    <div class="card-body">
+        {% if analytics_teams %}
+        <form method="get" action="{% url 'analytics' %}" hx-get="{% url 'analytics' %}" hx-target="#analytics-form" hx-swap="outerHTML" hx-push-url="true" class="d-flex gap-1 mb-1" style="flex-wrap:wrap;">
+            {% include "core/partials/analytics_hidden_state.html" with widget="form" fields=analytics_hidden.form %}
+            <select name="form_team" class="form-control" style="max-width:220px;">
+                {% for t in analytics_teams %}
+                <option value="{{ t.pk }}" {% if form_team and form_team.pk == t.pk %}selected{% endif %}>{{ t.display_label|default:t.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="form_window" class="form-control" style="max-width:120px;">
+                <option value="3" {% if form_window == 3 %}selected{% endif %}>Last 3</option>
+                <option value="5" {% if form_window == 5 %}selected{% endif %}>Last 5</option>
+                <option value="8" {% if form_window == 8 %}selected{% endif %}>Last 8</option>
+                <option value="10" {% if form_window == 10 %}selected{% endif %}>Last 10</option>
+                <option value="15" {% if form_window == 15 %}selected{% endif %}>Last 15</option>
+            </select>
+            <button type="submit" class="btn btn-outline btn-sm">Update</button>
+        </form>
+        {% if rolling_form_rows %}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.65rem;">
+            {% for row in rolling_form_rows %}
+            <span class="form-pill {{ row.result_class }}" aria-label="{{ row.result_label }}, match #{{ row.match_number }} vs {{ row.opponent }}" title="{{ row.result_label }} — match #{{ row.match_number }} vs {{ row.opponent }}">{{ row.result }}</span>
+            {% endfor %}
+        </div>
+        <table>
+            <thead><tr><th>#</th><th>Opponent</th><th>Result</th><th>Rolling Win %</th></tr></thead>
+            <tbody>
+                {% for row in rolling_form_rows %}
+                <tr>
+                    <td>{{ row.match_number }}</td>
+                    <td>{{ row.opponent }}</td>
+                    <td>{{ row.result }}</td>
+                    <td>{{ row.win_rate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No completed matches for trend data.</p>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">No active teams available.</p>
+        {% endif %}
+    </div>
+</div>

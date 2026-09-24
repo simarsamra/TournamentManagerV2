@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 
 from core.models import OrganizerProfile, Tournament
+from core.views.helpers import LOGIN_ATTEMPTS_PER_IP
 
 LOCMEM = {
     "default": {
@@ -199,6 +200,60 @@ class LoginThrottleTests(TestCase):
         )
         self.assertIn("_auth_user_id", self.client.session)
 
+    def test_forwarded_header_cannot_bypass_the_ip_limit_without_a_trusted_proxy(self):
+        """TRUSTED_PROXY_COUNT defaults to 0: an attacker must not be able to
+        dodge the IP throttle by sending a new X-Forwarded-For on every
+        request. Without a real proxy in front, the header is just ignored --
+        everything lands on REMOTE_ADDR's single counter."""
+        # Blank username: only the IP counter is touched, not a per-account
+        # one, so this isolates the IP limit rather than the account limit
+        # that's already covered above.
+        for i in range(LOGIN_ATTEMPTS_PER_IP):
+            self.client.post(
+                "/login/",
+                {"username": "", "password": "wrong"},
+                HTTP_X_FORWARDED_FOR=f"203.0.113.{i}",
+            )
+
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.250",
+        )
+
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @override_settings(TRUSTED_PROXY_COUNT=1)
+    def test_ip_counter_is_keyed_on_the_forwarded_client_behind_a_trusted_proxy(self):
+        """Behind a real, configured proxy, the counter must follow the
+        client X-Forwarded-For names, not the proxy's own REMOTE_ADDR --
+        otherwise every visitor shares one site-wide budget (the bug this
+        test pins: login_view used to read REMOTE_ADDR directly instead of
+        the proxy-aware core.audit._client_ip)."""
+        for i in range(LOGIN_ATTEMPTS_PER_IP):
+            self.client.post(
+                "/login/",
+                {"username": "", "password": "wrong"},
+                HTTP_X_FORWARDED_FOR="203.0.113.1",
+            )
+
+        # That client is now IP-throttled...
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.1",
+        )
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+        # ...but a second client behind the same proxy, forwarding a
+        # different address, has its own, untouched budget.
+        self.client.post(
+            "/login/",
+            {"username": "target", "password": "Regression-Pass-1"},
+            HTTP_X_FORWARDED_FOR="203.0.113.2",
+        )
+        self.assertIn("_auth_user_id", self.client.session)
+
 
 class TestOnlyPasswordHasherTests(TestCase):
     """settings.py swaps in MD5 for the test suite, because PBKDF2 was ~95% of
@@ -269,3 +324,48 @@ class TestOnlyPasswordHasherTests(TestCase):
             namespace["PASSWORD_HASHERS"],
             ["django.contrib.auth.hashers.MD5PasswordHasher"],
         )
+
+
+@override_settings(CACHES=LOCMEM)
+class AccountRegistrationThrottleTests(TestCase):
+    """account_register_view has no @login_required -- it's the one genuinely
+    open write endpoint (F-4 step 3). limit=5, window=3600 (per hour)."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def _register(self, username, ip="203.0.113.10"):
+        return self.client.post(
+            "/register/",
+            {
+                "full_name": "Throttle Test",
+                "username": username,
+                "password": "Regression-Pass-1",
+                "password_confirm": "Regression-Pass-1",
+            },
+            REMOTE_ADDR=ip,
+        )
+
+    def test_registration_is_rate_limited_per_ip(self):
+        for i in range(5):
+            self._register(f"throttleuser{i}")
+            # Registering logs the new account in; log out so the next
+            # attempt reaches the throttle/form again instead of being
+            # short-circuited by the "already authenticated" redirect.
+            self.client.logout()
+
+        self._register("throttleuser_blocked")
+
+        self.assertFalse(User.objects.filter(username="throttleuser_blocked").exists())
+        self.assertEqual(User.objects.filter(username__startswith="throttleuser").count(), 5)
+
+    def test_a_different_ip_has_its_own_budget(self):
+        for i in range(5):
+            self._register(f"budgetuser{i}", ip="203.0.113.10")
+            self.client.logout()
+
+        self._register("budgetuser_from_elsewhere", ip="203.0.113.20")
+
+        self.assertTrue(User.objects.filter(username="budgetuser_from_elsewhere").exists())

@@ -1,0 +1,3 @@
+{% comment %}The other analytics widgets' current values, so this form's submit keeps them (A-12).
+With oob, it's an HTMX out-of-band refresh of another form's block after one card was swapped.{% endcomment %}
+<span id="analytics-hidden-{{ widget }}" class="analytics-hidden-state"{% if oob %} hx-swap-oob="true"{% endif %}>{% for name, value in fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}</span>

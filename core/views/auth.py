@@ -1,5 +1,4 @@
 """Sign-in, registration, profile and the dashboard."""
-"""Core views for tournament management."""
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -12,13 +11,12 @@ from ..models import (
     Match,
     NoShowReport,
     RescheduleRequest,
-    TeamTournamentCourtPreference,
     TeamTournamentParticipation,
     Tournament,
 )
 from ..forms import AccountRegistrationForm, ProfileUpdateForm, SelfPasswordChangeForm
 from ..standings import calculate_standings, get_third_place_match
-from ..audit import log_action
+from ..audit import log_action, _client_ip
 from ..services.enrollment import active_participant_count
 
 from .helpers import (
@@ -41,6 +39,7 @@ from .helpers import (
     _throttle_clear,
     _throttle_get,
     _tournament_context,
+    throttled,
 )
 
 
@@ -51,7 +50,7 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
     if request.method == "POST":
-        ip = request.META.get("REMOTE_ADDR", "unknown")
+        ip = _client_ip(request) or "unknown"
         username = request.POST.get("username", "").strip()
         # Two counters: one per IP (blunt) and one per account, so spraying one
         # password across many usernames from a single IP still trips a limit,
@@ -110,6 +109,7 @@ def toggle_view_preference(request):
     return redirect("dashboard")
 
 
+@throttled("account_register", limit=5, window=3600)
 def account_register_view(request):
     """Create a user account only — no team created here."""
     if request.user.is_authenticated:

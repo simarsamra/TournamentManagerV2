@@ -21,20 +21,26 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 3.11 is the version the suite is verified against; requirements.txt
       # pins Django to the 5.2 LTS series.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+
+      - name: Lint
+        run: ruff check .
 
       - name: Django system checks
         run: python manage.py check
@@ -45,7 +51,12 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
 
       - name: Tests
-        run: python manage.py test --verbosity=2
+        run: coverage run manage.py test --verbosity=2
+
+      # Informational only — does not fail the build. See FOLLOWUP_PLAN.md F-2
+      # for the baseline this is measured against and why it isn't gated yet.
+      - name: Coverage
+        run: coverage report
 
       # Runs the checks that only apply outside DEBUG: cookie flags, HSTS,
       # SSL redirect, and the guard that refuses to boot on the committed
@@ -90,7 +101,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U tm_user -d tournament_manager"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -104,20 +115,21 @@ jobs:
       DJANGO_DB_PORT: "5432"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: |
             requirements.txt
             requirements-postgres.txt
+            constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-postgres.txt
+          pip install -r requirements.txt -r requirements-postgres.txt -c constraints.txt
 
       - name: Migrations apply to an empty PostgreSQL database
         run: python manage.py migrate --no-input

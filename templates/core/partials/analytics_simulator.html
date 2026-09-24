@@ -1,0 +1,55 @@
+<div class="card" id="analytics-sim">
+    <div class="card-header">What-If Standings Simulator</div>
+    <div class="card-body">
+        {% if simulator_enabled %}
+        {% if simulator_matches %}
+        {% if simulator_total > simulator_limit %}
+        <p class="text-muted" style="font-size:0.85rem;margin-bottom:0.5rem;">Showing the next {{ simulator_limit }} of {{ simulator_total }} upcoming matches.</p>
+        {% endif %}
+        <form method="get" action="{% url 'analytics' %}" hx-get="{% url 'analytics' %}" hx-target="#analytics-sim" hx-swap="outerHTML" hx-push-url="true">
+            {% include "core/partials/analytics_hidden_state.html" with widget="sim" fields=analytics_hidden.sim %}
+            <div class="table-container">
+            <table>
+                <thead><tr><th>Match</th><th>Pick winner</th></tr></thead>
+                <tbody>
+                    {% for m in simulator_matches %}
+                    <tr>
+                        <td>#{{ m.match_number }} — {{ m.team1_label|default:m.team1.name }} vs {{ m.team2_label|default:m.team2.name }}</td>
+                        <td>
+                            <select name="sim_{{ m.pk }}" class="form-control" style="max-width:220px;">
+                                <option value="">No change</option>
+                                <option value="team1" {% if m.selected_outcome == "team1" %}selected{% endif %}>{{ m.team1_label|default:m.team1.name }} wins</option>
+                                <option value="team2" {% if m.selected_outcome == "team2" %}selected{% endif %}>{{ m.team2_label|default:m.team2.name }} wins</option>
+                                {% if m.draw_allowed %}<option value="draw" {% if m.selected_outcome == "draw" %}selected{% endif %}>Draw</option>{% endif %}
+                            </select>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm mt-1">Simulate</button>
+        </form>
+        {% if simulated_standings %}
+        <table class="mt-1">
+            <thead><tr><th>Rank</th><th>Team</th><th>Points</th><th>Δ</th></tr></thead>
+            <tbody>
+                {% for row in simulated_standings %}
+                <tr>
+                    <td>{{ row.rank }}</td>
+                    <td>{{ row.display_label|default:row.team.name }}</td>
+                    <td>{{ row.points }}</td>
+                    <td>{% if row.point_change > 0 %}<span style="color:var(--success);">+{{ row.point_change }}</span>{% elif row.point_change < 0 %}<span style="color:var(--danger);">{{ row.point_change }}</span>{% else %}0{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">No upcoming matches to simulate.</p>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">What-if simulation is available for round-robin style formats.</p>
+        {% endif %}
+    </div>
+</div>

@@ -1,6 +1,4 @@
 """Site-administrator tools: settings, user management and impersonation."""
-"""Core views for tournament management."""
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -106,8 +104,7 @@ def set_user_organizer(request, user_pk):
         if organizer_count < 1:
             messages.error(request, "At least one organizer account is required.")
             return redirect("settings")
-    
-    from ..models import OrganizerProfile
+
     org_profile, _ = OrganizerProfile.objects.get_or_create(user=target)
     org_profile.verified = make_organizer
     org_profile.save(update_fields=["verified"])
@@ -134,8 +131,7 @@ def delete_user_account(request, user_pk):
     if target.is_superuser:
         messages.error(request, "Superuser accounts cannot be deleted here.")
         return redirect("settings")
-    
-    from ..models import OrganizerProfile
+
     if hasattr(target, 'organizer_profile') and target.organizer_profile.verified:
         organizer_count = _organizer_count(exclude_user_id=target.pk)
         if organizer_count < 1:

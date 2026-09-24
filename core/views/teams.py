@@ -1,5 +1,4 @@
 """Teams, rosters, invitations and captaincy."""
-"""Core views for tournament management."""
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -50,6 +49,7 @@ from .helpers import (
     _roster_conflicts_for_joining,
     _team_display_label,
     _tournament_context,
+    throttled,
 )
 
 
@@ -899,6 +899,7 @@ def delete_team_view(request, pk):
 # =============================================================================
 
 @login_required
+@throttled("team_invite", limit=20, window=3600)
 def team_invite_view(request, pk):
     """Captain invites a user to the team (2.2)."""
     team = get_object_or_404(Team, pk=pk)

@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
-from .models import Tournament, Court, Team, Match, RescheduleRequest, TimeSlot, Player, CourtAvailability, OpenSlot
+from .models import Tournament, Court, CourtAvailability, OpenSlot
 
 
 def password_strength_errors(password, user=None):

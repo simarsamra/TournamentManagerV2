@@ -4,14 +4,14 @@ Authorisation predicates, tournament/team lookup, match finalisation and
 the small rendering utilities. These are imported by every module in this
 package and must not import from them in return.
 """
-"""Core views for tournament management."""
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import wraps
 
 from django.core.cache import cache as django_cache
 from django.contrib import messages
 from django.contrib.auth.models import User
-from django.db import models as db_models, transaction
+from django.db import models as db_models
 from django.db.models import Count, Q
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -47,7 +47,7 @@ from ..standings import (
     advance_winner,
     check_group_stage_complete,
 )
-from ..audit import log_action
+from ..audit import log_action, _client_ip
 from ..services.enrollment import active_participant_count, is_registration_capacity_reached
 
 SEARCH_RESULT_LIMIT = 30
@@ -125,6 +125,7 @@ __all__ = [
     "_throttle_get",
     "_tournament_context",
     "_validate_tournament_ready",
+    "throttled",
 ]
 
 def _throttle_get(key):
@@ -140,17 +141,17 @@ def _throttle_get(key):
         return 0
 
 
-def _throttle_bump(key):
+def _throttle_bump(key, window=LOGIN_ATTEMPT_WINDOW_SECONDS):
     """Increment a counter on a fixed window, ignoring cache failures."""
     try:
         if django_cache.get(key) is None:
-            django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+            django_cache.set(key, 1, timeout=window)
         else:
             # incr() preserves the existing TTL, so the window stays fixed
             # rather than sliding forward on every failed attempt.
             django_cache.incr(key)
     except ValueError:
-        django_cache.set(key, 1, timeout=LOGIN_ATTEMPT_WINDOW_SECONDS)
+        django_cache.set(key, 1, timeout=window)
     except Exception:
         pass
 
@@ -161,6 +162,48 @@ def _throttle_clear(*keys):
             django_cache.delete(key)
     except Exception:
         pass
+
+
+def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS, redirect_to=None):
+    """Limit POSTs to `limit` per `window` seconds per client IP.
+
+    Only POST is counted -- a GET that just loads the form passes through
+    untouched. Every POST counts against the limit whether it succeeds or
+    fails, unlike the login throttle (which only counts failures): this is
+    guarding against write volume, not brute-forcing a credential.
+
+    Fails open: a cache outage degrades throttling rather than taking the
+    endpoint down. Same trade-off as the login throttle, for the same
+    reason -- see _throttle_get's docstring.
+
+    `scope` namespaces the cache key so two decorated views never share a
+    counter by accident.
+
+    `redirect_to(request, *args, **kwargs) -> url` picks where a blocked
+    request lands. Defaults to the view's own path, which only works for a
+    view that renders something on GET too (the login/register/invite
+    pattern: same URL handles both methods). A POST-only view -- decorated
+    with @require_POST, nothing to GET -- must pass one explicitly, or the
+    default sends the browser to a redirect that 405s.
+    """
+
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(request, *args, **kwargs):
+            if request.method == "POST":
+                key = f"throttle_{scope}_{_client_ip(request) or 'unknown'}"
+                if _throttle_get(key) >= limit:
+                    messages.error(
+                        request, "Too many requests. Please wait a while before trying again."
+                    )
+                    target = redirect_to(request, *args, **kwargs) if redirect_to else request.path
+                    return redirect(target)
+                _throttle_bump(key, window=window)
+            return view_func(request, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
 
 
 
@@ -681,7 +724,6 @@ def _has_dual_roles(user):
 
 
 def _organizer_count(exclude_user_id=None):
-    from ..models import OrganizerProfile
     qs = OrganizerProfile.objects.filter(verified=True)
     if exclude_user_id is not None:
         qs = qs.exclude(user_id=exclude_user_id)
@@ -1074,7 +1116,6 @@ def _validate_tournament_ready(tournament):
     if not tournament.courts.filter(is_available=True).exists():
         errors.append("Add at least one available court before starting.")
     elif tournament.registration_mode != "individual":
-        from ..models import TeamTournamentCourtPreference
         missing_preferences = [
             team.name for team in active_teams
             if not TeamTournamentCourtPreference.objects.filter(

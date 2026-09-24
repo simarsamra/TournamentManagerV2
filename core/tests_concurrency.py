@@ -12,7 +12,6 @@ PostgreSQL removes SQLite's accidental protection.
 """
 import threading
 
-from django.contrib.auth.models import User
 from django.db import connections
 from django.test import TransactionTestCase, tag
 from django.utils import timezone

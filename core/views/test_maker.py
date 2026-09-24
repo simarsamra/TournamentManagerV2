@@ -1,5 +1,4 @@
 """Test Maker: a development-only data generator. Disabled outside DEBUG."""
-"""Core views for tournament management."""
 import random
 from datetime import timedelta
 

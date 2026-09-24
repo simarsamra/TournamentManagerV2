@@ -39,8 +39,12 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 ### 2. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 ```
+
+`constraints.txt` pins the exact versions this project is tested against;
+`requirements.txt`'s own ranges are the wider compatibility window. See
+[Upgrading dependencies](#upgrading-dependencies) to move that pin forward.
 
 ### 3. Run migrations
 
@@ -143,26 +147,29 @@ overwrites that header.
 ## Deployment
 
 ```bash
-# 1. A real secret key
+# 1. Install through the pinned versions this project is tested against
+pip install -r requirements.txt -c constraints.txt
+
+# 2. A real secret key
 export DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
 
-# 2. Leave debug mode
+# 3. Leave debug mode
 export DJANGO_DEBUG=False
 export DJANGO_ALLOWED_HOSTS="tournaments.example.com"
 export DJANGO_CSRF_TRUSTED_ORIGINS="https://tournaments.example.com"
 
-# 3. Somewhere to put backups, outside the checkout
+# 4. Somewhere to put backups, outside the checkout
 export DJANGO_BACKUP_DIR=/var/lib/tournament-manager/backups
 
-# 4. Schema, cache table and static files
+# 5. Schema, cache table and static files
 python manage.py migrate
 python manage.py createcachetable          # required: DatabaseCache is the non-debug default
 python manage.py collectstatic --noinput
 
-# 5. Confirm the configuration
+# 6. Confirm the configuration
 python manage.py check --deploy
 
-# 6. Serve through a WSGI server behind a reverse proxy
+# 7. Serve through a WSGI server behind a reverse proxy
 gunicorn tournament_manager.wsgi:application --bind 127.0.0.1:8000
 ```
 
@@ -179,13 +186,31 @@ Notes:
   See [Running on PostgreSQL](#running-on-postgresql).
 - `manage.py runserver` is never appropriate for a deployment.
 
+### Upgrading dependencies
+
+`requirements.txt` and `requirements-postgres.txt` declare a compatibility
+range (currently the Django 5.2 LTS series); `constraints.txt` pins the exact
+versions CI and this deployment recipe actually install. Moving that pin
+forward is a deliberate, reviewable step, not something that happens by
+installing on a different day:
+
+```bash
+python -m venv /tmp/upgrade-venv
+/tmp/upgrade-venv/bin/pip install -r requirements.txt -r requirements-postgres.txt
+/tmp/upgrade-venv/bin/pip freeze --exclude-editable > constraints.txt
+```
+
+Widen the range in `requirements.txt` (or `requirements-postgres.txt`) first
+if the new version falls outside it, then commit the regenerated
+`constraints.txt` and let CI validate the result before merging.
+
 ## Running on PostgreSQL
 
 SQLite is the default and needs no configuration. PostgreSQL is what a
 deployment with more than one concurrent user wants.
 
 ```bash
-pip install -r requirements.txt -r requirements-postgres.txt
+pip install -r requirements.txt -r requirements-postgres.txt -c constraints.txt
 
 export DJANGO_DB_ENGINE=postgresql
 export DJANGO_DB_NAME=tournament_manager
@@ -400,13 +425,13 @@ core/
 	admin.py, admin_config.py
 	services/            enrollment
 	templatetags/        core_extras
-	management/commands/ backfill and integrity commands
+	management/commands/ seed_demo, backfill and integrity commands
 	migrations/
 	tests*.py            the test suite
 templates/core/          templates, with partials/ for HTMX fragments
 static/
 docs/                    reference-workflows.txt
-scripts/                 ad-hoc diagnostics and seeding (see scripts/README.md)
+scripts/                 fixtures/ sample data only (see scripts/README.md)
 tournament_manager/      settings, root URLconf, WSGI/ASGI
 manage.py
 requirements.txt
@@ -453,4 +478,5 @@ requirements.txt
   organizer/team view toggle.
 - [`docs/reference-workflows.txt`](docs/reference-workflows.txt) — the workflow
   specification the app is built against.
-- [`scripts/README.md`](scripts/README.md) — the ad-hoc scripts.
+- [`scripts/README.md`](scripts/README.md) — where the old ad-hoc scripts
+  went (deleted, converted to tests, or promoted to `manage.py seed_demo`).

@@ -165,11 +165,12 @@ OrganizerProfile.objects.update_or_create(user=user, defaults={"verified": True}
 Verified organizer status can also be granted through the Settings page by an
 existing site admin.
 
-`scripts/promote_t2p1.py` does the same thing the legacy way — it sets
-`is_staff` on the hardcoded user `t2p1`. It still works, because `_is_organizer`
-accepts `is_staff`, but it grants Django admin access as a side effect and is
-kept only for reference. `scripts/verify_dual_role_toggle.py` prints the
-detection result for existing users.
+Setting `is_staff` directly does the same thing the legacy way —
+`_is_organizer` accepts `is_staff` too — but it grants Django admin access as
+a side effect, so prefer `OrganizerProfile` above. (The scripts that used to
+demonstrate this, `scripts/promote_t2p1.py` and
+`scripts/verify_dual_role_toggle.py`, were removed in FOLLOWUP_PLAN.md F-6;
+`core/tests_dual_role.py` below covers the same ground.)
 
 ## Coverage
 
