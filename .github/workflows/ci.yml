@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # 3.11 is the version the suite is verified against; requirements.txt
       # pins Django to the 5.2 LTS series.
@@ -115,7 +115,7 @@ jobs:
       DJANGO_DB_PORT: "5432"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
