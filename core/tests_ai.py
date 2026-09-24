@@ -465,3 +465,25 @@ class AIJobQueueTests(TestCase):
     def test_worker_refuses_to_run_while_disabled(self):
         with self.assertRaises(CommandError):
             call_command("ai_worker", "--once", stdout=StringIO())
+
+
+class AIWorkerConnectionTests(TestCase):
+    """The worker recycles DB connections between jobs (a long-running process
+    mustn't outlive CONN_MAX_AGE), but never inside a transaction: in a test
+    that closed the TestCase's own connection on PostgreSQL ("connection
+    already closed" for every later test). SQLite never showed it, because
+    Django doesn't close an in-memory database."""
+
+    @override_settings(AI_ANALYTICS_ENABLED=True)
+    def test_worker_does_not_close_connections_inside_a_transaction(self):
+        with mock.patch("core.management.commands.ai_worker.close_old_connections") as close:
+            call_command("ai_worker", "--once", stdout=StringIO())
+        close.assert_not_called()
+
+    @override_settings(AI_ANALYTICS_ENABLED=True)
+    def test_worker_recycles_connections_outside_a_transaction(self):
+        with mock.patch("core.management.commands.ai_worker.close_old_connections") as close, \
+                mock.patch("core.management.commands.ai_worker.connection") as conn:
+            conn.in_atomic_block = False
+            call_command("ai_worker", "--once", stdout=StringIO())
+        close.assert_called_once()

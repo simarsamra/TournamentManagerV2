@@ -10,7 +10,7 @@ import threading
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 
 from core.ai import jobs
 
@@ -35,7 +35,11 @@ class Command(BaseCommand):
         self.stdout.write(f"ai_worker: model {settings.OLLAMA_MODEL} at {settings.OLLAMA_URL}")
         while not stop.is_set():
             # A long-running process must not hold connections past CONN_MAX_AGE.
-            close_old_connections()
+            # Never inside a transaction (only happens under TestCase): Django
+            # would see the non-autocommit connection as unusable and close it,
+            # as its own test client avoids doing for requests.
+            if not connection.in_atomic_block:
+                close_old_connections()
             jobs.reap_stale()
             job = jobs.claim_next()
             if job is None:
