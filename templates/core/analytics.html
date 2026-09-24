@@ -41,12 +41,12 @@
         </div>
     </div>
 
-    <!-- Court Utilization -->
+    <!-- Court Progress -->
     <div class="card">
-        <div class="card-header">Court Utilization</div>
+        <div class="card-header">Court Progress</div>
         <div class="card-body">
             <table>
-                <thead><tr><th>Court</th><th>Total</th><th>Confirmed</th><th>Utilization</th></tr></thead>
+                <thead><tr><th>Court</th><th>Total</th><th>Confirmed</th><th>Completed</th></tr></thead>
                 <tbody>
                 {% for cs in court_stats %}
                 <tr>
@@ -55,9 +55,9 @@
                     <td>{{ cs.confirmed_matches }}</td>
                     <td>
                         <div class="bar-track" style="height:20px;width:100%;position:relative;">
-                            <div style="background:var(--primary);border-radius:4px;height:20px;width:{{ cs.utilization }}%;"></div>
+                            <div style="background:var(--primary);border-radius:4px;height:20px;width:{{ cs.completion_pct }}%;"></div>
                         </div>
-                        {{ cs.utilization }}%
+                        {{ cs.completion_pct }}%
                     </td>
                 </tr>
                 {% endfor %}

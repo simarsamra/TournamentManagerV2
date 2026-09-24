@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from core.models import (
-    AuditLog, Match, OrganizerProfile, Team, TeamMembership,
+    AuditLog, Court, Match, OrganizerProfile, Team, TeamMembership,
     TeamTournamentParticipation, Tournament, TournamentIndividualRegistration,
 )
 from core.standings import calculate_standings
@@ -357,3 +357,27 @@ class ThemeColourTests(TestCase):
         for colour in ("#e2e8f0", "#d1fae5", "#fecaca"):
             self.assertNotContains(response, colour)
         self.assertContains(response, 'class="form-pill is-win" aria-label="Win')
+
+
+class CourtProgressTests(TestCase):
+    """A-9: "Court Utilization" was confirmed / total scheduled matches -- the
+    share played, not how busy the court is. Renamed to Court Progress."""
+
+    def test_court_progress_is_share_of_scheduled_matches_played(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        court = Court.objects.create(tournament=tournament, name="Court 1")
+        a, b = (Team.objects.create(name=n) for n in ("A", "B"))
+        for number, status in enumerate(("confirmed", "upcoming", "upcoming", "upcoming"), start=1):
+            Match.objects.create(
+                tournament=tournament, match_number=number, team1=a, team2=b,
+                court=court, status=status,
+            )
+        self.client.force_login(organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertEqual(response.context["court_stats"][0]["completion_pct"], 25.0)
+        self.assertContains(response, "Court Progress")
+        self.assertNotContains(response, "Utilization")

@@ -175,7 +175,8 @@ def analytics_view(request):
         confirmed = matches.filter(court=court, status="confirmed").count()
         court_stats.append({
             "court": court, "total_matches": total, "confirmed_matches": confirmed,
-            "utilization": round(confirmed / total * 100, 1) if total > 0 else 0,
+            # Share of this court's scheduled matches already played.
+            "completion_pct": round(confirmed / total * 100, 1) if total > 0 else 0,
         })
     # Built from calculate_standings so draws and forfeits are counted the same
     # way as on the standings page (this used to set losses = played - wins).
