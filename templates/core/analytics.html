@@ -366,6 +366,7 @@
 {% else %}
 <p class="text-muted">No tournament data available.</p>
 {% endif %}
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -445,5 +446,4 @@ if (data && Object.keys(data).length > 0) {
     container.innerHTML = '<p class="text-muted">No scheduled matches.</p>';
 }
 </script>
-{% endblock %}
 {% endblock %}

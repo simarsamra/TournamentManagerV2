@@ -315,3 +315,17 @@ class SimulatorHybridTests(TestCase):
             self.b.pk: self.tournament.points_per_draw,
         })
 
+
+class PageScriptTests(TestCase):
+    """A-5: {% block extra_js %} was nested inside {% block content %}, so the
+    page's script was rendered twice (in content and in base's slot)."""
+
+    def test_script_is_emitted_once(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        self.client.force_login(organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertEqual(response.content.decode().count("var data = "), 1)
