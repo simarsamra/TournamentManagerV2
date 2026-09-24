@@ -72,13 +72,14 @@
     <div class="card-header">Team Performance</div>
     <div class="table-container">
     <table>
-        <thead><tr><th>Team</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Performance</th></tr></thead>
+        <thead><tr><th>Team</th><th>Played</th><th>Wins</th>{% if show_draws_column %}<th>Draws</th>{% endif %}<th>Losses</th><th>Win Rate</th><th>Performance</th></tr></thead>
         <tbody>
         {% for ts in team_stats %}
         <tr>
             <td><a href="{% url 'team_detail' pk=ts.team.pk %}">{{ ts.display_label|default:ts.team.name }}</a></td>
             <td>{{ ts.played }}</td>
             <td>{{ ts.wins }}</td>
+            {% if show_draws_column %}<td>{{ ts.draws }}</td>{% endif %}
             <td>{{ ts.losses }}</td>
             <td>{{ ts.win_rate }}%</td>
             <td>

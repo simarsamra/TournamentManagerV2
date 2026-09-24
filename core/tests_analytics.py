@@ -3,9 +3,10 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from core.models import (
-    AuditLog, OrganizerProfile, Team, TeamMembership, TeamTournamentParticipation,
-    Tournament,
+    AuditLog, Match, OrganizerProfile, Team, TeamMembership,
+    TeamTournamentParticipation, Tournament,
 )
+from core.standings import calculate_standings
 
 
 def _make_organizer(username):
@@ -131,3 +132,81 @@ class AnalyticsAndAuditOwnershipTests(TestCase):
         self._enroll(self.other, self.tournament)
         response = self._audit(self.other)
         self.assertEqual(response.status_code, 302)
+
+
+class TeamPerformanceTests(TestCase):
+    """A-2: Team Performance set losses = played - wins (every draw became a
+    loss) and ranked by win rate alone (a 1-0 team outranked a 9-1 team)."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self._match_number = 0
+
+    def _tournament(self, fmt, *names):
+        tournament = Tournament.objects.create(
+            name=fmt, format=fmt, status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        teams = []
+        for name in names:
+            team = Team.objects.create(name=name)
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=tournament, status="active"
+            )
+            teams.append(team)
+        return tournament, teams
+
+    def _play(self, tournament, team1, team2, score1, score2):
+        self._match_number += 1
+        return Match.objects.create(
+            tournament=tournament, match_number=self._match_number,
+            team1=team1, team2=team2, score_team1=score1, score_team2=score2,
+            status="confirmed", winner=team1 if score1 > score2 else team2 if score2 > score1 else None,
+        )
+
+    def _team_stats(self, tournament):
+        self.client.force_login(self.organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertEqual(response.status_code, 200)
+        return response.context["team_stats"]
+
+    def test_a_draw_is_a_draw_not_a_loss(self):
+        tournament, (a, b) = self._tournament("round_robin", "A", "B")
+        self._play(tournament, a, b, 2, 2)
+        stats = {s["team"].pk: s for s in self._team_stats(tournament)}
+        self.assertEqual(
+            (stats[a.pk]["played"], stats[a.pk]["wins"], stats[a.pk]["draws"], stats[a.pk]["losses"]),
+            (1, 0, 1, 0),
+        )
+        response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertContains(response, "<th>Draws</th>", html=False)
+
+    def test_draws_column_hidden_when_there_are_no_draws(self):
+        tournament, (a, b) = self._tournament("round_robin", "A", "B")
+        self._play(tournament, a, b, 3, 1)
+        self.client.force_login(self.organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertNotContains(response, "<th>Draws</th>", html=False)
+
+    def test_many_wins_outrank_a_perfect_single_win_in_a_knockout(self):
+        tournament, (strong, lucky, filler) = self._tournament("knockout", "Strong", "Lucky", "Filler")
+        for _ in range(9):
+            self._play(tournament, strong, filler, 3, 0)
+        self._play(tournament, filler, strong, 3, 0)
+        self._play(tournament, lucky, filler, 3, 0)
+        order = [s["team"].pk for s in self._team_stats(tournament)]
+        self.assertLess(order.index(strong.pk), order.index(lucky.pk))
+
+    def test_round_robin_order_matches_standings(self):
+        tournament, (a, b, c) = self._tournament("round_robin", "A", "B", "C")
+        self._play(tournament, a, b, 1, 0)
+        self._play(tournament, b, c, 1, 0)
+        self._play(tournament, c, a, 5, 0)
+        expected = [row["team"].pk for row in calculate_standings(tournament)]
+        self.assertEqual([s["team"].pk for s in self._team_stats(tournament)], expected)
+
+    def test_withdrawn_teams_are_left_out(self):
+        tournament, (a, b) = self._tournament("round_robin", "A", "B")
+        self._play(tournament, a, b, 1, 0)
+        TeamTournamentParticipation.objects.filter(team=b).update(status="withdrawn")
+        self.assertEqual([s["team"].pk for s in self._team_stats(tournament)], [a.pk])

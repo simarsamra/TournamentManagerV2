@@ -173,34 +173,29 @@ def analytics_view(request):
             "court": court, "total_matches": total, "confirmed_matches": confirmed,
             "utilization": round(confirmed / total * 100, 1) if total > 0 else 0,
         })
-    team_stats = []
-    for team in teams.filter(participations__tournament=tournament, participations__status="active"):
-        team_matches = matches.filter(Q(team1=team) | Q(team2=team))
-        played_matches = team_matches.filter(status__in=["confirmed", "forfeited"])
-        played = played_matches.count()
-
-        # Derive wins from scores for confirmed matches; fall back to winner when needed.
-        wins = 0
-        for match in played_matches:
-            if match.status == "forfeited":
-                if match.winner_id == team.id:
-                    wins += 1
-                continue
-
-            if match.score_team1 is not None and match.score_team2 is not None:
-                if match.team1_id == team.id and match.score_team1 > match.score_team2:
-                    wins += 1
-                elif match.team2_id == team.id and match.score_team2 > match.score_team1:
-                    wins += 1
-            elif match.winner_id == team.id:
-                wins += 1
-
-        team_stats.append({
-            "team": team, "played": played, "wins": wins, "losses": played - wins,
-            "display_label": _team_display_label(tournament, team),
-            "win_rate": round(wins / played * 100, 1) if played > 0 else 0,
-        })
-    team_stats.sort(key=lambda x: x["win_rate"], reverse=True)
+    # Built from calculate_standings so draws and forfeits are counted the same
+    # way as on the standings page (this used to set losses = played - wins).
+    standings = calculate_standings(tournament)
+    active_ids = set(
+        tournament.team_participations.filter(status="active").values_list("team_id", flat=True)
+    )
+    team_stats = [
+        {
+            "team": row["team"],
+            "display_label": _team_display_label(tournament, row["team"]),
+            "played": row["played"], "wins": row["wins"],
+            "draws": row["draws"], "losses": row["losses"],
+            "win_rate": round(row["wins"] / row["played"] * 100, 1) if row["played"] else 0,
+        }
+        for row in standings
+        if row["team"].pk in active_ids
+    ]
+    if tournament.format not in ("round_robin", "double_round_robin", "hybrid"):
+        # Standings points mean nothing in a bracket; rank on results instead.
+        team_stats.sort(key=lambda s: (
+            -s["wins"], -s["win_rate"], s["losses"], s["display_label"].lower(),
+        ))
+    show_draws_column = any(s["draws"] for s in team_stats)
     schedule_density = defaultdict(int)
     for m in matches.filter(scheduled_time__isnull=False):
         day = timezone.localtime(m.scheduled_time).strftime("%Y-%m-%d")
@@ -228,11 +223,12 @@ def analytics_view(request):
     context = {
         "tournament": tournament, "can_manage": can_manage,
         "match_stats": match_stats, "court_stats": court_stats,
-        "team_stats": team_stats, "schedule_density": json.dumps(schedule_density),
+        "team_stats": team_stats, "show_draws_column": show_draws_column,
+        "schedule_density": json.dumps(schedule_density),
         "withdrawal_info": withdrawal_info, "recent_logs": recent_logs,
     }
     if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
-        context["standings"] = calculate_standings(tournament)
+        context["standings"] = standings
 
     active_teams = list(
         teams.filter(
