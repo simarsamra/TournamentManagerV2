@@ -5,6 +5,7 @@
 <h1 class="page-title">{% if tournament %}{{ tournament.name }} — {% endif %}Analytics Dashboard</h1>
 
 {% if tournament %}
+{% if ai_can_ask %}{% include "core/partials/analytics_ask.html" %}{% endif %}
 <div class="grid grid-4 mb-2">
     <div class="stat-card">
         <div class="stat-value">{{ match_stats.total }}</div>
@@ -68,7 +69,7 @@
 </div>
 
 <!-- Team Performance -->
-<div class="card mt-2">
+<div class="card mt-2" id="analytics-team-performance">
     <div class="card-header">Team Performance</div>
     <div class="table-container">
     <table>
@@ -109,7 +110,7 @@
 
 {% if standings %}
 <!-- Points Chart -->
-<div class="card mt-2">
+<div class="card mt-2" id="analytics-points">
     <div class="card-header">Points Overview</div>
     <div class="card-body">
         {% for s in standings %}

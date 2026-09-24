@@ -31,5 +31,6 @@ from .matches import *  # noqa: F401,F403
 from .matches import _redirect_to_match_detail  # noqa: F401
 from .registration import *  # noqa: F401,F403
 from .reporting import *  # noqa: F401,F403
+from .ai import *  # noqa: F401,F403
 from .admin_tools import *  # noqa: F401,F403
 from .test_maker import *  # noqa: F401,F403

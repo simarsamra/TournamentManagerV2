@@ -59,6 +59,15 @@ class ThrottledDecoratorTests(TestCase):
         self.assertEqual(self.calls, 3)
         self.assertEqual(response.status_code, 302)
 
+    def test_blocked_htmx_request_navigates_instead_of_swapping_a_page(self):
+        for _ in range(3):
+            self._post()
+        request = self.factory.post("/whatever/", REMOTE_ADDR="203.0.113.1", HTTP_HX_REQUEST="true")
+        _prepare(request)
+        response = self.view(request)
+        self.assertEqual(self.calls, 3)
+        self.assertEqual((response.status_code, response["HX-Redirect"]), (204, "/whatever/"))
+
     def test_get_requests_are_never_throttled(self):
         """Loading the form (a GET) must not spend the POST budget."""
         request = self.factory.get("/whatever/")

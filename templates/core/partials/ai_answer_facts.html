@@ -1,0 +1,35 @@
+{% comment %}A read-only summary of the facts the answer was built from (AI-4). Every number here was computed by the analytics code, not the model.{% endcomment %}
+{% with intent=route.intent %}
+{% if intent == "head_to_head" and facts.head_to_head %}{% with h=facts.head_to_head %}
+<p style="margin:0;">{% if h.meetings %}<strong>{{ h.team_a }} {{ h.team_a_wins }} – {{ h.team_b_wins }} {{ h.team_b }}</strong> in {{ h.meetings }} meeting{{ h.meetings|pluralize }}{% if h.draws %}, {{ h.draws }} drawn{% endif %}.{% else %}{{ h.team_a }} and {{ h.team_b }} haven't played each other yet.{% endif %}</p>
+{% endwith %}
+{% elif intent == "form" and facts.form %}{% with f=facts.form %}
+{% if f.matches %}
+<p style="margin:0 0 0.4rem;"><strong>{{ f.team }}</strong>, last {{ f.matches|length }} match{{ f.matches|length|pluralize:"es" }}: win rate {{ f.win_rate_pct }}%</p>
+<div style="display:flex;gap:6px;flex-wrap:wrap;">
+    {% for m in f.matches %}<span class="form-pill {% if m.result == 'W' %}is-win{% elif m.result == 'L' %}is-loss{% else %}is-draw{% endif %}" aria-label="{% if m.result == 'W' %}Win{% elif m.result == 'L' %}Loss{% else %}Draw{% endif %} vs {{ m.opponent }}" title="vs {{ m.opponent }}">{{ m.result }}</span>{% endfor %}
+</div>
+{% else %}<p style="margin:0;">{{ f.team }} haven't completed a match yet.</p>{% endif %}
+{% endwith %}
+{% elif intent == "next_match" and facts.next_match %}{% with n=facts.next_match %}
+{% if n.scheduled %}
+<p style="margin:0;"><strong>{{ n.team }}</strong> play <strong>{{ n.opponent }}</strong> next ({{ n.when }}).</p>
+<p class="text-muted" style="margin:0.3rem 0 0;font-size:0.88rem;">{{ n.opponent }}'s last results: {{ n.opponent_last_5.wins }}W · {{ n.opponent_last_5.draws }}D · {{ n.opponent_last_5.losses }}L. Head to head: {{ n.head_to_head.wins }}W · {{ n.head_to_head.draws }}D · {{ n.head_to_head.losses }}L.</p>
+{% else %}<p style="margin:0;">{{ n.team }} have no upcoming match.</p>{% endif %}
+{% endwith %}
+{% elif intent == "what_if" and facts.what_if %}{% with w=facts.what_if %}
+<p style="margin:0 0 0.4rem;">If <strong>{{ w.assumed_result }}</strong>:</p>
+<table><thead><tr><th>Rank</th><th>Team</th><th>Points</th><th>Δ</th></tr></thead><tbody>
+{% for r in w.projected_standings_top %}<tr><td>{{ r.rank }}</td><td>{{ r.team }}</td><td>{{ r.points }}</td><td>{% if r.points_change > 0 %}+{% endif %}{{ r.points_change }}</td></tr>{% endfor %}
+</tbody></table>
+{% endwith %}
+{% elif facts.standings_top %}
+<table><thead><tr><th>Rank</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>Pts</th></tr></thead><tbody>
+{% for r in facts.standings_top %}<tr><td>{{ r.rank }}</td><td>{{ r.team }}</td><td>{{ r.played }}</td><td>{{ r.wins }}</td><td>{{ r.draws }}</td><td>{{ r.losses }}</td><td>{{ r.points }}</td></tr>{% endfor %}
+</tbody></table>
+{% elif facts.results_top %}
+<table><thead><tr><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>Win %</th></tr></thead><tbody>
+{% for r in facts.results_top %}<tr><td>{{ r.team }}</td><td>{{ r.played }}</td><td>{{ r.wins }}</td><td>{{ r.draws }}</td><td>{{ r.losses }}</td><td>{{ r.win_rate_pct }}%</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+{% endwith %}

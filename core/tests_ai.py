@@ -837,3 +837,176 @@ class RouterTests(TestCase):
             call_command("ai_worker", "--once", stdout=StringIO())
         job.refresh_from_db()
         self.assertEqual((job.status, job.error), ("failed", jobs.MSG_UNAVAILABLE))
+
+
+# AI-6
+
+@override_settings(AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_QUESTIONS_PER_USER_PER_HOUR=3, AI_MAX_PENDING=5, AI_MAX_QUESTION_CHARS=50)
+class AskViewTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()  # the per-IP throttle counts in the cache
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.aces, self.bolts = (Team.objects.create(name=n) for n in ("Aces", "Bolts"))
+        for team in (self.aces, self.bolts):
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        self.player = User.objects.create_user(username="player", password="Regression-Pass-1")
+        TeamMembership.objects.create(team=self.aces, user=self.player, role="captain")
+        self.client.force_login(self.organizer)
+
+    def _ask(self, question="How are the Aces doing?", htmx=True, **extra):
+        headers = {"HTTP_HX_REQUEST": "true"} if htmx else {}
+        return self.client.post("/analytics/ask/", {"tournament": self.tournament.pk, "question": question},
+                                **headers, **extra)
+
+    def _analytics(self):
+        return self.client.get("/analytics/", {"tournament": self.tournament.pk})
+
+    def _done(self, route, facts=None, user=None, **fields):
+        return AIQuestion.objects.create(
+            user=user or self.organizer, tournament=self.tournament, question="q",
+            status="done", route=route, facts=facts, model_name="qwen3.5:9b",
+            timings={"route": {"total_ms": 1234}}, **fields,
+        )
+
+    # -- visibility --
+
+    def test_manager_sees_the_ask_box(self):
+        self.assertContains(self._analytics(), 'id="analytics-ask"')
+
+    @override_settings(AI_ANALYTICS_ENABLED=False)
+    def test_disabled_means_no_box_and_404s(self):
+        self.assertNotContains(self._analytics(), 'id="analytics-ask"')
+        self.assertEqual(self._ask().status_code, 404)
+        job = self._done({"card": None, "message": "x"})
+        self.assertEqual(self.client.get(f"/analytics/ask/{job.pk}/").status_code, 404)
+        self.assertEqual(AIQuestion.objects.count(), 1)
+
+    def test_managers_audience_hides_the_box_from_players(self):
+        self.client.force_login(self.player)
+        self.assertEqual(self._analytics().status_code, 200)
+        self.assertNotContains(self._analytics(), 'id="analytics-ask"')
+        self.assertContains(self._ask(), "limited to this tournament&#x27;s organizers")
+        self.assertEqual(AIQuestion.objects.count(), 0)
+        with override_settings(AI_ANALYTICS_AUDIENCE="all"):
+            self.assertContains(self._analytics(), 'id="analytics-ask"')
+
+    def test_outsider_is_turned_away(self):
+        self.client.force_login(_make_organizer("other"))
+        response = self._ask()
+        self.assertEqual((response.status_code, response.url), (302, "/dashboard/"))
+        self.assertEqual(AIQuestion.objects.count(), 0)
+
+    # -- asking --
+
+    def test_htmx_ask_queues_the_question_and_starts_polling(self):
+        response = self._ask("  How are   the Aces doing?  ")
+        job = AIQuestion.objects.get()
+        self.assertEqual((job.question, job.status, job.user), ("How are the Aces doing?", "pending", self.organizer))
+        self.assertTemplateUsed(response, "core/partials/ai_question_status.html")
+        self.assertContains(response, f'hx-get="/analytics/ask/{job.pk}/" hx-trigger="every 2s"')
+        self.assertContains(response, "Thinking…")
+
+    def test_plain_ask_redirects_to_a_self_refreshing_page(self):
+        response = self._ask(htmx=False)
+        job = AIQuestion.objects.get()
+        self.assertRedirects(response, f"/analytics/ask/{job.pk}/")
+        page = self.client.get(f"/analytics/ask/{job.pk}/")
+        self.assertContains(page, '<noscript><meta http-equiv="refresh" content="3"></noscript>', html=False)
+        self.assertContains(page, "Back to analytics")
+
+    def test_rejections(self):
+        for question, message in (("   ", "Type a question first."), ("x" * 51, "under 50 characters")):
+            with self.subTest(question=question):
+                self.assertContains(self._ask(question), message)
+        self.assertEqual(AIQuestion.objects.count(), 0)
+
+    def test_per_user_quota(self):
+        for _ in range(3):
+            self._ask()
+        self.assertContains(self._ask(), "asked a lot of questions this hour")
+        self.assertEqual(AIQuestion.objects.count(), 3)
+
+    def test_queue_cap(self):
+        other = _make_organizer("busy")
+        for _ in range(5):
+            AIQuestion.objects.create(user=other, tournament=self.tournament, question="q")
+        self.assertContains(self._ask(), "The AI is busy right now")
+
+    def test_plain_rejection_goes_back_to_analytics_with_a_message(self):
+        response = self._ask("   ", htmx=False)
+        self.assertRedirects(response, f"/analytics/?tournament={self.tournament.pk}", fetch_redirect_response=False)
+
+    # -- status --
+
+    def test_other_users_question_is_404(self):
+        job = self._done({"card": None, "message": "x"}, user=_make_organizer("someone"))
+        self.assertEqual(self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true").status_code, 404)
+
+    def test_polling_stops_with_286_once_finished(self):
+        job = AIQuestion.objects.create(user=self.organizer, tournament=self.tournament, question="q")
+        pending = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertEqual(pending.status_code, 200)
+        self.assertContains(pending, 'hx-trigger="every 2s"')
+        AIQuestion.objects.filter(pk=job.pk).update(created_at=timezone.now() - timedelta(seconds=30))
+        self.assertContains(self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true"),
+                            "your question is queued")
+        AIQuestion.objects.filter(pk=job.pk).update(status="failed", error="The model took too long.")
+        failed = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertEqual(failed.status_code, 286)
+        self.assertNotContains(failed, "hx-trigger", status_code=286)
+        self.assertContains(failed, "The model took too long.", status_code=286)
+
+    def test_answer_shows_the_facts_and_a_link_to_the_real_card(self):
+        job = self._done(
+            {"intent": "head_to_head", "card": "h2h", "message": "",
+             "params": {"h2h_team1": self.aces.pk, "h2h_team2": self.bolts.pk}},
+            facts={"head_to_head": {"team_a": "Aces", "team_b": "Bolts", "meetings": 3,
+                                    "team_a_wins": 2, "team_b_wins": 0, "draws": 1}},
+        )
+        current = f"http://testserver/analytics/?tournament={self.tournament.pk}&form_team=9&h2h_team1=999"
+        response = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true", HTTP_HX_CURRENT_URL=current)
+        self.assertContains(response, "<strong>Aces 2 – 0 Bolts</strong> in 3 meetings, 1 drawn.", status_code=286)
+        self.assertContains(response, "qwen3.5:9b · 1.2 s", status_code=286)
+        link = response.context["page_link"]
+        # Keeps the page's form_team, replaces the head-to-head pair, anchors the card.
+        self.assertIn("form_team=9", link)
+        self.assertIn(f"h2h_team1={self.aces.pk}&h2h_team2={self.bolts.pk}", link)
+        self.assertNotIn("999", link)
+        self.assertTrue(link.endswith("#analytics-h2h"))
+
+    def test_unknown_answer_shows_the_routers_message(self):
+        job = self._done({"intent": "unknown", "card": None, "params": {}, "message": "Which team do you mean?"})
+        response = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertContains(response, "Which team do you mean?", status_code=286)
+        self.assertNotContains(response, "Show on the", status_code=286)
+
+    def test_user_text_is_escaped(self):
+        self._ask("<script>alert(1)</script>")
+        job = AIQuestion.objects.get()
+        response = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertNotContains(response, "<script>alert(1)</script>")
+        self.assertContains(response, "&lt;script&gt;alert(1)&lt;/script&gt;")
+
+    def test_status_query_count_does_not_depend_on_the_answer(self):
+        small = self._done({"intent": "standings", "card": "standings", "params": {}, "message": ""},
+                           facts={"standings_top": [{"rank": 1, "team": "A", "played": 1, "wins": 1,
+                                                     "draws": 0, "losses": 0, "points": 3}]})
+        big = self._done({"intent": "standings", "card": "standings", "params": {}, "message": ""},
+                         facts={"standings_top": [{"rank": i, "team": f"T{i}", "played": 1, "wins": 1,
+                                                   "draws": 0, "losses": 0, "points": 3} for i in range(8)]})
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        counts = []
+        for job in (small, big):
+            with CaptureQueriesContext(connection) as ctx:
+                self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+            counts.append(len(ctx.captured_queries))
+        self.assertEqual(counts[0], counts[1])

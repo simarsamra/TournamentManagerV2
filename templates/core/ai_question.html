@@ -1,0 +1,10 @@
+{% extends "core/base.html" %}
+{% comment %}Full-page view of one AI question, for browsers without htmx; refreshes itself until answered.{% endcomment %}
+{% block title %}Your question{% endblock %}
+{% block extra_css %}{% if not q.is_finished %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
+{% block page_header %}Analytics{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ tournament.name }} — Your question</h1>
+<div class="card"><div class="card-body">{% include "core/partials/ai_question_status.html" %}</div></div>
+<p class="mt-1"><a href="{{ analytics_url }}">Back to analytics</a></p>
+{% endblock %}

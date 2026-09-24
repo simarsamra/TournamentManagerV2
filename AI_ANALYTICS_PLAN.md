@@ -550,6 +550,26 @@ maps to the widget parameters already defined in `ANALYTICS_WIDGET_PARAMS`:
 - An answer containing `<script>` is rendered escaped.
 - Query count of the polling GET is constant.
 
+
+**As built (2026-09-24), two deviations:**
+- **The answer shows a facts summary, not the widget partial.** Rendering
+  `analytics_h2h.html` etc. inside the answer would put a second
+  `id="analytics-h2h"` on the page and break A-12's HX-Target swaps. The
+  answer instead shows a read-only summary of `facts` (every number from the
+  analytics code) and a **Show on the … card** link. The link keeps the
+  page's current widget state (from htmx's `HX-Current-URL`), replaces the
+  routed card's parameters, and anchors on that card.
+- **URLs are always routed; the views 404 while disabled.** `override_settings`
+  can't re-import the URLconf, so a view check is what tests can pin.
+
+Also made `@throttled` HTMX-aware: a blocked HTMX request gets `HX-Redirect`
+instead of a 302 that htmx would follow and swap in as a whole page.
+
+Verified in Chromium against the real `ai_worker` and a stand-in Ollama on
+`127.0.0.1:11434`: "Thinking…" shows, the answer arrives and polling stops
+(no requests afterwards), the unknown-question message appears, and the
+link opens the simulator with the pick applied while keeping `form_team`.
+
 ---
 
 ## AI-7 — Written explanation with a numeric grounding check

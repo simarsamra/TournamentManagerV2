@@ -233,6 +233,13 @@ def analytics_view(request):
     }
     if tournament.format in analytics.STANDINGS_FORMATS:
         context["standings"] = standings
+    # The Ask box (AI_ANALYTICS_PLAN.md AI-6). core.ai is only imported when
+    # the feature is on.
+    if settings.AI_ANALYTICS_ENABLED:
+        from ..ai.access import may_ask
+
+        context["ai_can_ask"] = may_ask(request.user, tournament)
+        context["ai_max_question_chars"] = settings.AI_MAX_QUESTION_CHARS
 
     # --- Head-to-head matchup card ---
     h2h_team1 = _pick_team(active_teams, request.GET.get("h2h_team1"))

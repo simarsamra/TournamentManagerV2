@@ -99,6 +99,8 @@ urlpatterns = [
 
     # Analytics
     path("analytics/", views.analytics_view, name="analytics"),
+    path("analytics/ask/", views.ai_ask, name="ai_ask"),
+    path("analytics/ask/<int:pk>/", views.ai_question_status, name="ai_question_status"),
 
     # Backup & Restore
     path("backup/", views.backup_view, name="backup"),

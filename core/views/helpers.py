@@ -13,6 +13,7 @@ from django.contrib import messages
 from django.contrib.auth.models import User
 from django.db import models as db_models
 from django.db.models import Count, Q
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -197,6 +198,12 @@ def throttled(scope, limit, window=LOGIN_ATTEMPT_WINDOW_SECONDS, redirect_to=Non
                         request, "Too many requests. Please wait a while before trying again."
                     )
                     target = redirect_to(request, *args, **kwargs) if redirect_to else request.path
+                    if _is_htmx_request(request):
+                        # A 302 would be followed inside the XHR and the whole
+                        # page swapped into the target; make the browser go.
+                        response = HttpResponse(status=204)
+                        response["HX-Redirect"] = target
+                        return response
                     return redirect(target)
                 _throttle_bump(key, window=window)
             return view_func(request, *args, **kwargs)
