@@ -25,7 +25,7 @@ jobs:
 
       # 3.11 is the version the suite is verified against; requirements.txt
       # pins Django to the 5.2 LTS series.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -117,7 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
