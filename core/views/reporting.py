@@ -255,8 +255,11 @@ def analytics_view(request):
 
     # --- Next-opponent prep sheet ---
     prep_team = _pick_team(active_teams, request.GET.get("prep_team"))
-    if not prep_team:
-        prep_team = form_team
+    # Default like the other widgets, independent of form_team: A-12 swaps
+    # only the form card, so following it left the live prep card and a
+    # reload of the pushed URL showing different teams (AI-1b).
+    if not prep_team and active_teams:
+        prep_team = active_teams[0]
 
     # --- What-if standings simulator ---
     simulator_matches, simulator_total = analytics.simulator_matches(tournament)

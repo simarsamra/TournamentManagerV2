@@ -76,3 +76,36 @@ class AnalyticsFunctionTests(TestCase):
         self.assertEqual((comets["points"], comets["point_change"]), (3, 3))
         # The real rows are untouched.
         self.assertEqual(next(r for r in standings if r["team"] == self.c)["points"], 0)
+
+
+class PrepSheetDefaultTests(TestCase):
+    """AI-1b: with no prep_team in the URL, the prep sheet fell back to the
+    rolling-form team. Since A-12 swaps only the form card over HTMX, the live
+    prep card and a reload of the pushed URL then showed different teams."""
+
+    def test_prep_sheet_defaults_to_first_active_team_not_form_team(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        aces, bolts = (Team.objects.create(name=n) for n in ("Aces", "Bolts"))
+        for team in (aces, bolts):
+            TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+        self.client.force_login(organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk, "form_team": bolts.pk})
+        self.assertEqual(response.context["form_team"], bolts)
+        self.assertEqual(response.context["prep_team"], aces)
+
+    def test_explicit_prep_team_still_wins(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        aces, bolts = (Team.objects.create(name=n) for n in ("Aces", "Bolts"))
+        for team in (aces, bolts):
+            TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+        self.client.force_login(organizer)
+        response = self.client.get("/analytics/", {"tournament": tournament.pk, "prep_team": bolts.pk})
+        self.assertEqual(response.context["prep_team"], bolts)
