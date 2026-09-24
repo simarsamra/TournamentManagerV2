@@ -599,3 +599,64 @@ class WidgetStatePreservationTests(TestCase):
         })
         self.assertNotContains(response, 'name="sim_99999"')
         self.assertNotContains(response, 'name="junk"')
+
+
+class WidgetHtmxPartialTests(WidgetStatePreservationTests):
+    """A-12 (2): each widget card updates in place over HTMX instead of a
+    full-page reload (which needed a scroll-restore script to paper over
+    it). Reuses the fixture above; its own tests run again here too."""
+
+    def _htmx(self, target, **params):
+        return self.client.get(
+            "/analytics/",
+            {"tournament": self.tournament.pk, **params},
+            HTTP_HX_REQUEST="true", HTTP_HX_TARGET=target,
+        )
+
+    def test_htmx_widget_request_returns_only_that_card(self):
+        response = self._htmx("analytics-h2h", h2h_team1=self.a.pk, h2h_team2=self.c.pk)
+        self.assertTemplateUsed(response, "core/partials/analytics_h2h.html")
+        self.assertTemplateNotUsed(response, "core/analytics.html")
+        self.assertContains(response, 'id="analytics-h2h"')
+        self.assertContains(response, "Head-to-Head Matchup Card")
+        self.assertNotContains(response, "Rolling Form Trend")
+        self.assertNotContains(response, "<html")
+
+    def test_htmx_response_refreshes_the_other_forms_hidden_state(self):
+        response = self._htmx(
+            "analytics-h2h", h2h_team1=self.a.pk, h2h_team2=self.c.pk, form_team=self.b.pk,
+        )
+        content = response.content.decode()
+        for widget in ("form", "prep", "sim"):
+            self.assertIn(f'<span id="analytics-hidden-{widget}" class="analytics-hidden-state" hx-swap-oob="true">', content)
+        # The new head-to-head pick reaches the other three forms.
+        self.assertEqual(content.count(self._hidden("h2h_team2", self.c.pk)), 3)
+        # The swapped card's own hidden block is not out-of-band.
+        self.assertIn('<span id="analytics-hidden-h2h" class="analytics-hidden-state">', content)
+
+    def test_each_widget_has_a_partial(self):
+        for target, template in (
+            ("analytics-form", "core/partials/analytics_form.html"),
+            ("analytics-prep", "core/partials/analytics_prep.html"),
+            ("analytics-sim", "core/partials/analytics_simulator.html"),
+        ):
+            with self.subTest(target=target):
+                response = self._htmx(target)
+                self.assertTemplateUsed(response, template)
+                self.assertTemplateNotUsed(response, "core/analytics.html")
+
+    def test_non_htmx_and_unknown_target_get_the_full_page(self):
+        full = self.client.get("/analytics/", {"tournament": self.tournament.pk})
+        self.assertTemplateUsed(full, "core/analytics.html")
+        other = self._htmx("page-content-region")
+        self.assertTemplateUsed(other, "core/analytics.html")
+
+    def test_forms_submit_over_htmx_and_still_work_without_it(self):
+        content = self.client.get("/analytics/", {"tournament": self.tournament.pk}).content.decode()
+        for widget in ("h2h", "form", "prep", "sim"):
+            self.assertIn(
+                f'<form method="get" action="/analytics/" hx-get="/analytics/" '
+                f'hx-target="#analytics-{widget}" hx-swap="outerHTML" hx-push-url="true"',
+                content,
+            )
+        self.assertNotIn("analytics-scroll:", content)

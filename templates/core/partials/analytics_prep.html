@@ -1,0 +1,50 @@
+<div class="card" id="analytics-prep">
+    <div class="card-header">Next-Opponent Prep Sheet</div>
+    <div class="card-body">
+        {% if analytics_teams %}
+        <form method="get" action="{% url 'analytics' %}" hx-get="{% url 'analytics' %}" hx-target="#analytics-prep" hx-swap="outerHTML" hx-push-url="true" class="d-flex gap-1 mb-1" style="flex-wrap:wrap;">
+            {% include "core/partials/analytics_hidden_state.html" with widget="prep" fields=analytics_hidden.prep %}
+            <select name="prep_team" class="form-control" style="max-width:220px;">
+                {% for t in analytics_teams %}
+                <option value="{{ t.pk }}" {% if prep_team and prep_team.pk == t.pk %}selected{% endif %}>{{ t.display_label|default:t.name }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-outline btn-sm">Load</button>
+        </form>
+        {% if next_opponent_prep and next_opponent_prep.opponent %}
+        <div class="info-panel mb-1">
+            <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);letter-spacing:.04em;">Upcoming</div>
+            <div style="font-size:1rem;font-weight:700;">{{ next_opponent_prep.team_label|default:next_opponent_prep.team.name }} vs {{ next_opponent_prep.opponent_label|default:next_opponent_prep.opponent.name }}</div>
+            <div style="font-size:0.85rem;color:var(--text-muted);">{{ next_opponent_prep.match.scheduled_time|date:"M d, H:i"|default:"Time TBD" }}</div>
+        </div>
+        <div class="grid grid-2" style="gap:0.6rem;">
+            <div class="info-panel">
+                <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.2rem;">Opponent Form</div>
+                <div style="font-size:0.88rem;">{{ next_opponent_prep.opponent_record.wins }}W · {{ next_opponent_prep.opponent_record.losses }}L{% if next_opponent_prep.opponent_record.draws %} · {{ next_opponent_prep.opponent_record.draws }}D{% endif %}</div>
+            </div>
+            <div class="info-panel">
+                <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.2rem;">Head to Head</div>
+                <div style="font-size:0.88rem;">{{ next_opponent_prep.h2h.wins }}W · {{ next_opponent_prep.h2h.losses }}L{% if next_opponent_prep.h2h.draws %} · {{ next_opponent_prep.h2h.draws }}D{% endif %}</div>
+            </div>
+        </div>
+        {% if next_opponent_prep.opponent_key_players %}
+        <div style="margin-top:0.7rem;font-size:0.85rem;">
+            <strong>Key players:</strong> {{ next_opponent_prep.opponent_key_players|join:", " }}
+        </div>
+        {% endif %}
+        {% if next_opponent_prep.opponent_recent %}
+        <table class="mt-1">
+            <thead><tr><th>Match</th><th>Opponent</th><th>Result</th></tr></thead>
+            <tbody>
+                {% for row in next_opponent_prep.opponent_recent %}
+                <tr><td>#{{ row.match_number }}</td><td>{{ row.opponent }}</td><td>{{ row.result }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">No upcoming opponent found for this team.</p>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>

@@ -421,6 +421,23 @@ paper over the full-page reload.
 header); non-HTMX request returns the full page; pushed URL includes all
 widget params.
 
+**As built (2026-09-24), two deviations from the above:**
+- No shared `#analytics-state` block with `hx-include`. Once cards are
+  swapped one at a time, the step-1 hidden inputs in the *other* forms go
+  stale, and mixing them with an included block sends duplicate names.
+  Instead each HTMX response also carries fresh hidden-state blocks for the
+  other three forms as `hx-swap-oob` swaps, so there is one mechanism for
+  both the JS and no-JS paths.
+- The widget is identified from htmx's `HX-Target` header
+  (`analytics-<widget>`) rather than a `widget=` parameter, so pushed URLs
+  hold only real state. An HTMX request for any other target gets the full
+  page, as before.
+
+Verified in Chromium (htmx 1.9.12 served locally): three widget submits
+with no page reload and no scroll jump, the pushed URL carrying all
+widgets' state, every selection surviving a full reload; and with htmx
+blocked, a plain submit still keeps the other widgets' values.
+
 ---
 
 ## A-13 — Per-team query fan-out

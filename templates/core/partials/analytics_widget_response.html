@@ -1,0 +1,4 @@
+{% comment %}HTMX response for one analytics widget: its card, plus fresh hidden
+state for the other widgets' forms so their next submit carries this change.{% endcomment %}
+{% include widget_template %}
+{% for other, fields in analytics_hidden.items %}{% if other != active_widget %}{% include "core/partials/analytics_hidden_state.html" with widget=other fields=fields oob=True %}{% endif %}{% endfor %}

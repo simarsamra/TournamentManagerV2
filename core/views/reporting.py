@@ -160,6 +160,12 @@ ANALYTICS_WIDGET_PARAMS = {
     "prep": ("prep_team",),
     "sim": (),
 }
+ANALYTICS_WIDGET_TEMPLATES = {
+    "h2h": "core/partials/analytics_h2h.html",
+    "form": "core/partials/analytics_form.html",
+    "prep": "core/partials/analytics_prep.html",
+    "sim": "core/partials/analytics_simulator.html",
+}
 
 
 def _analytics_hidden_state(request, tournament, simulator_matches):
@@ -582,6 +588,13 @@ def analytics_view(request):
         "analytics_hidden": _analytics_hidden_state(request, tournament, simulator_matches),
     })
     context.update(_tournament_context(request, tournament))
+    # A widget form submitted over HTMX targets its own card: return just that
+    # card (plus out-of-band hidden state for the other forms).
+    widget = request.headers.get("HX-Target", "").removeprefix("analytics-")
+    if _is_htmx_request(request) and widget in ANALYTICS_WIDGET_TEMPLATES:
+        context["active_widget"] = widget
+        context["widget_template"] = ANALYTICS_WIDGET_TEMPLATES[widget]
+        return render(request, "core/partials/analytics_widget_response.html", context)
     return render(request, "core/analytics.html", context)
 
 
