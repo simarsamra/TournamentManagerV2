@@ -34,6 +34,7 @@ from ..standings import (
     get_grand_final_matches,
     get_losers_bracket_data,
     get_third_place_match,
+    rank_standings,
 )
 from ..backup import (
     create_backup,
@@ -143,6 +144,9 @@ def standings_view(request):
 # Rolling-form pills: accessible name and theme-aware CSS class per result.
 _FORM_RESULT_LABELS = {"W": "Win", "L": "Loss", "D": "Draw"}
 _FORM_RESULT_CLASSES = {"W": "is-win", "L": "is-loss", "D": "is-draw"}
+
+# The what-if simulator offers at most this many upcoming matches.
+SIMULATOR_MATCH_LIMIT = 8
 
 @login_required
 def analytics_view(request):
@@ -421,6 +425,7 @@ def analytics_view(request):
     simulator_enabled = tournament.format in ("round_robin", "double_round_robin", "hybrid")
     simulated_standings = None
     simulator_has_choices = False
+    simulator_total = 0
     if simulator_enabled:
         candidates = matches.filter(
             status="upcoming",
@@ -431,8 +436,11 @@ def analytics_view(request):
             # Only group-stage matches earn standings points; knockout matches
             # carry no group letter.
             candidates = candidates.exclude(group="")
+        simulator_total = candidates.count()
         simulator_matches = list(
-            candidates.select_related("team1", "team2").order_by("scheduled_time", "match_number")[:8]
+            candidates.select_related("team1", "team2").order_by(
+                "scheduled_time", "match_number"
+            )[:SIMULATOR_MATCH_LIMIT]
         )
         if simulator_matches:
             base_rows = calculate_standings(tournament)
@@ -472,13 +480,8 @@ def analytics_view(request):
             simulated_standings = list(by_team_id.values())
             for row in simulated_standings:
                 row["points"] += row["point_change"]
-            # Sort by projected points, then use standing metrics for deterministic tie-breaking.
-            simulated_standings.sort(
-                key=lambda s: (s["points"], s.get("game_diff", 0), s.get("games_won", 0), s.get("wins", 0)),
-                reverse=True,
-            )
-            for idx, row in enumerate(simulated_standings, start=1):
-                row["rank"] = idx
+            # Same tiebreakers as the real table (rank_standings sets "rank").
+            simulated_standings = rank_standings(tournament, simulated_standings)
 
     context.update({
         "analytics_teams": active_teams,
@@ -494,6 +497,8 @@ def analytics_view(request):
         "next_opponent_prep": next_opponent_prep,
         "simulator_enabled": simulator_enabled,
         "simulator_matches": simulator_matches,
+        "simulator_total": simulator_total,
+        "simulator_limit": SIMULATOR_MATCH_LIMIT,
         "simulated_standings": simulated_standings,
         "simulator_has_choices": simulator_has_choices,
     })

@@ -381,3 +381,61 @@ class CourtProgressTests(TestCase):
         self.assertEqual(response.context["court_stats"][0]["completion_pct"], 25.0)
         self.assertContains(response, "Court Progress")
         self.assertNotContains(response, "Utilization")
+
+
+class SimulatorTiebreakerTests(TestCase):
+    """A-8: simulated standings sorted by (points, game_diff, games_won, wins)
+    whatever the tournament's configured tiebreakers, so two teams level on
+    projected points could come out in a different order from the real
+    table."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer, tiebreaker_order='["games_won", "game_diff"]',
+        )
+        self.x, self.y, self.z = (Team.objects.create(name=n) for n in ("X", "Y", "Z"))
+        for team in (self.x, self.y, self.z):
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active"
+            )
+        # X: better game difference (+2); Y: more games won (5 vs 2).
+        self._match(1, self.x, self.z, 2, 0, "confirmed")
+        self._match(2, self.y, self.z, 5, 4, "confirmed")
+        self.upcoming = self._match(3, self.x, self.y, None, None, "upcoming")
+        self.client.force_login(self.organizer)
+
+    def _match(self, number, team1, team2, score1, score2, status):
+        winner = None
+        if score1 is not None and score1 != score2:
+            winner = team1 if score1 > score2 else team2
+        return Match.objects.create(
+            tournament=self.tournament, match_number=number, team1=team1, team2=team2,
+            score_team1=score1, score_team2=score2, winner=winner, status=status,
+        )
+
+    def test_projected_tie_uses_the_configured_tiebreakers(self):
+        response = self.client.get(
+            "/analytics/", {"tournament": self.tournament.pk, f"sim_{self.upcoming.pk}": "draw"}
+        )
+        simulated = [row["team"].pk for row in response.context["simulated_standings"]]
+        real = [row["team"].pk for row in calculate_standings(self.tournament)]
+        # Level on points before and after a projected draw, so the order is
+        # decided by tiebreakers alone and must match the real table: Y first.
+        self.assertEqual(simulated, real)
+        self.assertEqual(simulated[:2], [self.y.pk, self.x.pk])
+        self.assertEqual(
+            [row["rank"] for row in response.context["simulated_standings"]], [1, 2, 3]
+        )
+
+    def test_truncation_is_shown(self):
+        for number in range(4, 13):
+            self._match(number, self.y, self.z, None, None, "upcoming")
+        response = self.client.get("/analytics/", {"tournament": self.tournament.pk})
+        self.assertEqual(len(response.context["simulator_matches"]), 8)
+        self.assertContains(response, "Showing the next 8 of 10 upcoming matches")
+
+    def test_no_truncation_note_when_everything_fits(self):
+        response = self.client.get("/analytics/", {"tournament": self.tournament.pk})
+        self.assertNotContains(response, "Showing the next")

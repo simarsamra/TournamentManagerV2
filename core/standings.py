@@ -97,8 +97,20 @@ def calculate_standings(tournament, group=None):
     for s in standings.values():
         s["game_diff"] = s["games_won"] - s["games_lost"]
 
-    # Sort by tiebreaker.
-    #
+    return rank_standings(tournament, list(standings.values()), group=group)
+
+
+def rank_standings(tournament, rows, group=None):
+    """Sort standings rows by the tournament's tiebreakers and number them.
+
+    `rows` are calculate_standings-shaped dicts (at least "team", "points",
+    "game_diff" and "games_won"). Shared by calculate_standings and the
+    analytics what-if simulator, so a projected table breaks ties exactly the
+    way the real one would. Returns a new list; sets "rank" on each row.
+
+    Head-to-head, when configured, reads *real* results from the database: a
+    projected outcome has no score, so it can't take part in head-to-head.
+    """
     # Head-to-head is meaningful only *between* the teams that are tied, so it
     # cannot be a per-team scalar computed before sorting. Sort on the scalar
     # tiebreakers first, then re-order each run of still-tied teams using their
@@ -113,7 +125,7 @@ def calculate_standings(tournament, group=None):
     # final deterministic component the order of fully-tied teams came out of
     # dict iteration and was not stable.
     result = sorted(
-        standings.values(),
+        rows,
         key=lambda s: (scalar_key(s), -s["team"].id),
         reverse=True,
     )

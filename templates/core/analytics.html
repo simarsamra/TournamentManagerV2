@@ -247,6 +247,9 @@
         <div class="card-body">
             {% if simulator_enabled %}
             {% if simulator_matches %}
+            {% if simulator_total > simulator_limit %}
+            <p class="text-muted" style="font-size:0.85rem;margin-bottom:0.5rem;">Showing the next {{ simulator_limit }} of {{ simulator_total }} upcoming matches.</p>
+            {% endif %}
             <form method="get">
                 <div class="table-container">
                 <table>
