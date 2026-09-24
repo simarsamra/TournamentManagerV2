@@ -12,7 +12,7 @@ from django.test import TestCase, override_settings
 
 from core.backup import create_backup, restore_backup, validate_backup
 from core.models import (
-    Court, Notification, Team, TeamMembership, TeamTournamentCourtPreference,
+    AIQuestion, Court, Notification, Team, TeamMembership, TeamTournamentCourtPreference,
     TeamTournamentParticipation, Tournament, TournamentIndividualRegistration,
 )
 
@@ -90,14 +90,15 @@ class BackupRoundTripTests(TestCase):
                 restore_backup(bad)
 
     def test_every_model_with_a_backed_up_parent_is_itself_backed_up(self):
-        """A delete on a backed-up table must not cascade into an uncaptured one."""
+        """A delete on a backed-up table must not cascade into an uncaptured one,
+        unless the model is listed in NOT_BACKED_UP as disposable by design."""
         from django.apps import apps
-        from core.backup import BACKUP_MODELS
+        from core.backup import BACKUP_MODELS, NOT_BACKED_UP
 
         backed_up = set(BACKUP_MODELS)
         missing = []
         for model in apps.get_app_config("core").get_models():
-            if model in backed_up:
+            if model in backed_up or model in NOT_BACKED_UP:
                 continue
             for field in model._meta.get_fields():
                 if field.is_relation and getattr(field, "many_to_one", False):
@@ -110,3 +111,23 @@ class BackupRoundTripTests(TestCase):
             "BACKUP_MODELS, so a restore would delete them without restoring "
             "them: " + ", ".join(missing),
         )
+
+    def test_ai_questions_are_left_out_and_cleared_on_restore(self):
+        """AIQuestion is in NOT_BACKED_UP: disposable, so a backup skips it and
+        a restore clears it, without invalidating older backups."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(BACKUP_DIR=Path(tmp)):
+                tournament = self._populate()
+                alice = User.objects.get(username="alice")
+                AIQuestion.objects.create(user=alice, tournament=tournament, question="How are we doing?")
+                record = create_backup(notes="with a queued question")
+                path = Path(tmp) / record.filename
+
+                self.assertNotIn("core.aiquestion", json.loads(path.read_text()))
+                self.assertEqual(validate_backup(path), (True, "Backup is valid"))
+                restore_backup(path)
+
+                self.assertEqual(AIQuestion.objects.count(), 0)
+                self.assertTrue(User.objects.filter(username="alice").exists())

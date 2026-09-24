@@ -10,6 +10,7 @@ from django.core import serializers
 from django.db import connection, transaction
 
 from .models import (
+    AIQuestion,
     Tournament, Court, TimeSlot, Team, Match, Player,
     RescheduleRequest, OpenSlot, AuditLog, BackupRecord, CourtAvailability,
     TeamMembership, TeamTournamentParticipation, TeamTournamentCourtPreference,
@@ -54,6 +55,14 @@ BACKUP_MODELS = [
     Notification,
     AuditLog,
     BackupRecord,
+]
+
+# Models deliberately left out of backups. A restore replaces the users and
+# tournaments they point at, so it deletes these outright; list only data that
+# is disposable by design. Adding a model to BACKUP_MODELS instead would make
+# every existing backup fail validation ("missing required data").
+NOT_BACKED_UP = [
+    AIQuestion,  # AI analytics queue and history, purged after AI_RETENTION_DAYS anyway
 ]
 
 BACKUP_FORMAT_VERSION = 2
@@ -143,6 +152,8 @@ def restore_backup(filepath):
 
     with transaction.atomic(), suppress_user_autocreate():
         with connection.constraint_checks_disabled():
+            for model in NOT_BACKED_UP:
+                model.objects.all().delete()
             for model in reversed(BACKUP_MODELS):
                 model.objects.all().delete()
 

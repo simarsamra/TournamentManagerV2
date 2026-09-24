@@ -1,5 +1,6 @@
 """Tests for AI_ANALYTICS_PLAN.md (question answering over the analytics)."""
 import urllib.error
+from datetime import timedelta
 import urllib.request
 from io import StringIO
 from unittest import mock
@@ -9,13 +10,15 @@ from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 
 from core import analytics
-from core.ai import client
+from core.ai import client, jobs
 from core.ai.testing import FakeOllama, chat_reply, http_error
 from core.checks import check_ai_analytics_settings
 from core.models import (
-    Match, OrganizerProfile, Team, TeamMembership, TeamTournamentParticipation, Tournament,
+    AIQuestion, Match, OrganizerProfile, Team, TeamMembership, TeamTournamentParticipation,
+    Tournament,
 )
 from core.standings import calculate_standings
 from core.test_runner import NetworkAccessBlocked
@@ -293,3 +296,172 @@ class AIDoctorTests(SimpleTestCase):
         output, error = self._run(fake)
         self.assertIsNotNone(error)
         self.assertIn("set DJANGO_OLLAMA_THINK= (empty)", output)
+
+
+
+# AI-3
+
+@override_settings(AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_JOB_STALE_SECONDS=600, AI_RETENTION_DAYS=30)
+class AIJobQueueTests(TestCase):
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+
+    def _job(self, user=None, **fields):
+        return AIQuestion.objects.create(
+            user=user or self.organizer, tournament=self.tournament, question="How are the Aces?",
+            **fields,
+        )
+
+    def _age(self, job, **delta):
+        AIQuestion.objects.filter(pk=job.pk).update(created_at=timezone.now() - timedelta(**delta))
+
+    # -- claiming --
+
+    def test_claims_the_oldest_pending_job_exactly_once(self):
+        newer, older = self._job(), self._job()
+        self._age(older, minutes=5)
+        claimed = jobs.claim_next()
+        self.assertEqual((claimed.pk, claimed.status), (older.pk, "running"))
+        self.assertIsNotNone(claimed.started_at)
+        self.assertEqual(jobs.claim_next().pk, newer.pk)
+        self.assertIsNone(jobs.claim_next())
+        self.assertEqual(AIQuestion.objects.filter(status="running").count(), 2)
+
+    def test_a_job_taken_by_another_worker_is_skipped(self):
+        job = self._job()
+        real_filter = AIQuestion.objects.filter
+        raced = []
+
+        def racing_filter(*args, **kwargs):
+            # Just before our compare-and-set UPDATE, another worker claims it.
+            if kwargs.get("pk") == job.pk and kwargs.get("status") == "pending" and not raced:
+                raced.append(True)
+                real_filter(pk=job.pk).update(status="running")
+            return real_filter(*args, **kwargs)
+
+        with mock.patch.object(AIQuestion.objects, "filter", side_effect=racing_filter):
+            self.assertIsNone(jobs.claim_next())
+        self.assertEqual(raced, [True])
+
+    # -- reaping --
+
+    def test_stale_running_jobs_are_reaped(self):
+        stale = self._job(status="running", started_at=timezone.now() - timedelta(minutes=20))
+        fresh = self._job(status="running", started_at=timezone.now() - timedelta(minutes=2))
+        pending = self._job()
+        self.assertEqual(jobs.reap_stale(), 1)
+        stale.refresh_from_db()
+        self.assertEqual((stale.status, stale.error), ("failed", jobs.MSG_STALE))
+        self.assertIsNotNone(stale.finished_at)
+        self.assertEqual(AIQuestion.objects.get(pk=fresh.pk).status, "running")
+        self.assertEqual(AIQuestion.objects.get(pk=pending.pk).status, "pending")
+
+    # -- processing --
+
+    def _run(self, job, processor):
+        jobs.claim_next()
+        job.refresh_from_db()
+        jobs.process(job, processor)
+        job.refresh_from_db()
+        return job
+
+    def test_success_saves_what_the_processor_filled_in(self):
+        def processor(job):
+            job.route = {"intent": "form"}
+            job.facts = {"form": {"team": "Aces"}}
+            job.answer = "Aces won 2 of 5."
+            job.answer_verified = True
+            job.model_name = "qwen3.5:9b"
+            job.timings = {"total_ms": 900}
+
+        job = self._run(self._job(), processor)
+        self.assertEqual((job.status, job.error), ("done", ""))
+        self.assertEqual(job.route, {"intent": "form"})
+        self.assertEqual((job.answer, job.answer_verified, job.model_name), ("Aces won 2 of 5.", True, "qwen3.5:9b"))
+        self.assertIsNotNone(job.finished_at)
+
+    def test_access_is_rechecked_before_the_model_is_called(self):
+        other = _make_organizer("other")  # not this tournament's manager
+        processor = mock.Mock()
+        job = self._run(self._job(user=other), processor)
+        processor.assert_not_called()
+        self.assertEqual((job.status, job.error), ("failed", jobs.MSG_NO_ACCESS))
+
+    def test_managers_audience_excludes_enrolled_players(self):
+        team = Team.objects.create(name="Aces")
+        TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        player = User.objects.create_user(username="p", password="Regression-Pass-1")
+        TeamMembership.objects.create(team=team, user=player, role="captain")
+        processor = mock.Mock()
+        self.assertEqual(self._run(self._job(user=player), processor).status, "failed")
+        processor.assert_not_called()
+        with override_settings(AI_ANALYTICS_AUDIENCE="all"):
+            self.assertEqual(self._run(self._job(user=player), processor).status, "done")
+
+    def test_model_errors_become_friendly_messages(self):
+        for exc, message in (
+            (client.OllamaTimeout("slow"), jobs.MSG_SLOW),
+            (client.OllamaUnavailable("down"), jobs.MSG_UNAVAILABLE),
+            (client.OllamaOverloaded("503"), jobs.MSG_UNAVAILABLE),
+            (ValueError("bug"), jobs.MSG_ERROR),
+        ):
+            with self.subTest(exc=exc), self.assertLogs("core.ai", level="WARNING") as logs:
+                job = self._run(self._job(), mock.Mock(side_effect=exc))
+            self.assertEqual((job.status, job.error), ("failed", message))
+            self.assertIn(str(exc), "\n".join(logs.output))
+
+    def test_a_reaped_job_is_not_resurrected(self):
+        def slow_processor(job):
+            # The reaper gives up on the job while the model is still working.
+            AIQuestion.objects.filter(pk=job.pk).update(status="failed", error=jobs.MSG_STALE)
+            job.answer = "late"
+
+        with self.assertLogs("core.ai", level="WARNING"):
+            job = self._run(self._job(), slow_processor)
+        self.assertEqual((job.status, job.error, job.answer), ("failed", jobs.MSG_STALE, ""))
+
+    def test_pipeline_placeholder_fails_cleanly_until_ai5(self):
+        with self.assertLogs("core.ai", level="ERROR"):
+            job = self._run(self._job(), None)
+        self.assertEqual((job.status, job.error), ("failed", jobs.MSG_ERROR))
+
+    # -- purge --
+
+    def test_purge_deletes_only_rows_past_retention(self):
+        old, recent = self._job(), self._job()
+        self._age(old, days=31)
+        self._age(recent, days=29)
+        self.assertEqual(jobs.purge_old(dry_run=True), 1)
+        self.assertEqual(AIQuestion.objects.count(), 2)
+        out = StringIO()
+        call_command("ai_purge", stdout=out)
+        self.assertIn("Deleted 1 AI question(s) older than 30 days.", out.getvalue())
+        self.assertEqual(list(AIQuestion.objects.values_list("pk", flat=True)), [recent.pk])
+
+    # -- worker command --
+
+    def test_worker_once_processes_one_job(self):
+        first, second = self._job(), self._job()
+        self._age(first, minutes=1)
+        out = StringIO()
+        with mock.patch("core.ai.pipeline.answer_question") as answer:
+            call_command("ai_worker", "--once", stdout=out)
+        answer.assert_called_once()
+        self.assertIn(f"question #{first.pk} done", out.getvalue())
+        self.assertEqual(AIQuestion.objects.get(pk=second.pk).status, "pending")
+
+    def test_worker_reaps_before_claiming(self):
+        stale = self._job(status="running", started_at=timezone.now() - timedelta(hours=1))
+        with self.assertLogs("core.ai", level="WARNING"):
+            call_command("ai_worker", "--once", stdout=StringIO())
+        self.assertEqual(AIQuestion.objects.get(pk=stale.pk).status, "failed")
+
+    @override_settings(AI_ANALYTICS_ENABLED=False)
+    def test_worker_refuses_to_run_while_disabled(self):
+        with self.assertRaises(CommandError):
+            call_command("ai_worker", "--once", stdout=StringIO())

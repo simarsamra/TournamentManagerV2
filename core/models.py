@@ -822,3 +822,63 @@ class BackupRecord(models.Model):
 
     def __str__(self):
         return self.filename
+
+
+class AIQuestion(models.Model):
+    """A question about a tournament's analytics, answered by a local model
+    (AI_ANALYTICS_PLAN.md). Rows are the work queue that `manage.py ai_worker`
+    consumes, and the record of what the model was shown and said.
+
+    Deliberately not in backup.BACKUP_MODELS: questions are purged after
+    AI_RETENTION_DAYS, and a restore replaces the tournaments they refer to.
+    """
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("running", "Running"),
+        ("done", "Done"),
+        ("failed", "Failed"),
+    ]
+    KIND_CHOICES = [
+        ("ask", "Question"),
+        ("recap", "Recap"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="ai_questions")
+    tournament = models.ForeignKey(
+        Tournament, on_delete=models.CASCADE, related_name="ai_questions"
+    )
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default="ask")
+    question = models.TextField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    # Validated router output (AI-5): which card, which parameters.
+    route = models.JSONField(null=True, blank=True)
+    # Exactly what the model was shown (AI-4), so every answer is auditable.
+    facts = models.JSONField(null=True, blank=True)
+    answer = models.TextField(blank=True, default="")
+    # False when the explanation mentions a number that isn't in `facts`
+    # (AI-7); such text is kept for debugging but never displayed.
+    answer_verified = models.BooleanField(default=False)
+    # Safe to show the asker. Details go to the `core.ai` log.
+    error = models.CharField(max_length=255, blank=True, default="")
+    model_name = models.CharField(max_length=100, blank=True, default="")
+    timings = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            # The worker's claim query and the global queue cap.
+            models.Index(fields=["status", "created_at"], name="aiq_status_created"),
+            # The per-user hourly quota.
+            models.Index(fields=["user", "created_at"], name="aiq_user_created"),
+        ]
+
+    def __str__(self):
+        return f"AIQuestion #{self.pk} ({self.status}) by {self.user_id}"
+
+    @property
+    def is_finished(self):
+        return self.status in ("done", "failed")

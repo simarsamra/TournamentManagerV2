@@ -690,9 +690,9 @@ README section **"AI analytics (optional)"**:
 | ID | Answer | Date |
 |---|---|---|
 | D-1 model / hardware | 12 GB NVIDIA GPU. Default `qwen3.5:9b` (~6.6 GB), thinking off, 8K context, 60 s timeout; compare `gemma4:12b` (~7.6 GB) in AI-8 before finalising | 2026-09-24 |
-| D-2 queue vs synchronous | _pending_ | |
+| D-2 queue vs synchronous | Queue + `ai_worker` service (recommended) | 2026-09-24 |
 | D-3 audience | _pending_ | |
-| D-4 retention | _pending_ | |
+| D-4 retention | 30 days, deleted daily by `manage.py ai_purge` | 2026-09-24 |
 | D-5 explanations on/off | _pending_ | |
 
 ### Results
