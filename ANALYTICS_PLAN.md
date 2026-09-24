@@ -293,6 +293,23 @@ widgets.
 **Tests.** A confirmed-without-scores match is treated identically by the
 standings table and the form widget.
 
+**Outcome (2026-09-24): closed, no code change.** No code path produces a
+confirmed match without both scores:
+
+| Path | Scores |
+|---|---|
+| `submit_score` (`matches.py`), organizer direct confirm | `ScoreSubmitForm`: both fields required integers, set before `status` |
+| `_lock_match_score` (`helpers.py`) — confirm, dispute auto-lock, dispute resolution | compares `score_team1 > score_team2`, so it cannot complete without both; its callers act only on `pending_confirmation` / `disputed` matches, which `submit_score` reached with scores, and `resolve_dispute` rejects a missing score |
+| `override_match_result` (`matches.py`) | parses both scores as ints first |
+| Test Maker score randomizer (`test_maker.py`) | sets both |
+| Django admin | `Match` isn't registered (`core/admin.py` is empty) |
+
+Forfeits: `_finalize_no_show_match` and disqualification refuse to forfeit
+without a winner. The one winner-less forfeit is a withdrawal
+(`withdrawals.py`) from a match whose other slot is still TBD: the only
+team in it is the withdrawn one, which isn't selectable in the form
+widgets, so there's no second team whose W/L could disagree.
+
 ---
 
 ## A-8 — The simulator ignores the tournament's tiebreakers
