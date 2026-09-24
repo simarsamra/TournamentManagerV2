@@ -8,6 +8,12 @@
     {% elif route.message %}
     <p style="margin:0;">{{ route.message }}</p>
     {% else %}
+    {% if q.answer and q.answer_verified %}
+    <p style="margin:0 0 0.5rem;">{{ q.answer }}</p>
+    <div class="text-muted" style="font-size:0.75rem;margin-bottom:0.5rem;">AI-generated; every number was checked against the figures below.</div>
+    {% elif q.answer %}
+    <div class="text-muted" style="font-size:0.75rem;margin-bottom:0.5rem;">The AI's explanation was hidden because it didn't match the figures. Here they are:</div>
+    {% endif %}
     {% include "core/partials/ai_answer_facts.html" %}
     {% if page_link %}<a class="btn btn-outline btn-sm mt-1" href="{{ page_link }}">Show on the {{ card_label }} card</a>{% endif %}
     {% endif %}

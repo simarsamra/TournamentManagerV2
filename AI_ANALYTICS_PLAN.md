@@ -713,7 +713,7 @@ README section **"AI analytics (optional)"**:
 | D-2 queue vs synchronous | Queue + `ai_worker` service (recommended) | 2026-09-24 |
 | D-3 audience | _pending_ | |
 | D-4 retention | 30 days, deleted daily by `manage.py ai_purge` | 2026-09-24 |
-| D-5 explanations on/off | _pending_ | |
+| D-5 explanations on/off | On (`DJANGO_AI_EXPLANATIONS`, default true), with the numeric grounding check | 2026-09-24 |
 
 ### Results
 

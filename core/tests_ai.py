@@ -17,6 +17,7 @@ from django.utils import timezone
 from core import analytics
 from core.ai import client, jobs
 from core.ai.facts import MAX_FACTS_CHARS, Route, build_facts, serialise, team_keys
+from core.ai.explain import clean, ungrounded_numbers
 from core.ai.router import MSG_UNKNOWN, build_messages, build_schema, route_question, validate
 from core.ai.testing import FakeOllama, chat_reply, http_error
 from core.checks import check_ai_analytics_settings
@@ -813,9 +814,12 @@ class RouterTests(TestCase):
                                         question="how are the aces doing?")
         with FakeOllama() as fake:
             fake.respond_chat(_route_json("form", "T1", window=3), model="qwen3.5:9b")
+            fake.respond_chat("The Aces won their only recent match, against the Comets.")
             call_command("ai_worker", "--once", stdout=StringIO())
         job.refresh_from_db()
         self.assertEqual((job.status, job.error, job.model_name), ("done", "", "qwen3.5:9b"))
+        self.assertEqual((job.answer, job.answer_verified),
+                         ("The Aces won their only recent match, against the Comets.", True))
         self.assertEqual((job.route["card"], job.route["params"]),
                          ("form", {"form_team": self.aces.pk, "form_window": 3}))
         self.assertEqual(job.facts["form"]["matches"], [{"opponent": "Comets", "result": "W"}])
@@ -1010,3 +1014,125 @@ class AskViewTests(TestCase):
                 self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
             counts.append(len(ctx.captured_queries))
         self.assertEqual(counts[0], counts[1])
+
+
+# AI-7
+
+class GroundingCheckTests(SimpleTestCase):
+    FACTS = {
+        "tournament": {"name": "Spring League 2026", "points_for": {"win": 3, "draw": 1, "loss": 0}},
+        "form": {"team": "Aces", "window": 5, "win_rate_pct": 66.67,
+                 "matches": [{"opponent": "Team 7", "result": "W"}]},
+        "standings_top": [{"rank": 1, "team": "Aces", "points": 8, "game_diff": -3}],
+        "next_match": {"when": "2026-10-01 14:00"},
+    }
+
+    def check(self, answer, question=""):
+        return ungrounded_numbers(answer, self.FACTS, question)
+
+    def test_grounded_text_passes(self):
+        self.assertEqual(self.check("Aces are top with 8 points and won 66.67% of their last 5."), [])
+
+    def test_invented_numbers_are_caught(self):
+        self.assertEqual(self.check("Aces won 7 of 9 and have 12 points."), ["9", "12"])
+
+    def test_rounding_is_allowed_but_not_other_values(self):
+        self.assertEqual(self.check("A win rate of 67%, or 66.7% to be precise."), [])
+        self.assertEqual(self.check("A win rate of 68%."), ["68"])
+
+    def test_scores_check_both_numbers(self):
+        self.assertEqual(self.check("They won 3-1."), [])       # 3 and 1 are both in the facts
+        self.assertEqual(self.check("They won 4-2."), ["4", "2"])
+
+    def test_negative_values_dates_and_names_count(self):
+        self.assertEqual(self.check("Goal difference -3; next game on 2026-10-01 at 14:00 after beating Team 7."), [])
+
+    def test_numbers_from_the_question_may_be_repeated(self):
+        # (11 isn't in the facts; 10 would be, inside the date.)
+        self.assertEqual(self.check("Over the last 11 games: see below.", question="last 11 games?"), [])
+        self.assertEqual(self.check("Over the last 11 games: see below."), ["11"])
+
+    def test_words_are_not_checked(self):
+        self.assertEqual(self.check("They won two of their last five."), [])
+
+    def test_clean_strips_markup_reasoning_and_length(self):
+        self.assertEqual(clean("<think>let me add 2+2</think> **Aces** are  _top_."), "Aces are top.")
+        long = clean("word " * 300)
+        self.assertLessEqual(len(long), 601)
+        self.assertTrue(long.endswith("…"))
+
+
+@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_EXPLANATIONS_ENABLED=True)
+class ExplanationPipelineTests(TestCase):
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.aces, self.bolts = (Team.objects.create(name=n) for n in ("Aces", "Bolts"))
+        for team in (self.aces, self.bolts):
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        for number, (s1, s2) in enumerate(((3, 1), (0, 2)), start=1):
+            Match.objects.create(
+                tournament=self.tournament, match_number=number, team1=self.aces, team2=self.bolts,
+                score_team1=s1, score_team2=s2, winner=self.aces if s1 > s2 else self.bolts,
+                status="confirmed",
+            )
+        self.client.force_login(self.organizer)
+
+    def _run(self, *replies):
+        job = AIQuestion.objects.create(user=self.organizer, tournament=self.tournament,
+                                        question="Aces vs Bolts?")
+        with FakeOllama() as fake:
+            for reply in replies:
+                fake.respond(reply) if isinstance(reply, BaseException) else fake.respond_chat(reply)
+            call_command("ai_worker", "--once", stdout=StringIO())
+        job.refresh_from_db()
+        return job, fake
+
+    def _page(self, job):
+        return self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+
+    def test_verified_explanation_is_shown_above_the_figures(self):
+        job, fake = self._run(_route_json("head_to_head", "T1", "T2"),
+                              "Aces and Bolts have met 2 times and won 1 each.")
+        self.assertEqual((job.status, job.answer_verified), ("done", True))
+        self.assertEqual(set(job.timings), {"route", "explain"})
+        explain_request = fake.requests[1]["body"]
+        self.assertNotIn("format", explain_request)
+        self.assertEqual(explain_request["options"]["temperature"], 0.2)
+        self.assertIn('"meetings":2', explain_request["messages"][1]["content"])
+        page = self._page(job)
+        self.assertContains(page, "Aces and Bolts have met 2 times and won 1 each.", status_code=286)
+        self.assertContains(page, "every number was checked", status_code=286)
+
+    def test_invented_number_hides_the_text_but_keeps_the_card(self):
+        job, _ = self._run(_route_json("head_to_head", "T1", "T2"), "Aces lead the series 7 to 1.")
+        self.assertEqual((job.status, job.answer, job.answer_verified),
+                         ("done", "Aces lead the series 7 to 1.", False))
+        page = self._page(job)
+        self.assertNotContains(page, "lead the series", status_code=286)
+        self.assertContains(page, "explanation was hidden", status_code=286)
+        self.assertContains(page, "<strong>Aces 1 – 1 Bolts</strong>", status_code=286)
+
+    def test_empty_explanation_shows_the_card_only(self):
+        job, _ = self._run(_route_json("head_to_head", "T1", "T2"), "   ")
+        self.assertEqual((job.status, job.answer, job.answer_verified), ("done", "", False))
+        self.assertNotContains(self._page(job), "explanation was hidden", status_code=286)
+
+    def test_model_error_during_explanation_still_finishes_with_the_card(self):
+        with self.assertLogs("core.ai", level="WARNING"):
+            job, _ = self._run(_route_json("head_to_head", "T1", "T2"), client.OllamaTimeout("slow"))
+        self.assertEqual((job.status, job.error, job.answer), ("done", "", ""))
+        self.assertEqual(job.route["card"], "h2h")
+
+    def test_unknown_questions_get_no_explanation_call(self):
+        job, fake = self._run(_route_json("unknown"))
+        self.assertEqual((job.status, len(fake.requests)), ("done", 1))
+
+    @override_settings(AI_EXPLANATIONS_ENABLED=False)
+    def test_explanations_can_be_switched_off(self):
+        job, fake = self._run(_route_json("head_to_head", "T1", "T2"))
+        self.assertEqual((job.status, job.answer, len(fake.requests)), ("done", "", 1))

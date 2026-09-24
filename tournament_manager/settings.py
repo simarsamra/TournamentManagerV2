@@ -289,6 +289,8 @@ AI_MAX_PENDING = int(os.environ.get("DJANGO_AI_MAX_PENDING", "20"))
 AI_MAX_QUESTION_CHARS = int(os.environ.get("DJANGO_AI_MAX_QUESTION_CHARS", "300"))
 AI_JOB_STALE_SECONDS = int(os.environ.get("DJANGO_AI_JOB_STALE_SECONDS", "600"))
 AI_RETENTION_DAYS = int(os.environ.get("DJANGO_AI_RETENTION_DAYS", "30"))
+# Written explanations (AI-7, D-5). When off, answers show the routed card only.
+AI_EXPLANATIONS_ENABLED = _env_bool("DJANGO_AI_EXPLANATIONS", True)
 
 # Tests must never reach a real model; see core.test_runner.
 TEST_RUNNER = "core.test_runner.NoNetworkTestRunner"
