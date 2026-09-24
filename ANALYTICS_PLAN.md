@@ -440,7 +440,7 @@ magic number).
 
 | Task | Question | Answer | Date |
 |---|---|---|---|
-| A-1 | Global (`tournament IS NULL`) audit rows: who sees them? | _pending_ | |
+| A-1 | Global (`tournament IS NULL`) audit rows: who sees them? | Site admins only (`_is_site_admin`). Non-admin organizers see only rows for tournaments they manage; the action dropdown is built from those rows too. | 2026-09-24 |
 
 ### Results
 

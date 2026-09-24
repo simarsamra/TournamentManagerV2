@@ -340,8 +340,8 @@
 </div>
 {% endif %}
 
-<!-- Recent Audit Log (organizers only) -->
-{% if user_is_organizer %}
+<!-- Recent Audit Log (this tournament's managers only) -->
+{% if can_manage %}
 <div class="card mt-2">
     <div class="card-header">Recent Activity</div>
     <div class="table-container">

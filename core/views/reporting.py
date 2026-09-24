@@ -145,10 +145,11 @@ def analytics_view(request):
     tournament = _get_tournament(request)
     if not tournament:
         return render(request, "core/analytics.html", _tournament_context(request, tournament))
-    if not _is_organizer(request.user) and not _is_user_enrolled_in_tournament(
-        request.user, tournament
-    ):
-        messages.error(request, "You are not enrolled in that tournament.")
+    # Organizers are independent parties: owning *a* tournament does not grant
+    # reads of another organizer's. Managers and enrolled players only.
+    can_manage = _can_manage_tournament(request.user, tournament)
+    if not can_manage and not _is_user_enrolled_in_tournament(request.user, tournament):
+        messages.error(request, "You do not have access to that tournament.")
         return redirect("dashboard")
     _expire_pending_score_disputes(tournament)
     matches = tournament.matches.all()
@@ -221,11 +222,12 @@ def analytics_view(request):
         })
     recent_logs = (
         AuditLog.objects.filter(tournament=tournament).order_by("-timestamp")[:20]
-        if _is_organizer(request.user)
+        if can_manage
         else AuditLog.objects.none()
     )
     context = {
-        "tournament": tournament, "match_stats": match_stats, "court_stats": court_stats,
+        "tournament": tournament, "can_manage": can_manage,
+        "match_stats": match_stats, "court_stats": court_stats,
         "team_stats": team_stats, "schedule_density": json.dumps(schedule_density),
         "withdrawal_info": withdrawal_info, "recent_logs": recent_logs,
     }
@@ -488,9 +490,20 @@ def audit_log_view(request):
         messages.error(request, "Only organizers can view the audit log.")
         return redirect("dashboard")
     tournament = _get_tournament(request)
+    if tournament and not _can_manage_tournament(request.user, tournament):
+        messages.error(request, "You do not manage that tournament.")
+        return redirect("dashboard")
     logs = AuditLog.objects.select_related("user")
-    if tournament:
-        logs = logs.filter(Q(tournament=tournament) | Q(tournament__isnull=True))
+    # Rows with no tournament (logins, registrations, account management) are
+    # site-wide events about other people's accounts: site admins only.
+    if _is_site_admin(request.user):
+        if tournament:
+            logs = logs.filter(Q(tournament=tournament) | Q(tournament__isnull=True))
+    elif tournament:
+        logs = logs.filter(tournament=tournament)
+    else:
+        logs = logs.none()
+    visible_logs = logs
     action_filter = request.GET.get("action", "")
     if action_filter:
         logs = logs.filter(action=action_filter)
@@ -500,7 +513,7 @@ def audit_log_view(request):
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, total_pages)
     logs = logs[(page - 1) * per_page : page * per_page]
-    actions = AuditLog.objects.values_list("action", flat=True).distinct()
+    actions = visible_logs.order_by("action").values_list("action", flat=True).distinct()
     return render(request, "core/audit_log.html", {
         "logs": logs, "actions": actions, "action_filter": action_filter,
         "page": page, "total_pages": total_pages, "page_range": range(1, total_pages + 1),
