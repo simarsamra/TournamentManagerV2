@@ -536,3 +536,66 @@ class ScheduleDensityTests(TestCase):
         self.assertEqual(len(buckets), 13)  # 91 days from a Monday span 13 weeks
         self.assertEqual(sum(count for _, count in buckets), 4 + len(range(3, 91, 3)))
         self.assertContains(response, "Matches per Week")
+
+
+class WidgetStatePreservationTests(TestCase):
+    """A-12 (1): the four widget forms were separate GET forms, so submitting
+    one dropped the others' parameters -- choosing a head-to-head pair reset
+    the form-trend team and every simulator pick."""
+
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="T", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.a, self.b, self.c = (Team.objects.create(name=n) for n in ("A", "B", "C"))
+        for team in (self.a, self.b, self.c):
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=self.tournament, status="active"
+            )
+        self.upcoming = Match.objects.create(
+            tournament=self.tournament, match_number=1, team1=self.a, team2=self.b,
+            status="upcoming",
+        )
+        self.client.force_login(self.organizer)
+
+    @staticmethod
+    def _hidden(name, value):
+        return f'<input type="hidden" name="{name}" value="{value}">'
+
+    def test_every_other_form_carries_each_widgets_state(self):
+        response = self.client.get("/analytics/", {
+            "tournament": self.tournament.pk,
+            "h2h_team1": self.b.pk, "h2h_team2": self.c.pk,
+            "form_team": self.c.pk, "form_window": 8,
+            "prep_team": self.b.pk,
+            f"sim_{self.upcoming.pk}": "team2",
+        })
+        content = response.content.decode()
+        # Each widget's values ride along in the three *other* forms...
+        for name, value in (
+            ("h2h_team1", self.b.pk), ("h2h_team2", self.c.pk),
+            ("form_team", self.c.pk), ("form_window", 8),
+            ("prep_team", self.b.pk), (f"sim_{self.upcoming.pk}", "team2"),
+        ):
+            self.assertEqual(content.count(self._hidden(name, value)), 3, name)
+        # ...and the tournament in all four, so a submit stays on it.
+        self.assertEqual(content.count(self._hidden("tournament", self.tournament.pk)), 4)
+
+    def test_submitting_one_widget_keeps_the_others(self):
+        # The URL a head-to-head submit produces once the hidden fields ride along.
+        response = self.client.get("/analytics/", {
+            "tournament": self.tournament.pk,
+            "h2h_team1": self.a.pk, "h2h_team2": self.c.pk,
+            "form_team": self.c.pk, f"sim_{self.upcoming.pk}": "team2",
+        })
+        self.assertEqual(response.context["form_team"].pk, self.c.pk)
+        self.assertEqual(response.context["simulator_matches"][0].selected_outcome, "team2")
+
+    def test_unknown_parameters_are_not_echoed(self):
+        response = self.client.get("/analytics/", {
+            "tournament": self.tournament.pk, "sim_99999": "team1", "junk": "x",
+        })
+        self.assertNotContains(response, 'name="sim_99999"')
+        self.assertNotContains(response, 'name="junk"')

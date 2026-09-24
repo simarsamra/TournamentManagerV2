@@ -1,0 +1,2 @@
+{% comment %}The other analytics widgets' current values, so this form's submit keeps them (A-12).{% endcomment %}
+<span id="analytics-hidden-{{ widget }}" class="analytics-hidden-state">{% for name, value in fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}</span>

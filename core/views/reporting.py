@@ -151,6 +151,47 @@ SIMULATOR_MATCH_LIMIT = 8
 # Schedule density switches from one bar per day to one per week beyond this.
 SCHEDULE_DENSITY_DAILY_MAX_SPAN_DAYS = 45
 
+# Query parameters each analytics widget's form owns. The simulator owns
+# sim_<match pk>. Every form carries the *other* widgets' current values as
+# hidden inputs, so submitting one widget doesn't reset the rest.
+ANALYTICS_WIDGET_PARAMS = {
+    "h2h": ("h2h_team1", "h2h_team2"),
+    "form": ("form_team", "form_window"),
+    "prep": ("prep_team",),
+    "sim": (),
+}
+
+
+def _analytics_hidden_state(request, tournament, simulator_matches):
+    """Return {widget: [(name, value), ...]}: the hidden inputs each widget's
+    form needs to carry every other widget's state (plus the tournament).
+
+    Only known parameters are echoed, and sim_* only for matches the
+    simulator is actually offering with a valid pick.
+    """
+    state = [("tournament", str(tournament.pk))]
+    for params in ANALYTICS_WIDGET_PARAMS.values():
+        for name in params:
+            value = request.GET.get(name)
+            if value:
+                state.append((name, value))
+    for match in simulator_matches:
+        if match.selected_outcome:
+            state.append((f"sim_{match.pk}", match.selected_outcome))
+
+    def owner(name):
+        if name.startswith("sim_"):
+            return "sim"
+        return next(
+            (widget for widget, params in ANALYTICS_WIDGET_PARAMS.items() if name in params),
+            None,
+        )
+
+    return {
+        widget: [(name, value) for name, value in state if owner(name) != widget]
+        for widget in ANALYTICS_WIDGET_PARAMS
+    }
+
 
 def _schedule_density(scheduled_times):
     """Return ([[label, count], ...] in date order, "day" | "week").
@@ -538,6 +579,7 @@ def analytics_view(request):
         "simulator_limit": SIMULATOR_MATCH_LIMIT,
         "simulated_standings": simulated_standings,
         "simulator_has_choices": simulator_has_choices,
+        "analytics_hidden": _analytics_hidden_state(request, tournament, simulator_matches),
     })
     context.update(_tournament_context(request, tournament))
     return render(request, "core/analytics.html", context)
