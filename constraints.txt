@@ -12,6 +12,6 @@
 #     /tmp/upgrade-venv/bin/pip install -r requirements.txt -r requirements-postgres.txt
 #     /tmp/upgrade-venv/bin/pip freeze --exclude-editable > constraints.txt
 asgiref==3.12.1
-django==5.2.17
+django==6.1.1
 psycopg2-binary==2.9.13
 sqlparse==0.6.0
