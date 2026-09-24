@@ -252,11 +252,19 @@ def analytics_view(request):
         "forfeited": matches.filter(status="forfeited").count(),
         "cancelled": matches.filter(status="cancelled").count(),
     }
-    courts = tournament.courts.all()
+    # One grouped query for every court's counts, not two per court.
+    court_counts = {
+        row["court"]: row
+        for row in matches.filter(court__isnull=False).values("court").annotate(
+            total=db_models.Count("id"),
+            confirmed=db_models.Count("id", filter=Q(status="confirmed")),
+        )
+    }
     court_stats = []
-    for court in courts:
-        total = matches.filter(court=court).count()
-        confirmed = matches.filter(court=court, status="confirmed").count()
+    for court in tournament.courts.all():
+        counts = court_counts.get(court.pk, {})
+        total = counts.get("total", 0)
+        confirmed = counts.get("confirmed", 0)
         court_stats.append({
             "court": court, "total_matches": total, "confirmed_matches": confirmed,
             # Share of this court's scheduled matches already played.
@@ -306,20 +314,31 @@ def analytics_view(request):
     schedule_density, schedule_density_unit = _schedule_density(
         matches.filter(scheduled_time__isnull=False).values_list("scheduled_time", flat=True)
     )
-    withdrawn = teams.filter(
-        participations__tournament=tournament,
-        participations__status="withdrawn",
-    ).distinct()
-    withdrawal_info = []
-    for team in withdrawn:
-        affected = matches.filter(Q(team1=team) | Q(team2=team), status__in=["forfeited", "cancelled"]).count()
-        participation = team.participations.filter(tournament=tournament).first()
-        withdrawal_info.append({
-            "team": team,
-            "display_label": _team_display_label(tournament, team),
-            "affected_matches": affected,
-            "withdrawn_at": participation.withdrawn_at if participation else None,
-        })
+    # Withdrawn teams: one query for the participations (with their teams) and
+    # one for the matches they forfeited or had cancelled, not two per team.
+    withdrawn_participations = list(
+        tournament.team_participations.filter(status="withdrawn")
+        .select_related("team").order_by("team__name")
+    )
+    withdrawn_ids = {p.team_id for p in withdrawn_participations}
+    affected_counts = defaultdict(int)
+    if withdrawn_ids:
+        for team1_id, team2_id in matches.filter(
+            Q(team1_id__in=withdrawn_ids) | Q(team2_id__in=withdrawn_ids),
+            status__in=["forfeited", "cancelled"],
+        ).values_list("team1_id", "team2_id"):
+            for team_id in {team1_id, team2_id} & withdrawn_ids:
+                affected_counts[team_id] += 1
+    withdrawal_info = [
+        {
+            "team": participation.team,
+            "display_label": label_map.get(participation.team_id)
+            or _team_display_label(tournament, participation.team),
+            "affected_matches": affected_counts[participation.team_id],
+            "withdrawn_at": participation.withdrawn_at,
+        }
+        for participation in withdrawn_participations
+    ]
     recent_logs = (
         AuditLog.objects.filter(tournament=tournament).order_by("-timestamp")[:20]
         if can_manage

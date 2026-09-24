@@ -153,24 +153,34 @@ def _sort_key(standing, tiebreakers):
     return tuple(key)
 
 
-def _head_to_head_points(tournament, team_ids, group=None):
+def _head_to_head_matches(tournament, group=None):
+    """All finished (confirmed or forfeited) matches that head-to-head reads.
+
+    Loaded once per ranking and passed to _head_to_head_points, so the
+    tiebreaker costs one query however many tied groups there are.
+    """
+    matches = tournament.matches.filter(status__in=("confirmed", "forfeited"))
+    if group:
+        matches = matches.filter(group=group)
+    return list(matches)
+
+
+def _head_to_head_points(tournament, team_ids, group=None, matches=None):
     """Return {team_id: points} counting only matches among `team_ids`.
 
     Scoring mirrors calculate_standings exactly, including points_per_loss and
     points_per_draw, so a head-to-head table is the same table restricted to
     the tied teams' mutual fixtures.
+
+    `matches` is an optional preloaded _head_to_head_matches() list; without
+    it the matches are read from the database.
     """
     points = {tid: 0 for tid in team_ids}
-
-    confirmed = tournament.matches.filter(
-        status="confirmed", team1_id__in=team_ids, team2_id__in=team_ids
-    )
-    forfeits = tournament.matches.filter(
-        status="forfeited", team1_id__in=team_ids, team2_id__in=team_ids
-    )
-    if group:
-        confirmed = confirmed.filter(group=group)
-        forfeits = forfeits.filter(group=group)
+    if matches is None:
+        matches = _head_to_head_matches(tournament, group=group)
+    mutual = [m for m in matches if m.team1_id in points and m.team2_id in points]
+    confirmed = [m for m in mutual if m.status == "confirmed"]
+    forfeits = [m for m in mutual if m.status == "forfeited"]
 
     for match in confirmed:
         if match.score_team1 is None or match.score_team2 is None:
@@ -208,6 +218,7 @@ def _apply_head_to_head(tournament, ordered_rows, scalar_key, group=None):
     """
     result = []
     index = 0
+    finished_matches = None  # loaded on the first tie, then reused
     while index < len(ordered_rows):
         end = index + 1
         while end < len(ordered_rows) and scalar_key(ordered_rows[end]) == scalar_key(
@@ -217,7 +228,9 @@ def _apply_head_to_head(tournament, ordered_rows, scalar_key, group=None):
         run = ordered_rows[index:end]
         if len(run) > 1:
             ids = [row["team"].id for row in run]
-            h2h = _head_to_head_points(tournament, ids, group=group)
+            if finished_matches is None:
+                finished_matches = _head_to_head_matches(tournament, group=group)
+            h2h = _head_to_head_points(tournament, ids, group=group, matches=finished_matches)
             run.sort(
                 key=lambda r: (h2h.get(r["team"].id, 0), -r["team"].id),
                 reverse=True,

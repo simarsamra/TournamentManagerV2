@@ -459,6 +459,18 @@ participations.
 8-team and a 16-team tournament (assert equality of the two counts, not a
 magic number).
 
+**As built (2026-09-24).** Courts and withdrawn teams were batched as
+planned: one grouped count query for all courts, one query for withdrawn
+participations with their teams, and one for their affected matches.
+Measuring turned up a third source the plan missed. The default
+tiebreakers end in `head_to_head`, and `_apply_head_to_head` ran 2 queries
+per group of tied teams. That happens twice per page since A-8 (real table
+and simulator), and on the Standings page too. It now loads the finished
+matches once per ranking and sums head-to-head in memory
+(`_head_to_head_matches`); `_head_to_head_points` keeps its signature and
+takes the preloaded list as an optional argument. Two equality tests pin
+it: one scales courts and withdrawn teams, the other scales tied groups.
+
 ---
 
 ## Done when
@@ -480,6 +492,12 @@ magic number).
 
 | Measure | Before | After |
 |---|---|---|
-| Tests | 391 | |
-| `reporting.py` coverage | 61% | |
-| Analytics queries, 16 teams | 69 | |
+| Tests | 391 | 437 (46 new in `core/tests_analytics.py`) |
+| `reporting.py` coverage | 61% | 67% |
+| Analytics queries, 16 teams | 69 (original probe, since lost) | 42 |
+| Analytics queries at 4 / 8 / 16 teams, same probe run on `a970d43` vs after A-13 | 55 / 67 / 91 | 42 / 42 / 42 |
+
+The second query row comes from one rebuilt probe run against both trees
+(every team active, one court, alternate matches confirmed, default
+tiebreakers). It gives a different "before" than the lost original but
+compares like with like.

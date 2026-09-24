@@ -660,3 +660,115 @@ class WidgetHtmxPartialTests(WidgetStatePreservationTests):
                 content,
             )
         self.assertNotIn("analytics-scroll:", content)
+
+
+class AnalyticsQueryCountTests(TestCase):
+    """A-13: roughly two extra queries per court and per withdrawn team. The
+    page's query count must not grow with the tournament's size."""
+
+    def _tournament(self, size):
+        organizer = _make_organizer(f"org{size}")
+        tournament = Tournament.objects.create(
+            name=f"T{size}", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        courts = [
+            Court.objects.create(tournament=tournament, name=f"Court {n}")
+            for n in range(size // 4)
+        ]
+        teams = []
+        for n in range(size):
+            team = Team.objects.create(name=f"T{size}-{n}")
+            TeamTournamentParticipation.objects.create(
+                team=team, tournament=tournament,
+                status="withdrawn" if n >= size - size // 4 else "active",
+            )
+            teams.append(team)
+        number = 0
+        for i, t1 in enumerate(teams):
+            for t2 in teams[i + 1:]:
+                number += 1
+                played = number % 2 == 0
+                Match.objects.create(
+                    tournament=tournament, match_number=number, team1=t1, team2=t2,
+                    court=courts[number % len(courts)],
+                    status="confirmed" if played else ("forfeited" if number % 7 == 0 else "upcoming"),
+                    score_team1=2 if played else None, score_team2=1 if played else None,
+                    winner=t1 if played or number % 7 == 0 else None,
+                )
+        return organizer, tournament
+
+    def _count(self, size):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        organizer, tournament = self._tournament(size)
+        self.client.force_login(organizer)
+        self.client.get("/analytics/", {"tournament": tournament.pk})  # warm session/caches
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get("/analytics/", {"tournament": tournament.pk})
+        self.assertEqual(response.status_code, 200)
+        return len(ctx.captured_queries)
+
+    def test_query_count_does_not_grow_with_tournament_size(self):
+        self.assertEqual(self._count(8), self._count(16))
+
+    def _count_with_ties(self, size):
+        """Every team active and on one court; alternate matches confirmed, so
+        many teams tie on points, game difference and games won and the
+        default head-to-head tiebreaker runs once per tied group."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        organizer = _make_organizer(f"tie{size}")
+        tournament = Tournament.objects.create(
+            name=f"Ties{size}", format="round_robin", status="active",
+            players_per_team=1, created_by=organizer,
+        )
+        self.assertIn("head_to_head", tournament.get_tiebreaker_order())
+        court = Court.objects.create(tournament=tournament, name="C1")
+        teams = [Team.objects.create(name=f"Tie{size}-{n}") for n in range(size)]
+        for team in teams:
+            TeamTournamentParticipation.objects.create(team=team, tournament=tournament, status="active")
+        number = 0
+        for i, t1 in enumerate(teams):
+            for t2 in teams[i + 1:]:
+                number += 1
+                played = number % 2 == 0
+                Match.objects.create(
+                    tournament=tournament, match_number=number, team1=t1, team2=t2, court=court,
+                    status="confirmed" if played else "upcoming",
+                    score_team1=2 if played else None, score_team2=1 if played else None,
+                    winner=t1 if played else None,
+                )
+        self.client.force_login(organizer)
+        self.client.get("/analytics/", {"tournament": tournament.pk})
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/analytics/", {"tournament": tournament.pk})
+        return len(ctx.captured_queries)
+
+    def test_query_count_does_not_grow_with_head_to_head_ties(self):
+        self.assertEqual(self._count_with_ties(8), self._count_with_ties(16))
+
+    def test_withdrawal_card_counts_are_unchanged_by_batching(self):
+        organizer = _make_organizer("org")
+        tournament = Tournament.objects.create(
+            name="W", format="round_robin", status="active", players_per_team=1,
+            created_by=organizer,
+        )
+        stayer, leaver = (Team.objects.create(name=n) for n in ("Stayer", "Leaver"))
+        TeamTournamentParticipation.objects.create(team=stayer, tournament=tournament, status="active")
+        TeamTournamentParticipation.objects.create(team=leaver, tournament=tournament, status="withdrawn")
+        for number, status in enumerate(("forfeited", "cancelled", "confirmed"), start=1):
+            Match.objects.create(
+                tournament=tournament, match_number=number, team1=stayer, team2=leaver,
+                status=status, winner=stayer if status == "forfeited" else None,
+                score_team1=1 if status == "confirmed" else None,
+                score_team2=0 if status == "confirmed" else None,
+            )
+        self.client.force_login(organizer)
+        info = self.client.get("/analytics/", {"tournament": tournament.pk}).context["withdrawal_info"]
+        self.assertEqual(
+            [(row["team"].pk, row["display_label"], row["affected_matches"]) for row in info],
+            [(leaver.pk, "Leaver", 2)],
+        )
