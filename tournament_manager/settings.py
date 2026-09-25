@@ -297,6 +297,11 @@ AI_EXPLANATIONS_ENABLED = _env_bool("DJANGO_AI_EXPLANATIONS", True)
 AI_CONVERSATION_ENABLED = _env_bool("DJANGO_AI_CONVERSATION", True)
 # How many earlier questions and answers a follow-up is sent with.
 AI_CONVERSATION_TURNS = int(os.environ.get("DJANGO_AI_CONVERSATION_TURNS", "3"))
+# The tournament news board on every dashboard (ai/recap.py): the worker
+# writes one update per tournament when new results are in, at most once per
+# interval. Off = recaps are only written when an organizer asks.
+AI_NEWS_AUTO = _env_bool("DJANGO_AI_NEWS_AUTO", True)
+AI_NEWS_INTERVAL_MINUTES = int(os.environ.get("DJANGO_AI_NEWS_INTERVAL_MINUTES", "30"))
 
 # The AI worker's log (routing problems, hidden explanations, model errors)
 # goes to stderr, which systemd captures: journalctl -u tm-ai-worker.

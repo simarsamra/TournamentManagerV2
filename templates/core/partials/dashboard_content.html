@@ -119,6 +119,8 @@
 {% endif %}
 {% endif %}
 
+{% if show_news_board %}{% include "core/partials/dashboard_news.html" %}{% endif %}
+
 {% if effective_view == 'organizer' and critical_disputes %}
 <div class="card card-warning mb-2">
     <div class="card-header">🚨 Critical Stage Disputes</div>

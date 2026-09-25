@@ -1,4 +1,5 @@
 """Sign-in, registration, profile and the dashboard."""
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -7,6 +8,7 @@ from django.db.models import Q
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
+from .. import analytics
 from ..models import (
     Match,
     NoShowReport,
@@ -189,6 +191,26 @@ def register_view(request, pk=None):
 
 
 # -- Dashboard --
+
+def _news_board_context(user, tournament):
+    """The tournament's news board: the latest AI news update, written once
+    by the worker for everyone (ai/recap.py), and the next fixtures. Shown
+    to whoever may view the tournament's analytics, like the recap card."""
+    from ..ai.recap import COMING_UP, fixture_when, latest_recap, upcoming_fixtures
+
+    allowed, _ = analytics.can_view_analytics(user, tournament)
+    if not allowed:
+        return {}
+    coming_up = []
+    for match in upcoming_fixtures(tournament)[:COMING_UP]:
+        coming_up.append({
+            "match": match,
+            "team1": _team_display_label(tournament, match.team1),
+            "team2": _team_display_label(tournament, match.team2),
+            "when": fixture_when(match),
+        })
+    return {"show_news_board": True, "news": latest_recap(tournament), "news_coming_up": coming_up}
+
 
 @login_required
 def dashboard_view(request):
@@ -545,6 +567,8 @@ def dashboard_view(request):
         if context.get("all_tournaments"):
             for t in context["all_tournaments"]:
                 t.champion_display_label = _team_display_label(t, t.champion) if t.champion else ""
+    if tournament and settings.AI_ANALYTICS_ENABLED and tournament.status in ("active", "completed"):
+        context.update(_news_board_context(request.user, tournament))
     context.update(_tournament_context(request, tournament))
     return _render_refreshable_page(
         request,

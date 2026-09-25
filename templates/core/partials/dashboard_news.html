@@ -1,0 +1,20 @@
+{% comment %}The tournament news board: the latest AI news update, written once by the ai_worker for everyone (core/ai/recap.py), and the next fixtures straight from the schedule.{% endcomment %}
+<div class="card mb-2" id="tournament-news">
+    <div class="card-header">📰 Tournament News</div>
+    <div class="card-body">
+        {% if news %}
+        <p style="margin:0 0 0.4rem;">{{ news.answer }}</p>
+        <div class="text-muted" style="font-size:0.75rem;">AI-generated {{ news.finished_at|date:"M j, H:i" }} from the tournament's results; every number was checked against them.</div>
+        {% else %}
+        <p class="text-muted" style="margin:0;">News about the tournament will appear here as results come in.</p>
+        {% endif %}
+        {% if news_coming_up %}
+        <h4 class="mb-1 mt-1">Coming up</h4>
+        <ul style="margin:0;padding-left:1.2rem;">
+            {% for f in news_coming_up %}
+            <li><a href="{% url 'match_detail' pk=f.match.pk %}">{{ f.team1 }} vs {{ f.team2 }}</a> <span class="text-muted">&middot; {{ f.when }}{% if f.match.court %} &middot; {{ f.match.court.name }}{% endif %}</span></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</div>

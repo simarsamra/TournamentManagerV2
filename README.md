@@ -315,6 +315,21 @@ checks back every 2 seconds.
 - Only managers can write one, whatever `DJANGO_AI_ANALYTICS_AUDIENCE` says.
 - A new recap can only be written once there are new results.
 
+**Tournament news.** Every dashboard of an active or completed tournament
+has a **Tournament News** board, for everyone who can view its analytics:
+- The `ai_worker` writes the news on its own: a recap of the new results,
+  how the table moved and which matches are next. Before the first result
+  it previews the opening fixtures.
+- It's written once for the whole tournament and stored. Opening a
+  dashboard never calls the model.
+- A new update is written only when there are new results, and at most once
+  every `DJANGO_AI_NEWS_INTERVAL_MINUTES`, so a burst of results becomes
+  one update.
+- It goes through the same number check. An update that fails is never
+  shown, and the previous news stays up.
+- Under it, the next fixtures (teams, time, court) come straight from the
+  schedule, so they're always current.
+
 ### Set it up
 
 The examples use `qwen3.5:9b`, which suits a 12 GB NVIDIA GPU (about
@@ -373,6 +388,8 @@ really uses.
 | `DJANGO_AI_EXPLANATIONS` | `True` | Written explanations. When off, answers are the figures only. |
 | `DJANGO_AI_CONVERSATION` | `True` | Conversational answers: the model sees the whole tournament (table with points gaps, streaks and matches left, every result, the fixtures, head-to-head records) plus the last few questions, so it answers anything the data covers and follow-ups. Numbers not in the data are flagged under the answer. Off, or for a tournament too big for the snapshot, questions are routed to one card as before. |
 | `DJANGO_AI_CONVERSATION_TURNS` | `3` | Earlier questions and answers sent with a follow-up. |
+| `DJANGO_AI_NEWS_AUTO` | `True` | The worker writes each tournament's dashboard news when new results are in. When off, recaps are only written when an organizer asks. |
+| `DJANGO_AI_NEWS_INTERVAL_MINUTES` | `30` | Shortest time between two news updates for one tournament (including retries after an update failed the number check). |
 | `DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR` | `60` | Per-user quota (the per-IP limit on the Ask button is 240 an hour). |
 | `DJANGO_AI_MAX_PENDING` | `20` | Questions allowed to wait at once, site-wide; beyond it, "busy, try later". |
 | `DJANGO_AI_MAX_QUESTION_CHARS` | `300` | Longest question accepted. |

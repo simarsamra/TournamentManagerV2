@@ -690,6 +690,26 @@ viewer.
 Checked in Chromium with a stand-in model: write, publish, shown after
 reload, and a second request refused for lack of new results.
 
+**Follow-up: automatic news board.** One AI news board per tournament, on
+every dashboard, instead of a recap someone has to ask for:
+- **Written by the worker.** `ai_worker` calls `recap.schedule_news()`
+  every `--news-every` seconds (60). It queues a recap with no user when a
+  tournament has results no published recap covers, nothing is in progress
+  for it, and its last attempt is older than AI_NEWS_INTERVAL_MINUTES (30).
+  Before the first result, it queues one preview of the opening fixtures.
+  It respects AI_MAX_PENDING. AI_NEWS_AUTO=false turns it off.
+- **Facts.** As above, plus `coming_up`: the next 4 fixtures with both teams
+  known (teams, and the day and time as text, so the times pass the number
+  check).
+- **Shown.** `dashboard_news.html` shows `latest_recap` and the live next
+  fixtures to everyone who can view the tournament's analytics, on the team
+  and organizer views of active and completed tournaments. It costs two
+  reads per dashboard load and never a model call.
+- **Who.** `AIQuestion.user` is nullable (migration 0037). `jobs._allowed`
+  lets a job with no user through only when it is a recap.
+- The manual button on the analytics page still works. A manual recap
+  counts as the latest attempt, so it pushes the next automatic one back.
+
 ---
 
 ## AI-10 (optional) — Tool-calling mode

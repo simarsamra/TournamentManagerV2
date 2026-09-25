@@ -844,7 +844,11 @@ class AIQuestion(models.Model):
         ("recap", "Recap"),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="ai_questions")
+    # Empty for the news the worker writes on its own (ai/recap.py): nobody
+    # asked for it, and it's published to the whole tournament.
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, null=True, blank=True, related_name="ai_questions"
+    )
     tournament = models.ForeignKey(
         Tournament, on_delete=models.CASCADE, related_name="ai_questions"
     )

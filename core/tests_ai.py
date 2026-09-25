@@ -15,7 +15,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from core import analytics
-from core.ai import client, jobs
+from core.ai import client, jobs, recap
 from core.ai.facts import MAX_FACTS_CHARS, Route, build_facts, serialise, team_keys
 from core.ai.explain import clean, ungrounded_numbers
 from core.ai.router import MSG_UNKNOWN, build_messages, build_schema, route_question, validate
@@ -136,6 +136,8 @@ class PrepSheetDefaultTests(TestCase):
 AI_SETTINGS = dict(
     OLLAMA_URL="http://127.0.0.1:11434", OLLAMA_MODEL="qwen3.5:9b", OLLAMA_THINK=False,
     OLLAMA_NUM_CTX=8192, OLLAMA_TIMEOUT_SECONDS=60, OLLAMA_KEEP_ALIVE="30m",
+    # Tests queue their own jobs; NewsBoardTests turns the automatic news on.
+    AI_NEWS_AUTO=False, AI_NEWS_INTERVAL_MINUTES=30,
 )
 
 
@@ -1321,7 +1323,7 @@ class RecapTests(TestCase):
         self.assertEqual((job.status, job.answer_verified), ("done", True))
         body = fake.requests[0]["body"]
         self.assertIn("latest results for its players and fans", body["messages"][0]["content"])
-        self.assertEqual(body["options"]["num_predict"], 220)
+        self.assertEqual(body["options"]["num_predict"], 260)
         self.assertEqual(job.facts["new_results"], [{"team1": "Aces", "team2": "Bolts", "score1": 3, "score2": 1}])
         self.assertEqual(job.route["covered_match_ids"], [self.m1.pk])
         # An enrolled player can't ask (audience = managers) but does see the recap.
@@ -1409,6 +1411,103 @@ class RecapTests(TestCase):
         self.assertEqual(jobs.purge_old(), 1)
         self.assertEqual(list(AIQuestion.objects.values_list("pk", flat=True)), [published.pk])
         self.assertFalse(AIQuestion.objects.filter(pk=old_question.pk).exists())
+
+
+# The news board: automatic recaps on every dashboard
+
+@override_settings(**{**AI_SETTINGS, "AI_NEWS_AUTO": True}, AI_ANALYTICS_ENABLED=True,
+                   AI_ANALYTICS_AUDIENCE="managers", AI_MAX_PENDING=20, AI_JOB_STALE_SECONDS=600)
+class NewsBoardTests(TestCase):
+    def setUp(self):
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.aces, self.bolts, self.comets = (Team.objects.create(name=n) for n in ("Aces", "Bolts", "Comets"))
+        for team in (self.aces, self.bolts, self.comets):
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        self.player = User.objects.create_user(username="player", password="Regression-Pass-1")
+        TeamMembership.objects.create(team=self.comets, user=self.player, role="captain")
+        self.number = 0
+
+    def _match(self, t1, t2, s1=None, s2=None, when=None):
+        self.number += 1
+        played = s1 is not None
+        return Match.objects.create(
+            tournament=self.tournament, match_number=self.number, team1=t1, team2=t2,
+            score_team1=s1, score_team2=s2, scheduled_time=when,
+            winner=(t1 if played and s1 > s2 else t2 if played and s2 > s1 else None),
+            status="confirmed" if played else "upcoming",
+        )
+
+    def _worker(self, *replies):
+        with FakeOllama() as fake:
+            for text in replies:
+                fake.respond_chat(text)
+            call_command("ai_worker", "--once", stdout=StringIO())
+        return fake
+
+    def _dashboard(self, user):
+        self.client.force_login(user)
+        return self.client.get("/dashboard/")
+
+    def test_worker_writes_one_update_everyone_sees(self):
+        self._match(self.aces, self.bolts, 3, 1)
+        when = timezone.make_aware(timezone.datetime(2026, 10, 3, 18, 0))
+        self._match(self.bolts, self.comets, when=when)
+        fake = self._worker("Aces beat Bolts 3-1. Bolts face Comets on Sat 03 Oct, 18:00.")
+        job = AIQuestion.objects.get()
+        self.assertEqual((job.user, job.kind, job.status, job.answer_verified), (None, "recap", "done", True))
+        self.assertEqual(job.facts["coming_up"],
+                         [{"team1": "Bolts", "team2": "Comets", "when": "Sat 03 Oct, 18:00"}])
+        self.assertIn("coming up next", fake.requests[0]["body"]["messages"][0]["content"])
+        for user in (self.player, self.organizer):
+            page = self._dashboard(user)
+            self.assertContains(page, "Tournament News")
+            self.assertContains(page, "Aces beat Bolts 3-1.")
+            self.assertContains(page, "Bolts vs Comets")
+        # Viewing the dashboard never queues or calls the model.
+        self.assertEqual(AIQuestion.objects.count(), 1)
+
+    def test_one_update_per_interval_and_only_with_new_results(self):
+        self._match(self.aces, self.bolts, 3, 1)
+        self._worker("Aces beat Bolts 3-1.")
+        self.assertEqual(recap.schedule_news(), [])                  # nothing new
+        self._match(self.comets, self.aces, 2, 0)
+        self._match(self.bolts, self.comets, 1, 0)
+        self.assertEqual(recap.schedule_news(), [])                  # too soon after the last one
+        later = timezone.now() + timedelta(minutes=31)
+        [job] = recap.schedule_news(now=later)                        # both results, one update
+        self.assertEqual(recap.schedule_news(now=later), [])          # already queued
+        self._worker("Comets beat Aces 2-0 and Bolts beat Comets 1-0.")
+        job.refresh_from_db()
+        self.assertEqual(len(job.facts["new_results"]), 2)
+        self.assertContains(self._dashboard(self.player), "Comets beat Aces 2-0")
+
+    def test_first_update_previews_fixtures_and_failed_check_keeps_old_news(self):
+        self._match(self.aces, self.bolts)
+        self._worker("The season opens with Aces against Bolts.")
+        self.assertContains(self._dashboard(self.player), "The season opens with Aces against Bolts.")
+        self._match(self.bolts, self.comets, 2, 1)
+        recap.schedule_news(now=timezone.now() + timedelta(minutes=31))
+        self._worker("Bolts won 9-1.")                                # 9 isn't in the results
+        page = self._dashboard(self.player)
+        self.assertContains(page, "The season opens with Aces against Bolts.")
+        self.assertNotContains(page, "9-1")
+
+    def test_no_board_without_access_or_while_disabled(self):
+        self._match(self.aces, self.bolts, 3, 1)
+        self._worker("Aces beat Bolts 3-1.")
+        outsider = _make_organizer("other")
+        self.assertNotContains(self._dashboard(outsider), "Aces beat Bolts")
+        with override_settings(AI_ANALYTICS_ENABLED=False):
+            self.assertNotContains(self._dashboard(self.player), "Tournament News")
+        with override_settings(AI_NEWS_AUTO=False):
+            self._match(self.comets, self.aces, 2, 0)
+            AIQuestion.objects.update(created_at=timezone.now() - timedelta(hours=1))
+            self._worker()
+            self.assertEqual(AIQuestion.objects.count(), 1)
 
 
 # Conversations over the whole-tournament snapshot
