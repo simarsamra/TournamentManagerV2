@@ -1,0 +1,24 @@
+# Answers queued AI analytics questions (AI_ANALYTICS_PLAN.md). Install:
+#   sudo cp tm-ai-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tm-ai-worker
+# Edit the four marked lines to match how gunicorn runs on this server.
+[Unit]
+Description=Tournament Manager AI analytics worker
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+# EDIT: the same user, checkout, environment file and virtualenv as gunicorn.
+User=tournament
+WorkingDirectory=/srv/tournament-manager
+EnvironmentFile=/etc/tournament-manager.env
+ExecStart=/srv/tournament-manager/venv/bin/python manage.py ai_worker
+Restart=always
+RestartSec=5
+# SIGTERM stops the worker after the current question; allow one full model call.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

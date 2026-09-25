@@ -23,6 +23,9 @@ Tested against **Django 5.2 LTS on Python 3.11**.
 - Notifications for invites, matches and score events.
 - Organizer applications with an admin approval step.
 - Organizer tools: analytics, backups and audit log.
+- Optional AI analytics: ask questions in plain language, answered by a local
+  model via Ollama, with every number checked (see
+  [AI analytics](#ai-analytics-optional)).
 - Site-admin tools: user management and impersonation.
 - Public pages: tournament list and detail, standings, fixtures, organizer and
   user profiles — all without login.
@@ -143,6 +146,9 @@ HttpOnly session cookies, `SameSite=Lax`, HSTS with subdomains and preload,
 `X-Frame-Options: DENY`, and `SECURE_PROXY_SSL_HEADER` for
 `X-Forwarded-Proto`. That last one is only safe if your proxy always
 overwrites that header.
+
+The optional AI analytics feature has its own settings; see
+[AI analytics → Settings](#settings).
 
 ## Deployment
 
@@ -277,6 +283,137 @@ a column the schema always declared as required — fix the offending rows in th
 dump. And `dump.json` contains password hashes, so treat it like a backup file
 and delete it once the load succeeds.
 
+## AI analytics (optional)
+
+Organizers can ask questions about a tournament in plain language on the
+analytics page, for example "How have the Aces been doing lately?", "Who do
+the Bolts play next?" or "What if the Aces beat the Bolts?". A model served
+by [Ollama](https://ollama.com) **on the same machine** answers them.
+Nothing leaves the server. The feature is off until you enable it.
+
+How it answers (full design in [`AI_ANALYTICS_PLAN.md`](AI_ANALYTICS_PLAN.md)):
+
+1. **The model picks which card answers the question.** Its reply is
+   constrained to a JSON schema whose only team choices are this
+   tournament's teams, and the server validates it again.
+2. **The app computes the numbers** with the same code as the analytics
+   page. The model never sees the database.
+3. **The model writes up to three sentences.** They're shown only if every
+   number in them appears in the computed figures. Otherwise just the
+   figures are shown.
+
+Model calls never run inside a web request. The site queues questions, a
+separate `ai_worker` process answers them one at a time, and the page
+checks back every 2 seconds.
+
+### Set it up
+
+The examples use `qwen3.5:9b`, which suits a 12 GB NVIDIA GPU (about
+6.6 GB, leaving room for an 8K context).
+
+```bash
+# 1. Install Ollama (creates the `ollama` systemd service), then pull a model
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen3.5:9b
+
+# 2. Recommended Ollama settings for a shared machine (loopback only,
+#    one request and one model at a time). Paste the [Service] block from:
+sudo systemctl edit ollama        # docs/deploy/ollama-override.conf
+sudo systemctl restart ollama
+
+# 3. Switch the feature on in the site's environment (the same file gunicorn
+#    uses), then apply the new table
+export DJANGO_AI_ANALYTICS_ENABLED=true
+python manage.py migrate
+
+# 4. Check everything end to end: reachable, model pulled, JSON replies,
+#    thinking off, and how long a call takes
+python manage.py ai_doctor
+
+# 5. Run the worker as a service, and purge old questions daily
+#    (edit the user and paths in the unit files first)
+sudo cp docs/deploy/tm-ai-worker.service docs/deploy/tm-ai-purge.service \
+        docs/deploy/tm-ai-purge.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tm-ai-worker tm-ai-purge.timer
+```
+
+Then open the analytics page of a tournament you manage. The **Ask about
+this tournament** box is at the top.
+
+**Never expose Ollama's port (11434).** Ollama has no authentication.
+Keep `OLLAMA_HOST=127.0.0.1:11434`, its default. `manage.py check` warns if
+`DJANGO_OLLAMA_URL` points anywhere but this machine.
+
+**Memory.** The model, gunicorn and the database share the machine. After a
+question has been answered, `ollama ps` shows how much GPU memory the model
+really uses.
+
+### Settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DJANGO_AI_ANALYTICS_ENABLED` | `False` | Master switch. While off, the Ask box is hidden and the AI URLs return 404. |
+| `DJANGO_OLLAMA_URL` | `http://127.0.0.1:11434` | Where Ollama listens. Environment proxy settings are ignored for it. |
+| `DJANGO_OLLAMA_MODEL` | `qwen3.5:9b` | Model to use; must be pulled. |
+| `DJANGO_OLLAMA_THINK` | `false` | Sent as Ollama's `think` flag. `false` skips the hidden reasoning pass of thinking models such as Qwen 3.5, which is much faster. Set it to empty for a model without the flag (`ai_doctor` tells you). |
+| `DJANGO_OLLAMA_NUM_CTX` | `8192` | Context length sent with each request. |
+| `DJANGO_OLLAMA_TIMEOUT_SECONDS` | `60` | Per-call timeout, in the worker. |
+| `DJANGO_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in memory after a call. Only the first question after a quiet spell pays the load time. |
+| `DJANGO_AI_ANALYTICS_AUDIENCE` | `managers` | Who may ask: `managers` (each tournament's organizers) or `all` (anyone who can open its analytics). |
+| `DJANGO_AI_EXPLANATIONS` | `True` | Written explanations. When off, answers are the figures only. |
+| `DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR` | `10` | Per-user quota. |
+| `DJANGO_AI_MAX_PENDING` | `20` | Questions allowed to wait at once, site-wide; beyond it, "busy, try later". |
+| `DJANGO_AI_MAX_QUESTION_CHARS` | `300` | Longest question accepted. |
+| `DJANGO_AI_JOB_STALE_SECONDS` | `600` | A question still "running" after this long is marked failed (a crashed worker). |
+| `DJANGO_AI_RETENTION_DAYS` | `30` | `ai_purge` deletes questions older than this. |
+| `DJANGO_AI_LOG_LEVEL` | `INFO` | Level of the `core.ai` log on stderr (under systemd: `journalctl -u tm-ai-worker`). |
+
+### What is stored
+
+Each question is saved in the `AIQuestion` table with:
+- the question and its status;
+- the card the model chose;
+- the figures it was shown;
+- the explanation (even when hidden);
+- the model name and timings.
+
+Only the person who asked can see their question. Rows are deleted after
+`DJANGO_AI_RETENTION_DAYS`, and they're deliberately left out of backups.
+What the model is shown never includes:
+- the audit log;
+- match or availability notes;
+- usernames, emails or player names;
+- internal team names;
+- other tournaments.
+
+### Choosing and checking the model
+
+`ai_eval` runs 42 labelled questions and 6 explanation cases through the
+real prompts and checks. It reports:
+- routing accuracy, listing each wrong route;
+- how many explanations pass the number check;
+- latency and model load time.
+
+It doesn't touch the database, so it's safe to run on the live server.
+
+```bash
+python manage.py ai_eval --model qwen3.5:9b --model gemma4:12b --json eval.json
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Answers stay on "Thinking…" | The worker isn't running: `systemctl status tm-ai-worker`. |
+| "The AI service isn't available right now" | Ollama is down or unreachable: `systemctl status ollama`, then `manage.py ai_doctor`. |
+| "The model took too long to answer" | Raise `DJANGO_OLLAMA_TIMEOUT_SECONDS`, or check that the model runs on the GPU (`ollama ps`). |
+| Explanations are often hidden | The model is stating numbers that aren't in the figures. The worker logs each one (`journalctl -u tm-ai-worker`), and `ai_eval` lists them. Try another model, or set `DJANGO_AI_EXPLANATIONS=false`. |
+| Questions go to the wrong card | Run `ai_eval` to see which ones; compare models. |
+
+To switch the feature off, unset `DJANGO_AI_ANALYTICS_ENABLED` and stop
+`tm-ai-worker`. The site behaves exactly as it did before.
+
 ## Current Behaviour Rules
 
 ### Team creation without a selected tournament
@@ -410,6 +547,7 @@ core/
 		matches.py       fixtures, scores, disputes, reschedules
 		registration.py  joining, registration review, seeding
 		reporting.py     standings, analytics, backups, public pages
+		ai.py            AI analytics: ask and answer-status views
 		admin_tools.py   settings, user management, impersonation
 		test_maker.py    development-only data generator
 	forms.py             forms and validation
@@ -418,6 +556,11 @@ core/
 	signals.py           post_save handlers (+ suppression for restores)
 	scheduling.py        fixture generation and slot building
 	standings.py         standings and tiebreaks
+	analytics.py         analytics calculations, shared by the page and the AI
+	ai/                  optional AI analytics: Ollama client, router, facts,
+	                     explanations, job queue, eval question set
+	checks.py            system checks for the AI settings
+	test_runner.py       test runner that blocks outbound HTTP
 	withdrawals.py       withdrawal policy
 	backup.py            backup, validate, restore
 	audit.py             audit log helpers, client IP resolution
@@ -425,12 +568,13 @@ core/
 	admin.py, admin_config.py
 	services/            enrollment
 	templatetags/        core_extras
-	management/commands/ seed_demo, backfill and integrity commands
+	management/commands/ seed_demo, backfill and integrity commands;
+	                     ai_doctor, ai_worker, ai_eval, ai_purge
 	migrations/
 	tests*.py            the test suite
 templates/core/          templates, with partials/ for HTMX fragments
 static/
-docs/                    reference-workflows.txt
+docs/                    reference-workflows.txt; deploy/ systemd units for the AI worker
 scripts/                 fixtures/ sample data only (see scripts/README.md)
 tournament_manager/      settings, root URLconf, WSGI/ASGI
 manage.py
@@ -459,7 +603,9 @@ requirements.txt
 | `/rescheduling/` | Reschedule requests and actions | any user |
 | `/open-slots/` | Open slot listing | any user |
 | `/organizer/apply/` | Apply to become an organizer | any user |
-| `/analytics/` | Tournament analytics | organizer, or a player enrolled in the tournament |
+| `/analytics/` | Tournament analytics | the tournament's organizer, or a player enrolled in it |
+| `/analytics/ask/` | Ask the AI a question (POST) | per `DJANGO_AI_ANALYTICS_AUDIENCE`; 404 while AI analytics is off |
+| `/analytics/ask/<pk>/` | Status and answer of your question | the person who asked; 404 while AI analytics is off |
 | `/tournament/<pk>/config/` | Tournament configuration | owning organizer |
 | `/tournament/<pk>/seed/` | Seed participants | owning organizer |
 | `/backup/` | Backup and restore | organizer |
@@ -476,6 +622,10 @@ requirements.txt
   findings were worked through.
 - [`DUAL_ROLE_TOGGLE_FEATURE.md`](DUAL_ROLE_TOGGLE_FEATURE.md) — the
   organizer/team view toggle.
+- [`ANALYTICS_PLAN.md`](ANALYTICS_PLAN.md) — the analytics page fixes
+  (A-1 to A-13) and their results.
+- [`AI_ANALYTICS_PLAN.md`](AI_ANALYTICS_PLAN.md) — design and task log for
+  the optional AI analytics.
 - [`docs/reference-workflows.txt`](docs/reference-workflows.txt) — the workflow
   specification the app is built against.
 - [`scripts/README.md`](scripts/README.md) — where the old ad-hoc scripts

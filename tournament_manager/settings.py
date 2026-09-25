@@ -292,5 +292,22 @@ AI_RETENTION_DAYS = int(os.environ.get("DJANGO_AI_RETENTION_DAYS", "30"))
 # Written explanations (AI-7, D-5). When off, answers show the routed card only.
 AI_EXPLANATIONS_ENABLED = _env_bool("DJANGO_AI_EXPLANATIONS", True)
 
+# The AI worker's log (routing problems, hidden explanations, model errors)
+# goes to stderr, which systemd captures: journalctl -u tm-ai-worker.
+# Django's own logging defaults are left in place.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"plain": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"}},
+    "handlers": {"stderr": {"class": "logging.StreamHandler", "formatter": "plain"}},
+    "loggers": {
+        "core.ai": {
+            "handlers": ["stderr"],
+            "level": "WARNING" if RUNNING_TESTS else os.environ.get("DJANGO_AI_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}
+
 # Tests must never reach a real model; see core.test_runner.
 TEST_RUNNER = "core.test_runner.NoNetworkTestRunner"

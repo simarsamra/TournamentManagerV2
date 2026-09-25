@@ -1,0 +1,12 @@
+# Runs tm-ai-purge.service once a day. Install both files, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tm-ai-purge.timer
+[Unit]
+Description=Daily purge of old AI analytics questions
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

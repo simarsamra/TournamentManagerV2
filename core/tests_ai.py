@@ -359,7 +359,9 @@ class AIJobQueueTests(TestCase):
         stale = self._job(status="running", started_at=timezone.now() - timedelta(minutes=20))
         fresh = self._job(status="running", started_at=timezone.now() - timedelta(minutes=2))
         pending = self._job()
-        self.assertEqual(jobs.reap_stale(), 1)
+        with self.assertLogs("core.ai", level="WARNING") as logs:
+            self.assertEqual(jobs.reap_stale(), 1)
+        self.assertIn("Reaped 1 stale AI question(s)", logs.output[0])
         stale.refresh_from_db()
         self.assertEqual((stale.status, stale.error), ("failed", jobs.MSG_STALE))
         self.assertIsNotNone(stale.finished_at)
@@ -738,8 +740,11 @@ class RouterTests(TestCase):
         self.assertEqual(result.params, {"form_team": self.bolts.pk, "form_window": 5})
 
     def test_invalid_replies_become_unknown_with_a_hint(self):
+        with self.assertLogs("core.ai", level="WARNING") as logs:
+            result, _ = self._route("not json at all")
+        self.assertEqual(result.message, MSG_UNKNOWN)
+        self.assertIn("Router reply wasn't JSON", logs.output[0])
         for content, message in (
-            ("not json at all", MSG_UNKNOWN),
             (_route_json("unknown"), MSG_UNKNOWN),
             (_route_json("predict_lottery", "T1"), MSG_UNKNOWN),
             (json.dumps({"intent": "form"}), "Which team do you mean?"),

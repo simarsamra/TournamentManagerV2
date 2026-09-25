@@ -1,0 +1,11 @@
+# Deletes AI questions older than DJANGO_AI_RETENTION_DAYS; run by tm-ai-purge.timer.
+[Unit]
+Description=Tournament Manager: delete old AI analytics questions
+
+[Service]
+Type=oneshot
+# EDIT: same values as tm-ai-worker.service.
+User=tournament
+WorkingDirectory=/srv/tournament-manager
+EnvironmentFile=/etc/tournament-manager.env
+ExecStart=/srv/tournament-manager/venv/bin/python manage.py ai_purge
