@@ -306,6 +306,15 @@ Model calls never run inside a web request. The site queues questions, a
 separate `ai_worker` process answers them one at a time, and the page
 checks back every 2 seconds.
 
+**Recaps.** A tournament's organizers can also press **Write a recap**:
+- The model writes a few sentences about the results since the last recap,
+  and how the table moved.
+- It goes through the same number check.
+- Only a recap that passes is published. It then appears in a **Latest recap**
+  card for everyone who can view the tournament's analytics.
+- Only managers can write one, whatever `DJANGO_AI_ANALYTICS_AUDIENCE` says.
+- A new recap can only be written once there are new results.
+
 ### Set it up
 
 The examples use `qwen3.5:9b`, which suits a 12 GB NVIDIA GPU (about
@@ -366,7 +375,7 @@ really uses.
 | `DJANGO_AI_MAX_PENDING` | `20` | Questions allowed to wait at once, site-wide; beyond it, "busy, try later". |
 | `DJANGO_AI_MAX_QUESTION_CHARS` | `300` | Longest question accepted. |
 | `DJANGO_AI_JOB_STALE_SECONDS` | `600` | A question still "running" after this long is marked failed (a crashed worker). |
-| `DJANGO_AI_RETENTION_DAYS` | `30` | `ai_purge` deletes questions older than this. |
+| `DJANGO_AI_RETENTION_DAYS` | `30` | `ai_purge` deletes questions older than this, except each tournament's published recap. |
 | `DJANGO_AI_LOG_LEVEL` | `INFO` | Level of the `core.ai` log on stderr (under systemd: `journalctl -u tm-ai-worker`). |
 
 ### What is stored
@@ -605,7 +614,8 @@ requirements.txt
 | `/organizer/apply/` | Apply to become an organizer | any user |
 | `/analytics/` | Tournament analytics | the tournament's organizer, or a player enrolled in it |
 | `/analytics/ask/` | Ask the AI a question (POST) | per `DJANGO_AI_ANALYTICS_AUDIENCE`; 404 while AI analytics is off |
-| `/analytics/ask/<pk>/` | Status and answer of your question | the person who asked; 404 while AI analytics is off |
+| `/analytics/ask/<pk>/` | Status and answer of your question or recap | the person who asked; 404 while AI analytics is off |
+| `/analytics/recap/` | Commission a recap of the latest results (POST) | the tournament's organizer; 404 while AI analytics is off |
 | `/tournament/<pk>/config/` | Tournament configuration | owning organizer |
 | `/tournament/<pk>/seed/` | Seed participants | owning organizer |
 | `/backup/` | Backup and restore | organizer |

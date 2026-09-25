@@ -10,9 +10,9 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 
-from core.models import AIQuestion
+from core.models import AIQuestion, Tournament
 
-from .access import may_ask
+from .access import may_ask, may_write_recap
 from .client import OllamaTimeout, OllamaUnavailable
 
 logger = logging.getLogger("core.ai")
@@ -64,9 +64,18 @@ def reap_stale(now=None):
 
 
 def _default_processor(job):
+    if job.kind == "recap":
+        from .recap import write_recap
+
+        return write_recap(job)
     from .pipeline import answer_question
 
     return answer_question(job)
+
+
+def _allowed(job):
+    check = may_write_recap if job.kind == "recap" else may_ask
+    return check(job.user, job.tournament)
 
 
 def _finish(job, status, error=""):
@@ -87,7 +96,7 @@ def process(job, processor=None):
     processor = processor or _default_processor
     try:
         # Access may have changed while the job waited in the queue.
-        if not may_ask(job.user, job.tournament):
+        if not _allowed(job):
             return _finish(job, "failed", MSG_NO_ACCESS)
         processor(job)
     except OllamaTimeout:
@@ -106,7 +115,15 @@ def purge_old(days=None, now=None, dry_run=False):
     """Delete questions older than AI_RETENTION_DAYS (D-4). Returns the count."""
     days = settings.AI_RETENTION_DAYS if days is None else days
     now = now or timezone.now()
-    old = AIQuestion.objects.filter(created_at__lt=now - timedelta(days=days))
+    # Keep each tournament's published recap however old: it's still on show.
+    from .recap import latest_recap
+
+    shown = [
+        recap.pk for recap in (
+            latest_recap(t) for t in Tournament.objects.filter(ai_questions__kind="recap").distinct()
+        ) if recap
+    ]
+    old = AIQuestion.objects.filter(created_at__lt=now - timedelta(days=days)).exclude(pk__in=shown)
     count = old.count()
     if not dry_run and count:
         old.delete()

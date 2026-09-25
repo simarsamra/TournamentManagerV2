@@ -24,9 +24,9 @@ MAX_ANSWER_CHARS = 600
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
-def build_messages(question, facts):
+def build_messages(question, facts, system=SYSTEM_PROMPT):
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": f"QUESTION:\n<<<\n{_data(question)}\n>>>\nFACTS:\n<<<\n{serialise(facts)}\n>>>"},
     ]
 
@@ -42,9 +42,9 @@ def clean(text):
     return text
 
 
-def explain(question, facts):
+def explain(question, facts, *, system=SYSTEM_PROMPT, num_predict=160):
     """Ask the model for the explanation. Returns (cleaned text, ChatResult)."""
-    result = client.chat(build_messages(question, facts), temperature=0.2, num_predict=160)
+    result = client.chat(build_messages(question, facts, system), temperature=0.2, num_predict=num_predict)
     return clean(result.content), result
 
 

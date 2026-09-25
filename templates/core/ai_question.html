@@ -5,6 +5,6 @@
 {% block page_header %}Analytics{% endblock %}
 {% block content %}
 <h1 class="page-title">{{ tournament.name }} — Your question</h1>
-<div class="card"><div class="card-body">{% include "core/partials/ai_question_status.html" %}</div></div>
+<div class="card"><div class="card-body">{% include status_template %}</div></div>
 <p class="mt-1"><a href="{{ analytics_url }}">Back to analytics</a></p>
 {% endblock %}

@@ -6,6 +6,7 @@
 
 {% if tournament %}
 {% if ai_can_ask %}{% include "core/partials/analytics_ask.html" %}{% endif %}
+{% if ai_recap or ai_can_recap %}{% include "core/partials/analytics_recap.html" %}{% endif %}
 <div class="grid grid-4 mb-2">
     <div class="stat-card">
         <div class="stat-value">{{ match_stats.total }}</div>

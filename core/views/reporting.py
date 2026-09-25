@@ -236,9 +236,12 @@ def analytics_view(request):
     # The Ask box (AI_ANALYTICS_PLAN.md AI-6). core.ai is only imported when
     # the feature is on.
     if settings.AI_ANALYTICS_ENABLED:
-        from ..ai.access import may_ask
+        from ..ai.access import may_ask, may_write_recap
+        from ..ai.recap import latest_recap
 
         context["ai_can_ask"] = may_ask(request.user, tournament)
+        context["ai_can_recap"] = may_write_recap(request.user, tournament)
+        context["ai_recap"] = latest_recap(tournament)
         context["ai_max_question_chars"] = settings.AI_MAX_QUESTION_CHARS
 
     # --- Head-to-head matchup card ---

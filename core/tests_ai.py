@@ -1262,3 +1262,148 @@ class EvaluationTests(SimpleTestCase):
             fake.respond(urllib.error.URLError(ConnectionRefusedError(111, "refused")))
             with self.assertRaises(CommandError):
                 call_command("ai_eval", "--limit", "1", stdout=StringIO())
+
+
+# AI-9
+
+@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_QUESTIONS_PER_USER_PER_HOUR=10, AI_MAX_PENDING=20, AI_RETENTION_DAYS=30)
+class RecapTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.teams = [Team.objects.create(name=n) for n in ("Aces", "Bolts", "Comets")]
+        self.aces, self.bolts, self.comets = self.teams
+        for team in self.teams:
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        self.player = User.objects.create_user(username="player", password="Regression-Pass-1")
+        TeamMembership.objects.create(team=self.comets, user=self.player, role="captain")
+        self.number = 0
+        self.m1 = self._result(self.aces, self.bolts, 3, 1)
+        self.client.force_login(self.organizer)
+
+    def _result(self, t1, t2, s1, s2, status="confirmed"):
+        self.number += 1
+        winner = t1 if s1 > s2 else t2 if s2 > s1 else None
+        return Match.objects.create(
+            tournament=self.tournament, match_number=self.number, team1=t1, team2=t2,
+            score_team1=s1 if status == "confirmed" else None,
+            score_team2=s2 if status == "confirmed" else None,
+            winner=winner, status=status,
+        )
+
+    def _commission(self, htmx=True):
+        headers = {"HTTP_HX_REQUEST": "true"} if htmx else {}
+        return self.client.post("/analytics/recap/", {"tournament": self.tournament.pk}, **headers)
+
+    def _work(self, text):
+        with FakeOllama() as fake:
+            fake.respond_chat(text)
+            call_command("ai_worker", "--once", stdout=StringIO())
+        return fake
+
+    def _analytics(self):
+        return self.client.get("/analytics/", {"tournament": self.tournament.pk})
+
+    def test_published_recap_is_shown_to_viewers(self):
+        self.assertContains(self._commission(), "Writing the recap…")
+        job = AIQuestion.objects.get(kind="recap")
+        fake = self._work("Aces beat Bolts 3-1 and lead the table on 3 points.")
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.answer_verified), ("done", True))
+        body = fake.requests[0]["body"]
+        self.assertIn("latest results for its players and fans", body["messages"][0]["content"])
+        self.assertEqual(body["options"]["num_predict"], 220)
+        self.assertEqual(job.facts["new_results"], [{"team1": "Aces", "team2": "Bolts", "score1": 3, "score2": 1}])
+        self.assertEqual(job.route["covered_match_ids"], [self.m1.pk])
+        # An enrolled player can't ask (audience = managers) but does see the recap.
+        self.client.force_login(self.player)
+        page = self._analytics()
+        self.assertNotContains(page, 'id="analytics-ask"')
+        self.assertContains(page, "Aces beat Bolts 3-1 and lead the table on 3 points.")
+        self.assertNotContains(page, "Write a new recap")
+
+    def test_status_reports_publication(self):
+        self._commission()
+        job = AIQuestion.objects.get(kind="recap")
+        self._work("Aces beat Bolts 3-1.")
+        status = self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertEqual(status.status_code, 286)
+        self.assertContains(status, "<strong>Published:</strong> Aces beat Bolts 3-1.", status_code=286)
+
+    def test_unverified_recap_is_not_published(self):
+        self._commission()
+        self._work("Aces beat Bolts 3-1.")                      # published
+        self._result(self.bolts, self.comets, 2, 0)
+        self._commission()
+        new_job = AIQuestion.objects.filter(kind="recap").latest("pk")
+        self._work("Bolts won 5-0 in a thriller.")               # 5 isn't in the results
+        new_job.refresh_from_db()
+        self.assertEqual((new_job.status, new_job.answer_verified), ("done", False))
+        page = self._analytics()
+        self.assertContains(page, "Aces beat Bolts 3-1.")       # the old one stays up
+        self.assertNotContains(page, "thriller")
+        status = self.client.get(f"/analytics/ask/{new_job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertContains(status, "wasn't published", status_code=286)
+
+    def test_next_recap_covers_only_new_results_and_position_changes(self):
+        self._commission()
+        self._work("Aces beat Bolts 3-1.")
+        self._result(self.comets, self.aces, 2, 0)
+        self._result(self.comets, self.bolts, 0, 0, status="forfeited")
+        Match.objects.filter(match_number=self.number).update(winner=self.comets)
+        self._commission()
+        job = AIQuestion.objects.filter(kind="recap").latest("pk")
+        self._work("Comets won twice.")
+        job.refresh_from_db()
+        teams = [(r["team1"], r["team2"]) for r in job.facts["new_results"]]
+        self.assertEqual(teams, [("Comets", "Bolts"), ("Comets", "Aces")])   # newest first, m1 excluded
+        self.assertEqual(job.facts["new_results"][0], {"team1": "Comets", "team2": "Bolts",
+                                                       "forfeit_won_by": "Comets"})
+        # Comets were 2nd after the first recap (0 pts, goal difference 0 beats Bolts' -2).
+        self.assertEqual(job.facts["position_changes_since_last_recap"],
+                         [{"team": "Comets", "was": 2, "now": 1}, {"team": "Aces", "was": 1, "now": 2}])
+        self.assertEqual(len(job.route["covered_match_ids"]), 3)
+
+    def test_managers_only_whatever_the_audience(self):
+        self.client.force_login(self.player)
+        with override_settings(AI_ANALYTICS_AUDIENCE="all"):
+            self.assertContains(self._commission(), "Only this tournament&#x27;s organizers can write a recap.")
+            # ...and the worker re-checks: a recap queued by a non-manager fails.
+            AIQuestion.objects.create(user=self.player, tournament=self.tournament, kind="recap", question="Recap")
+            fake = self._work("unused")
+        job = AIQuestion.objects.get(kind="recap")
+        self.assertEqual((job.status, job.error), ("failed", jobs.MSG_NO_ACCESS))
+        self.assertEqual(fake.requests, [])
+        fake._replies.clear()
+
+    def test_refused_without_new_results_or_while_writing(self):
+        self._commission()
+        self.assertContains(self._commission(), "A recap is already being written.")
+        self._work("Aces beat Bolts 3-1.")
+        self.assertContains(self._commission(), "There are no new results since the last recap.")
+        self.assertEqual(AIQuestion.objects.filter(kind="recap").count(), 1)
+
+    @override_settings(AI_ANALYTICS_ENABLED=False)
+    def test_disabled_hides_recaps(self):
+        AIQuestion.objects.create(user=self.organizer, tournament=self.tournament, kind="recap",
+                                  question="Recap", status="done", answer="Old recap text.",
+                                  answer_verified=True, finished_at=timezone.now())
+        self.assertNotContains(self._analytics(), "Old recap text.")
+        self.assertEqual(self._commission().status_code, 404)
+
+    def test_purge_keeps_the_published_recap(self):
+        self._commission()
+        self._work("Aces beat Bolts 3-1.")
+        published = AIQuestion.objects.get(kind="recap")
+        old_question = AIQuestion.objects.create(user=self.organizer, tournament=self.tournament, question="q")
+        AIQuestion.objects.update(created_at=timezone.now() - timedelta(days=60))
+        self.assertEqual(jobs.purge_old(), 1)
+        self.assertEqual(list(AIQuestion.objects.values_list("pk", flat=True)), [published.pk])
+        self.assertFalse(AIQuestion.objects.filter(pk=old_question.pk).exists())

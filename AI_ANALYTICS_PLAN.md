@@ -671,6 +671,25 @@ can view analytics, with "Regenerate" for managers. Viewers never wait for
 the model, and it costs one model call per round instead of one per
 viewer.
 
+
+**As built (2026-09-25).** `core/ai/recap.py`:
+- **Facts.** Up to 10 new results (scores, or who won a forfeit) with a count
+  of any more; the top of the table; and position changes against the last
+  published recap's table.
+- **Coverage.** The recap's `route` stores every finished match id it
+  covered, so the next one starts where it stopped. The model never sees
+  ids.
+- **Checking.** Same number check as explanations; only verified recaps are
+  shown (`latest_recap`).
+- **Who.** Managers only (`may_write_recap`), whatever
+  AI_ANALYTICS_AUDIENCE says; re-checked in the worker.
+- **Refusals.** None while one is being written, none without new results.
+- **Retention.** `ai_purge` keeps each tournament's published recap, however
+  old.
+
+Checked in Chromium with a stand-in model: write, publish, shown after
+reload, and a second request refused for lack of new results.
+
 ---
 
 ## AI-10 (optional) — Tool-calling mode

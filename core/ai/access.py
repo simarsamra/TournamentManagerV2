@@ -14,3 +14,10 @@ def may_ask(user, tournament):
     if settings.AI_ANALYTICS_AUDIENCE == "managers":
         return can_manage
     return True
+
+
+def may_write_recap(user, tournament):
+    """Recaps are published to everyone who can view the analytics, so only
+    the tournament's managers may commission one, whatever the audience."""
+    _, can_manage = analytics.can_view_analytics(user, tournament)
+    return can_manage

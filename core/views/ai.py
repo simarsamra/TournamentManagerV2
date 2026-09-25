@@ -21,7 +21,7 @@ from ..models import AIQuestion, Tournament
 from .helpers import _is_htmx_request, throttled
 from .reporting import ANALYTICS_WIDGET_PARAMS
 
-__all__ = ["ai_ask", "ai_question_status"]
+__all__ = ["ai_ask", "ai_question_status", "ai_recap"]
 
 # After this long without an answer, say the question is queued.
 QUEUED_NOTICE_SECONDS = 20
@@ -139,13 +139,55 @@ def ai_ask(request):
 
 
 @login_required
+@require_POST
+@throttled("ai_recap", limit=10, window=3600, redirect_to=_ask_redirect)
+def ai_recap(request):
+    """Commission a recap of the latest results (AI-9). Managers only; the
+    published recap is then shown to everyone who can view the analytics."""
+    _require_enabled()
+    from ..ai.access import may_write_recap
+    from ..ai.recap import latest_recap, new_results, recap_in_progress
+
+    tournament = Tournament.objects.filter(pk=request.POST.get("tournament") or None).first()
+    if tournament is None:
+        raise Http404()
+    allowed, _ = analytics.can_view_analytics(request.user, tournament)
+    if not allowed:
+        messages.error(request, "You do not have access to that tournament.")
+        return redirect("dashboard")
+    if not may_write_recap(request.user, tournament):
+        return _ask_error(request, tournament.pk, "Only this tournament's organizers can write a recap.")
+    if recap_in_progress(tournament):
+        return _ask_error(request, tournament.pk, "A recap is already being written.")
+    if not new_results(tournament, latest_recap(tournament)).exists():
+        return _ask_error(request, tournament.pk, "There are no new results since the last recap.")
+    hour_ago = timezone.now() - timedelta(hours=1)
+    if AIQuestion.objects.filter(user=request.user, created_at__gte=hour_ago).count() \
+            >= settings.AI_QUESTIONS_PER_USER_PER_HOUR:
+        return _ask_error(request, tournament.pk,
+                          "You've asked a lot of questions this hour. Please try again later.")
+    if AIQuestion.objects.filter(status__in=("pending", "running")).count() >= settings.AI_MAX_PENDING:
+        return _ask_error(request, tournament.pk, "The AI is busy right now. Please try again in a few minutes.")
+
+    job = AIQuestion.objects.create(user=request.user, tournament=tournament, kind="recap",
+                                    question="Recap of the latest results")
+    if _is_htmx_request(request):
+        return render(request, "core/partials/ai_recap_status.html", _status_context(request, job))
+    return redirect("ai_question_status", pk=job.pk)
+
+
+@login_required
 def ai_question_status(request, pk):
     _require_enabled()
     # Only the asker may see a question (another user's id is a 404, not a 403).
     question = get_object_or_404(AIQuestion.objects.select_related("tournament"), pk=pk, user=request.user)
     context = _status_context(request, question)
+    context["status_template"] = (
+        "core/partials/ai_recap_status.html" if question.kind == "recap"
+        else "core/partials/ai_question_status.html"
+    )
     if _is_htmx_request(request):
-        response = render(request, "core/partials/ai_question_status.html", context)
+        response = render(request, context["status_template"], context)
         if question.is_finished:
             response.status_code = 286  # htmx: stop polling
         return response
