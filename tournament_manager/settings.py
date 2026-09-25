@@ -284,13 +284,19 @@ if AI_ANALYTICS_AUDIENCE not in ("managers", "all"):
     raise ImproperlyConfigured(
         f"DJANGO_AI_ANALYTICS_AUDIENCE must be 'managers' or 'all', got {AI_ANALYTICS_AUDIENCE!r}"
     )
-AI_QUESTIONS_PER_USER_PER_HOUR = int(os.environ.get("DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR", "10"))
+AI_QUESTIONS_PER_USER_PER_HOUR = int(os.environ.get("DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR", "60"))
 AI_MAX_PENDING = int(os.environ.get("DJANGO_AI_MAX_PENDING", "20"))
 AI_MAX_QUESTION_CHARS = int(os.environ.get("DJANGO_AI_MAX_QUESTION_CHARS", "300"))
 AI_JOB_STALE_SECONDS = int(os.environ.get("DJANGO_AI_JOB_STALE_SECONDS", "600"))
 AI_RETENTION_DAYS = int(os.environ.get("DJANGO_AI_RETENTION_DAYS", "30"))
 # Written explanations (AI-7, D-5). When off, answers show the routed card only.
 AI_EXPLANATIONS_ENABLED = _env_bool("DJANGO_AI_EXPLANATIONS", True)
+# Conversational answers from the whole tournament (core/ai/conversation.py).
+# When off, or when a tournament is too big for the snapshot, questions are
+# routed to one card as before.
+AI_CONVERSATION_ENABLED = _env_bool("DJANGO_AI_CONVERSATION", True)
+# How many earlier questions and answers a follow-up is sent with.
+AI_CONVERSATION_TURNS = int(os.environ.get("DJANGO_AI_CONVERSATION_TURNS", "3"))
 
 # The AI worker's log (routing problems, hidden explanations, model errors)
 # goes to stderr, which systemd captures: journalctl -u tm-ai-worker.

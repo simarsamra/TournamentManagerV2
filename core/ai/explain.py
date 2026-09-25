@@ -31,14 +31,19 @@ def build_messages(question, facts, system=SYSTEM_PROMPT):
     ]
 
 
-def clean(text):
+def clean(text, max_chars=MAX_ANSWER_CHARS, keep_lines=False):
     """Plain text only: drop reasoning blocks some models emit even with
-    think=false, markdown emphasis, and excess whitespace; cap the length."""
+    think=false, markdown emphasis, and excess whitespace; cap the length.
+    With keep_lines, line breaks survive (one blank line at most)."""
     text = re.sub(r"<think>.*?</think>", " ", text or "", flags=re.S | re.I)
     text = re.sub(r"[*_`#]+", "", text)
-    text = " ".join(text.split())
-    if len(text) > MAX_ANSWER_CHARS:
-        text = text[:MAX_ANSWER_CHARS].rsplit(" ", 1)[0] + "…"
+    if keep_lines:
+        lines = [" ".join(line.split()) for line in text.splitlines()]
+        text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    else:
+        text = " ".join(text.split())
+    if len(text) > max_chars:
+        text = text[:max_chars].rsplit(" ", 1)[0] + "…"
     return text
 
 

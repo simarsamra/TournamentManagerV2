@@ -690,7 +690,9 @@ def _route_json(intent, team_a="none", team_b="none", window=5, winner="none"):
                        "window": window, "winner": winner})
 
 
-@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers")
+# Routed-only answers: conversations (below) are tested on their own.
+@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_CONVERSATION_ENABLED=False)
 class RouterTests(TestCase):
     def setUp(self):
         self.organizer = _make_organizer("org")
@@ -1068,7 +1070,7 @@ class GroundingCheckTests(SimpleTestCase):
 
 
 @override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
-                   AI_EXPLANATIONS_ENABLED=True)
+                   AI_EXPLANATIONS_ENABLED=True, AI_CONVERSATION_ENABLED=False)
 class ExplanationPipelineTests(TestCase):
     def setUp(self):
         self.organizer = _make_organizer("org")
@@ -1407,3 +1409,165 @@ class RecapTests(TestCase):
         self.assertEqual(jobs.purge_old(), 1)
         self.assertEqual(list(AIQuestion.objects.values_list("pk", flat=True)), [published.pk])
         self.assertFalse(AIQuestion.objects.filter(pk=old_question.pk).exists())
+
+
+# Conversations over the whole-tournament snapshot
+
+@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_CONVERSATION_ENABLED=True, AI_CONVERSATION_TURNS=3)
+class ConversationTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=1,
+            created_by=self.organizer,
+        )
+        self.aces, self.bolts, self.comets = (Team.objects.create(name=n) for n in ("Aces", "Bolts", "Comets"))
+        for team in (self.aces, self.bolts, self.comets):
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        for number, (t1, t2, s1, s2) in enumerate((
+            (self.aces, self.bolts, 3, 1), (self.comets, self.aces, 2, 0), (self.aces, self.comets, 3, 2),
+        ), start=1):
+            Match.objects.create(
+                tournament=self.tournament, match_number=number, team1=t1, team2=t2,
+                score_team1=s1, score_team2=s2, winner=t1 if s1 > s2 else t2, status="confirmed",
+            )
+        Match.objects.create(tournament=self.tournament, match_number=4, team1=self.bolts,
+                             team2=self.comets, status="upcoming", notes="secret note")
+        self.client.force_login(self.organizer)
+
+    def _run(self, question, *replies, parent=None):
+        job = AIQuestion.objects.create(user=self.organizer, tournament=self.tournament,
+                                        question=question, parent=parent)
+        with FakeOllama() as fake:
+            for reply in replies:
+                fake.respond(reply) if isinstance(reply, BaseException) else fake.respond_chat(reply)
+            call_command("ai_worker", "--once", stdout=StringIO())
+        job.refresh_from_db()
+        return job, fake
+
+    def _page(self, job):
+        return self.client.get(f"/analytics/ask/{job.pk}/", HTTP_HX_REQUEST="true")
+
+    def test_snapshot_has_table_results_fixtures_and_precomputed_numbers(self):
+        from core.ai.snapshot import build_snapshot
+
+        snap = build_snapshot(self.tournament, self.organizer)
+        aces = next(row for row in snap["table"] if row["team"] == "Aces")
+        self.assertEqual((aces["wins"], aces["losses"], aces["score_for"], aces["score_against"]), (2, 1, 6, 5))
+        self.assertEqual((aces["last_5"], aces["streak"], aces["matches_left"]), ("WLW", "W1", 0))
+        self.assertEqual(aces["points_behind_leader"], 0)
+        bolts = next(row for row in snap["table"] if row["team"] == "Bolts")
+        self.assertEqual((bolts["points"], bolts["max_possible_points"]), (0, 3))
+        self.assertEqual(len(snap["results"]), 3)
+        self.assertEqual([r["margin"] for r in snap["results"]], [2, 2, 1])
+        self.assertEqual([(f["team1"], f["team2"]) for f in snap["fixtures"]], [("Bolts", "Comets")])
+        self.assertIn({"teams": ["Aces", "Comets"], "team1_wins": 1, "team2_wins": 1, "draws": 0},
+                      snap["head_to_head"])
+        self.assertNotIn("secret note", serialise(snap))
+
+    def test_snapshot_needs_analytics_access(self):
+        from core.ai.snapshot import build_snapshot
+
+        stranger = User.objects.create_user(username="stranger", password="Regression-Pass-1")
+        with self.assertRaises(PermissionDenied):
+            build_snapshot(self.tournament, stranger)
+
+    def test_too_big_snapshot_drops_old_results_or_gives_up(self):
+        from core.ai import snapshot
+
+        with mock.patch.object(snapshot, "MAX_SNAPSHOT_CHARS", 10), \
+                mock.patch.object(snapshot, "MIN_RESULTS_KEPT", 1):
+            self.assertIsNone(snapshot.build_snapshot(self.tournament, self.organizer))
+        full = len(serialise(snapshot.build_snapshot(self.tournament, self.organizer)))
+        with mock.patch.object(snapshot, "MAX_SNAPSHOT_CHARS", full - 1), \
+                mock.patch.object(snapshot, "MIN_RESULTS_KEPT", 1):
+            trimmed = snapshot.build_snapshot(self.tournament, self.organizer)
+        self.assertEqual((len(trimmed["results"]), trimmed["older_results_not_listed"]), (2, 1))
+
+    def test_question_no_card_covers_is_still_answered(self):
+        job, fake = self._run("Which team scored the most?", _route_json("unknown"),
+                              "The Aces scored 6, more than anyone.")
+        self.assertEqual((job.status, job.answer, job.answer_verified, job.facts),
+                         ("done", "The Aces scored 6, more than anyone.", True, None))
+        self.assertEqual(set(job.timings), {"route", "answer"})
+        prompt = fake.requests[1]["body"]["messages"][-1]["content"]
+        self.assertIn('"score_for":6', prompt)
+        page = self._page(job)
+        self.assertContains(page, "The Aces scored 6", status_code=286)
+        self.assertNotContains(page, "couldn't match", status_code=286)
+
+    def test_matched_card_is_shown_with_the_answer(self):
+        job, _ = self._run("Aces vs Comets?", _route_json("head_to_head", "T1", "T3"),
+                           "The Aces and Comets have won 1 each.")
+        self.assertEqual(job.route["card"], "h2h")
+        page = self._page(job)
+        self.assertContains(page, "have won 1 each", status_code=286)
+        self.assertContains(page, "Show on the Head-to-Head card", status_code=286)
+
+    def test_unchecked_numbers_are_flagged_not_hidden(self):
+        job, _ = self._run("Who leads?", _route_json("standings"), "The Aces lead by 17 points.")
+        self.assertEqual((job.answer_verified, job.unchecked_numbers), (False, ["17"]))
+        page = self._page(job)
+        self.assertContains(page, "The Aces lead by 17 points.", status_code=286)
+        self.assertContains(page, "check them before relying on them: 17", status_code=286)
+
+    def test_follow_up_sends_the_earlier_turns(self):
+        first, _ = self._run("How are the Bolts doing?", _route_json("form", "T2"), "The Bolts lost 1.")
+        second, fake = self._run("And who do they play next?", _route_json("next_match", "T2"),
+                                 "They play the Comets.", parent=first)
+        route_prompt = fake.requests[0]["body"]["messages"][1]["content"]
+        self.assertIn("EARLIER QUESTIONS", route_prompt)
+        self.assertIn("How are the Bolts doing?", route_prompt)
+        messages = fake.requests[1]["body"]["messages"]
+        self.assertEqual([m["role"] for m in messages], ["system", "user", "assistant", "user"])
+        self.assertEqual(messages[2]["content"], "The Bolts lost 1.")
+        self.assertNotIn("TOURNAMENT", messages[1]["content"])  # the snapshot is sent once
+        self.assertEqual(second.answer, "They play the Comets.")
+
+    def test_history_stops_at_the_turn_limit_and_other_users(self):
+        from core.ai.conversation import history
+
+        other = _make_organizer("other")
+        root = AIQuestion.objects.create(user=other, tournament=self.tournament, question="theirs",
+                                         status="done", kind="ask", answer="x", snapshot={})
+        parent = root
+        for i in range(5):
+            parent = AIQuestion.objects.create(user=self.organizer, tournament=self.tournament,
+                                               question=f"q{i}", status="done", answer=f"a{i}",
+                                               snapshot={}, parent=parent)
+        job = AIQuestion(user=self.organizer, tournament=self.tournament, question="now", parent=parent)
+        self.assertEqual(history(job), [("q2", "a2"), ("q3", "a3"), ("q4", "a4")])
+        with override_settings(AI_CONVERSATION_TURNS=10):
+            self.assertEqual([q for q, _ in history(job)], ["q0", "q1", "q2", "q3", "q4"])
+
+    def test_answer_failure_without_a_card_fails_the_job(self):
+        with self.assertLogs("core.ai", level="WARNING"):
+            job, _ = self._run("anything", _route_json("unknown"), client.OllamaTimeout("slow"))
+        self.assertEqual((job.status, job.error), ("failed", jobs.MSG_SLOW))
+
+    def test_answer_failure_with_a_card_keeps_the_card(self):
+        with self.assertLogs("core.ai", level="WARNING"):
+            job, _ = self._run("Who leads?", _route_json("standings"), client.OllamaTimeout("slow"))
+        self.assertEqual((job.status, job.answer, job.route["card"]), ("done", "", "standings"))
+
+    def test_ask_view_links_follow_ups_to_the_users_own_questions(self):
+        first = self.client.post("/analytics/ask/", {"tournament": self.tournament.pk, "question": "one"},
+                                 HTTP_HX_REQUEST="true")
+        job = AIQuestion.objects.get()
+        self.assertContains(first, f'id="ai-parent" value="{job.pk}" hx-swap-oob="true"')
+        self.client.post("/analytics/ask/", {"tournament": self.tournament.pk, "question": "two",
+                                             "parent": job.pk}, HTTP_HX_REQUEST="true")
+        self.assertEqual(AIQuestion.objects.get(question="two").parent, job)
+        other = _make_organizer("other")
+        theirs = AIQuestion.objects.create(user=other, tournament=self.tournament, question="theirs")
+        self.client.post("/analytics/ask/", {"tournament": self.tournament.pk, "question": "three",
+                                             "parent": theirs.pk}, HTTP_HX_REQUEST="true")
+        self.assertIsNone(AIQuestion.objects.get(question="three").parent)
+
+    def test_clean_keeps_line_breaks_when_asked(self):
+        self.assertEqual(clean("- **Aces** 6\n\n\n\n- Bolts   4", max_chars=100, keep_lines=True),
+                         "- Aces 6\n\n- Bolts 4")

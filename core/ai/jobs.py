@@ -26,7 +26,8 @@ MSG_ERROR = "Something went wrong answering this question."
 
 # The fields a processor fills in; written back only if the job is still ours.
 RESULT_FIELDS = (
-    "route", "facts", "answer", "answer_verified", "model_name", "timings",
+    "route", "facts", "snapshot", "answer", "answer_verified", "unchecked_numbers",
+    "model_name", "timings",
 )
 
 

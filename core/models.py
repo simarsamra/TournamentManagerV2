@@ -859,6 +859,15 @@ class AIQuestion(models.Model):
     # False when the explanation mentions a number that isn't in `facts`
     # (AI-7); such text is kept for debugging but never displayed.
     answer_verified = models.BooleanField(default=False)
+    # Conversation answers: the whole-tournament snapshot the model saw
+    # (ai/snapshot.py), and any numbers in `answer` that aren't in it. Such
+    # an answer is shown with a warning rather than hidden.
+    snapshot = models.JSONField(null=True, blank=True)
+    unchecked_numbers = models.JSONField(default=list, blank=True)
+    # The previous question in the same conversation, for follow-ups.
+    parent = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="follow_ups"
+    )
     # Safe to show the asker. Details go to the `core.ai` log.
     error = models.CharField(max_length=255, blank=True, default="")
     model_name = models.CharField(max_length=100, blank=True, default="")

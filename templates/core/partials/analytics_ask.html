@@ -2,13 +2,15 @@
 <div class="card mb-2" id="analytics-ask">
     <div class="card-header">Ask about this tournament</div>
     <div class="card-body">
-        <form method="post" action="{% url 'ai_ask' %}" hx-post="{% url 'ai_ask' %}" hx-target="#ai-answer" hx-swap="innerHTML" hx-disabled-elt="#ai-ask-button" class="d-flex gap-1" style="flex-wrap:wrap;">
+        <form method="post" action="{% url 'ai_ask' %}" hx-post="{% url 'ai_ask' %}" hx-target="#ai-answer" hx-swap="beforeend" hx-disabled-elt="#ai-ask-button" hx-on::after-request="if (event.detail.successful) document.getElementById('ai-question').value = ''" class="d-flex gap-1" style="flex-wrap:wrap;">
             {% csrf_token %}
             <input type="hidden" name="tournament" value="{{ tournament.pk }}">
+            <input type="hidden" name="parent" id="ai-parent" value="">
             <input id="ai-question" name="question" type="text" class="form-control" aria-label="Your question" maxlength="{{ ai_max_question_chars }}" required autocomplete="off" placeholder="e.g. How have the {{ analytics_teams.0.display_label|default:'Aces' }} been doing lately?" style="flex:1;min-width:220px;">
             <button id="ai-ask-button" type="submit" class="btn btn-primary btn-sm">Ask</button>
+            <button type="button" class="btn btn-outline btn-sm" title="Forget the conversation so far" onclick="document.getElementById('ai-answer').innerHTML = ''; document.getElementById('ai-parent').value = ''; document.getElementById('ai-question').focus();">New conversation</button>
         </form>
-        <div id="ai-answer" class="mt-1" aria-live="polite"></div>
-        <p class="text-muted" style="font-size:0.8rem;margin:0.5rem 0 0;">Answered by a model running on this server. It chooses which analytics to show; the numbers come from the tournament's results.</p>
+        <div id="ai-answer" class="mt-1 d-flex" style="flex-direction:column;gap:0.5rem;" aria-live="polite"></div>
+        <p class="text-muted" style="font-size:0.8rem;margin:0.5rem 0 0;">Answered by a model running on this server from the tournament's results and fixtures. Ask follow-ups; it remembers the last few questions of this conversation.</p>
     </div>
 </div>

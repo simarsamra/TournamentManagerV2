@@ -371,7 +371,9 @@ really uses.
 | `DJANGO_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in memory after a call. Only the first question after a quiet spell pays the load time. |
 | `DJANGO_AI_ANALYTICS_AUDIENCE` | `managers` | Who may ask: `managers` (each tournament's organizers) or `all` (anyone who can open its analytics). |
 | `DJANGO_AI_EXPLANATIONS` | `True` | Written explanations. When off, answers are the figures only. |
-| `DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR` | `10` | Per-user quota. |
+| `DJANGO_AI_CONVERSATION` | `True` | Conversational answers: the model sees the whole tournament (table with points gaps, streaks and matches left, every result, the fixtures, head-to-head records) plus the last few questions, so it answers anything the data covers and follow-ups. Numbers not in the data are flagged under the answer. Off, or for a tournament too big for the snapshot, questions are routed to one card as before. |
+| `DJANGO_AI_CONVERSATION_TURNS` | `3` | Earlier questions and answers sent with a follow-up. |
+| `DJANGO_AI_QUESTIONS_PER_USER_PER_HOUR` | `60` | Per-user quota (the per-IP limit on the Ask button is 240 an hour). |
 | `DJANGO_AI_MAX_PENDING` | `20` | Questions allowed to wait at once, site-wide; beyond it, "busy, try later". |
 | `DJANGO_AI_MAX_QUESTION_CHARS` | `300` | Longest question accepted. |
 | `DJANGO_AI_JOB_STALE_SECONDS` | `600` | A question still "running" after this long is marked failed (a crashed worker). |

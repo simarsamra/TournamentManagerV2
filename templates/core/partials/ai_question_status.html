@@ -5,6 +5,15 @@
     <p class="text-muted" role="status" style="margin:0;">Thinking…{% if queued_long %} The model is busy; your question is queued.{% endif %}</p>
     {% elif q.status == "failed" %}
     <p role="alert" style="margin:0;color:var(--danger);">{{ q.error }}</p>
+    {% elif q.snapshot and q.answer %}
+    <div style="margin:0 0 0.5rem;white-space:pre-line;">{{ q.answer }}</div>
+    {% if q.unchecked_numbers %}
+    <div class="text-muted" style="font-size:0.75rem;margin-bottom:0.5rem;">⚠ AI-generated. These numbers aren't in the tournament's data, so check them before relying on them: {{ q.unchecked_numbers|join:", " }}.</div>
+    {% else %}
+    <div class="text-muted" style="font-size:0.75rem;margin-bottom:0.5rem;">AI-generated from the tournament's results and fixtures; every number was checked against them.</div>
+    {% endif %}
+    {% if q.facts %}{% include "core/partials/ai_answer_facts.html" %}{% endif %}
+    {% if page_link %}<a class="btn btn-outline btn-sm mt-1" href="{{ page_link }}">Show on the {{ card_label }} card</a>{% endif %}
     {% elif route.message %}
     <p style="margin:0;">{{ route.message }}</p>
     {% else %}
@@ -19,3 +28,4 @@
     {% endif %}
     {% if q.is_finished and seconds %}<div class="text-muted" style="font-size:0.75rem;margin-top:0.5rem;">{{ q.model_name }} · {{ seconds }} s</div>{% endif %}
 </div>
+{% if set_parent %}<input type="hidden" name="parent" id="ai-parent" value="{{ q.pk }}" hx-swap-oob="true">{% endif %}

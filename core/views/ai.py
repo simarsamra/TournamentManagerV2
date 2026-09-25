@@ -103,7 +103,9 @@ def _ask_error(request, tournament_pk, message):
 
 @login_required
 @require_POST
-@throttled("ai_ask", limit=20, window=3600, redirect_to=_ask_redirect)
+# Per IP, above any one user's AI_QUESTIONS_PER_USER_PER_HOUR: this only
+# guards against scripted floods; the per-user quota is the real limit.
+@throttled("ai_ask", limit=240, window=3600, redirect_to=_ask_redirect)
 def ai_ask(request):
     _require_enabled()
     from ..ai.access import may_ask
@@ -132,9 +134,15 @@ def ai_ask(request):
     if AIQuestion.objects.filter(status__in=("pending", "running")).count() >= settings.AI_MAX_PENDING:
         return _ask_error(request, tournament.pk, "The AI is busy right now. Please try again in a few minutes.")
 
-    job = AIQuestion.objects.create(user=request.user, tournament=tournament, question=question)
+    # A follow-up: only to the same user's earlier question about this tournament.
+    parent = AIQuestion.objects.filter(
+        pk=request.POST.get("parent") or None, user=request.user, tournament=tournament, kind="ask",
+    ).first() if (request.POST.get("parent") or "").isdigit() else None
+    job = AIQuestion.objects.create(user=request.user, tournament=tournament, question=question, parent=parent)
     if _is_htmx_request(request):
-        return render(request, "core/partials/ai_question_status.html", _status_context(request, job))
+        context = _status_context(request, job)
+        context["set_parent"] = True
+        return render(request, "core/partials/ai_question_status.html", context)
     return redirect("ai_question_status", pk=job.pk)
 
 

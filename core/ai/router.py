@@ -110,15 +110,22 @@ def _data(text):
     return text.replace("<<<", "‹‹‹").replace(">>>", "›››").strip()
 
 
-def build_messages(question, keys):
+def build_messages(question, keys, earlier=()):
+    """`earlier` are the conversation's previous questions, oldest first, so
+    a follow-up like "and their next match?" can name its team."""
     teams = "\n".join(f"{key} = {_data(team.display_label)}" for key, team in keys.items())
+    context = ""
+    if earlier:
+        lines = "\n".join(_data(q) for q in earlier)
+        context = f"EARLIER QUESTIONS (only to resolve words like they, them, that match):\n<<<\n{lines}\n>>>\n"
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"TEAMS:\n<<<\n{teams}\n>>>\nQUESTION:\n<<<\n{_data(question)}\n>>>"},
+        {"role": "user",
+         "content": f"TEAMS:\n<<<\n{teams}\n>>>\n{context}QUESTION:\n<<<\n{_data(question)}\n>>>"},
     ]
 
 
-def route_question(tournament, question):
+def route_question(tournament, question, earlier=()):
     """Ask the model where `question` belongs and validate the answer.
 
     Raises client.OllamaError subclasses; everything the model gets wrong
@@ -128,7 +135,7 @@ def route_question(tournament, question):
     label_map = analytics.label_standings(tournament, standings)
     keys = team_keys(analytics.active_teams(tournament, label_map))
     result = client.chat(
-        build_messages(question, keys), schema=build_schema(keys), temperature=0.0, num_predict=128,
+        build_messages(question, keys, earlier), schema=build_schema(keys), temperature=0.0, num_predict=128,
     )
     try:
         reply = json.loads(result.content)
