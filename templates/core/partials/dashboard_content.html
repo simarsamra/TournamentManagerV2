@@ -160,7 +160,7 @@
                 {% if team_standing %}
                 <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
                     <div style="font-size:2rem;font-weight:800;color:var(--primary);line-height:1;">#{{ team_standing.rank }}</div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Rank</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.3rem;">Rank{% if team_standing_group %} in Group {{ team_standing_group }}{% endif %}</div>
                 </div>
                 <div style="text-align:center;padding:0 1.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;">
                     <div style="font-size:2rem;font-weight:800;color:var(--primary);line-height:1;">{{ team_standing.points }}</div>

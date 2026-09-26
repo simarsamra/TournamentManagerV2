@@ -315,12 +315,28 @@ def dashboard_view(request):
         # 1. Standings (round-robin / group stage formats only)
         standings = []
         team_standing = None
+        team_standing_group = None
         if tournament.format in ("round_robin", "double_round_robin", "hybrid"):
             standings = calculate_standings(tournament)
             for s in standings:
                 s["display_label"] = _team_display_label(tournament, s["team"])
             team_standing = next((s for s in standings if s["team"].pk == team.pk), None)
+            if tournament.format == "hybrid":
+                # A hybrid is ranked group by group; a rank across groups
+                # means nothing (AI_STRUCTURE_PLAN.md D-4).
+                team_standing_group = (
+                    tournament.team_participations.filter(team=team)
+                    .values_list("group", flat=True).first()
+                ) or None
+                team_standing = None
+                if team_standing_group:
+                    team_standing = next(
+                        (s for s in calculate_standings(tournament, group=team_standing_group)
+                         if s["team"].pk == team.pk),
+                        None,
+                    )
         context["team_standing"] = team_standing
+        context["team_standing_group"] = team_standing_group
         
         # Add runner-ups context for completed tournaments
         if tournament.status == "completed":

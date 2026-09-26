@@ -559,6 +559,12 @@ the ribbon — see [`DUAL_ROLE_TOGGLE_FEATURE.md`](DUAL_ROLE_TOGGLE_FEATURE.md).
 | Consolation | Knockout, plus a secondary bracket generated from the first-round losers once round 1 completes. |
 | Hybrid | Group phase followed by knockout playoffs. |
 
+In a hybrid, points come from the group stage only: knockout matches decide who
+advances, never points. Standings, the analytics page's Points Overview and a team's
+dashboard all count group matches only, and the dashboard shows a team's rank
+within its group ("Rank in Group B"). Before this change, a knockout win added
+`points_per_win` to the whole-tournament table.
+
 ## Backups
 
 Backups are JSON files written to `DJANGO_BACKUP_DIR`. They serialize

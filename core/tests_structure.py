@@ -4,7 +4,8 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from core import testing_tournaments as tt
-from core.models import OrganizerProfile
+from core.models import OrganizerProfile, TeamMembership
+from core.standings import _head_to_head_matches, calculate_standings
 
 
 def _make_organizer(username="org"):
@@ -78,3 +79,74 @@ class TournamentBuilderTests(TestCase):
         self.assertEqual(p.status, "withdrawn")
         self.assertFalse(t.matches.filter(status="upcoming", team1__name="Blue Jays").exists())
         self.assertFalse(t.matches.filter(status="upcoming", team2__name="Blue Jays").exists())
+
+
+class HybridStandingsTests(TestCase):
+    """ST-1 (G-2): in a hybrid, calculate_standings(tournament) with no group
+    counted knockout matches, so a knockout win added league points."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _points(self, tournament):
+        return {row["team"].name: (row["points"], row["played"]) for row in calculate_standings(tournament)}
+
+    def test_a_knockout_win_adds_no_points(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        points = self._points(t)
+        self.assertEqual(points["Red Rovers"], (9, 3))
+        self.assertEqual(points["Blue Jays"], (6, 3))
+
+    def test_the_final_adds_no_points_either(self):
+        t = tt.hybrid_finished(self.org)
+        points = self._points(t)
+        self.assertEqual(points["Red Rovers"], (9, 3))
+        self.assertEqual(points["Green Giants"], (6, 3))
+
+    def test_group_tables_are_unchanged(self):
+        t = tt.hybrid_finished(self.org)
+        a = [(r["team"].name, r["points"]) for r in calculate_standings(t, group="A")]
+        self.assertEqual(a, [("Red Rovers", 9), ("Green Giants", 6), ("Silver Hawks", 3), ("Black Bears", 0)])
+
+    def test_head_to_head_ignores_knockout_results(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        matches = _head_to_head_matches(t)
+        self.assertTrue(matches)
+        self.assertTrue(all(m.group for m in matches))
+
+    def test_league_head_to_head_still_reads_every_match(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        tt.play(t.matches.order_by("match_number").first(), 1, 0)
+        self.assertEqual(len(_head_to_head_matches(t)), 1)
+
+    def test_analytics_page_shows_group_stage_points(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        self.client.force_login(self.org)
+        response = self.client.get("/analytics/", {"tournament": t.pk})
+        points = {row["team"].name: row["points"] for row in response.context["standings"]}
+        self.assertEqual(points["Red Rovers"], 9)
+
+
+class HybridDashboardRankTests(TestCase):
+    """ST-1 (D-4): a hybrid team's dashboard rank is its rank in its group."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+        self.tournament = tt.hybrid_after_one_semi(self.org)
+        self.player = User.objects.create_user(username="jay", password="Regression-Pass-1")
+        TeamMembership.objects.create(team=tt.team("Blue Jays"), user=self.player, role="captain")
+        self.client.force_login(self.player)
+
+    def test_rank_is_within_the_group(self):
+        response = self.client.get("/dashboard/", {"tournament": self.tournament.pk})
+        self.assertEqual(response.context["team_standing"]["rank"], 2)
+        self.assertEqual(response.context["team_standing"]["points"], 6)
+        self.assertEqual(response.context["team_standing_group"], "B")
+        self.assertContains(response, "in Group B")
+
+    def test_league_dashboard_has_no_group(self):
+        league = tt.make_league(self.org, tt.NAMES[:4], name="Plain league")
+        TeamMembership.objects.create(team=tt.team("Red Rovers"), user=self.player)
+        response = self.client.get("/dashboard/", {"tournament": league.pk})
+        self.assertIsNone(response.context.get("team_standing_group"))
+        self.assertNotContains(response, "in Group")

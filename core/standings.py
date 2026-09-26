@@ -15,15 +15,24 @@ def _tournament_teams(tournament, statuses):
     ).distinct()
 
 
+def _stage_matches(tournament, matches, group=None):
+    """The matches that count for a standings table: one group's, or, in a
+    hybrid, only the group stage's. A hybrid's knockout matches carry no group
+    letter and earn no points (AI_STRUCTURE_PLAN.md ST-1, gap G-2)."""
+    if group:
+        return matches.filter(group=group)
+    if tournament.format == "hybrid":
+        return matches.exclude(group="")
+    return matches
+
+
 def calculate_standings(tournament, group=None):
     """Calculate standings for round-robin or group stage."""
     teams = _tournament_teams(tournament, ["active", "withdrawn"])
     if group:
         teams = teams.filter(participations__group=group)
 
-    matches = tournament.matches.filter(status="confirmed")
-    if group:
-        matches = matches.filter(group=group)
+    matches = _stage_matches(tournament, tournament.matches.filter(status="confirmed"), group)
 
     standings = {}
     for team in teams:
@@ -75,9 +84,7 @@ def calculate_standings(tournament, group=None):
             standings[t2]["points"] += tournament.points_per_draw
 
     # Also count forfeited matches
-    forfeits = tournament.matches.filter(status="forfeited")
-    if group:
-        forfeits = forfeits.filter(group=group)
+    forfeits = _stage_matches(tournament, tournament.matches.filter(status="forfeited"), group)
 
     for match in forfeits:
         if match.winner_id and match.winner_id in standings:
@@ -160,9 +167,7 @@ def _head_to_head_matches(tournament, group=None):
     tiebreaker costs one query however many tied groups there are.
     """
     matches = tournament.matches.filter(status__in=("confirmed", "forfeited"))
-    if group:
-        matches = matches.filter(group=group)
-    return list(matches)
+    return list(_stage_matches(tournament, matches, group))
 
 
 def _head_to_head_points(tournament, team_ids, group=None, matches=None):
