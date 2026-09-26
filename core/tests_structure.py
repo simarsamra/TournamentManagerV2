@@ -6,6 +6,7 @@ from django.test import TestCase
 from core import testing_tournaments as tt
 from core.models import OrganizerProfile, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
+from core.structure import stage_labels, structure_kind
 
 
 def _make_organizer(username="org"):
@@ -201,3 +202,59 @@ class WithdrawnTeamTests(TestCase):
         self.client.force_login(self.org)
         response = self.client.get("/public/standings/", {"tournament": t.pk})
         self.assertContains(response, "badge-withdrawn", count=1)
+
+
+class StageLabelTests(TestCase):
+    """ST-3 (groundwork for G-4, K-2): every match gets a stage name, the
+    way the bracket pages name rounds."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _labels(self, tournament, **filters):
+        matches = tournament.matches.filter(**filters).order_by("round_number", "match_number")
+        labels = stage_labels(tournament)
+        return [labels[m.pk] for m in matches]
+
+    def test_hybrid(self):
+        t = tt.make_hybrid(self.org, third_place=True)
+        self.assertEqual(set(self._labels(t, group="A")), {"Group A"})
+        self.assertEqual(self._labels(t, group="", bracket_type="winners"), ["Semi-final", "Semi-final", "Final"])
+        self.assertEqual(self._labels(t, bracket_type="third_place"), ["Third-place match"])
+
+    def test_knockout_of_8(self):
+        t = tt.make_knockout(self.org)
+        self.assertEqual(self._labels(t), ["Quarter-final"] * 4 + ["Semi-final"] * 2 + ["Final"])
+
+    def test_knockout_of_16(self):
+        t = tt.make_knockout(self.org, [f"Team {i}" for i in range(1, 17)])
+        self.assertEqual(self._labels(t, round_number=1), ["Round of 16"] * 8)
+
+    def test_byes_keep_the_round_name(self):
+        t = tt.make_knockout(self.org, tt.NAMES[:6])
+        self.assertEqual(self._labels(t, round_number=1), ["Quarter-final"] * 4)
+
+    def test_double_elimination(self):
+        t = tt.make_double_elimination(self.org)
+        self.assertEqual(self._labels(t, bracket_type="winners"),
+                         ["Winners bracket quarter-final"] * 4 + ["Winners bracket semi-final"] * 2
+                         + ["Winners bracket final"])
+        self.assertEqual(self._labels(t, bracket_type="losers"),
+                         ["Losers bracket round 1"] * 2 + ["Losers bracket round 2"] * 2
+                         + ["Losers bracket round 3", "Losers bracket final"])
+        self.assertEqual(self._labels(t, bracket_type="grand_final"), ["Grand final", "Grand final decider"])
+
+    def test_consolation(self):
+        t = tt.make_consolation(self.org)
+        tt.play_ready(t)
+        self.assertEqual(self._labels(t, bracket_type="consolation"),
+                         ["Consolation semi-final", "Consolation semi-final", "Consolation final"])
+
+    def test_league(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        self.assertEqual(set(self._labels(t, round_number=2)), {"Round 2"})
+
+    def test_kinds(self):
+        self.assertEqual(structure_kind(tt.make_league(self.org, tt.NAMES[:4], name="L")), "league")
+        self.assertEqual(structure_kind(tt.make_hybrid(self.org, name="H")), "groups")
+        self.assertEqual(structure_kind(tt.make_consolation(self.org, name="C")), "bracket")
