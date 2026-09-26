@@ -159,7 +159,7 @@ Use the default unless the owner has written another answer here.
 
 Owner's answers (if any):
 
-- *(none recorded)*
+- 2026-09-26: the owner accepted all five defaults (D-1 to D-5).
 
 ---
 
