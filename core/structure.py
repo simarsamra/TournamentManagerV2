@@ -9,7 +9,7 @@ being handed one league table for every format and left to guess.
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .standings import calculate_standings
+from .standings import _head_to_head_matches, _head_to_head_points, calculate_standings
 
 KIND_LEAGUE, KIND_GROUPS, KIND_BRACKET = "league", "groups", "bracket"
 LEAGUE_FORMATS = ("round_robin", "double_round_robin")
@@ -206,12 +206,15 @@ def build_structure(tournament, label):
         return rows
 
     if kind == KIND_LEAGUE:
-        structure.table = labelled(calculate_standings(tournament))
+        structure.table = separated_by(tournament, labelled(calculate_standings(tournament)))
         _league_states(tournament, structure)
     elif kind == KIND_GROUPS:
         structure.advance_per_group = tournament.teams_per_group_advance
         letters = sorted({p.group for p in participations if p.group})
-        structure.groups = {g: labelled(calculate_standings(tournament, group=g)) for g in letters}
+        structure.groups = {
+            g: separated_by(tournament, labelled(calculate_standings(tournament, group=g)), group=g)
+            for g in letters
+        }
         _group_states(tournament, structure, matches)
         knockout = [m for m in matches if not m.group]
         seeded = {pk for m in knockout for pk in _teams_of(m) if pk}
@@ -410,3 +413,35 @@ def _placings(structure, matches):
         if semis:
             placings["semi_finalists"] = semis
     return placings
+
+
+# -- Why tied teams are in that order (ST-5) ------------------------------------
+
+def separated_by(tournament, rows, group=None):
+    """Set row["separated_by"] on each row level on points with the row
+    above: the tiebreaker that put it lower, in words. Mirrors
+    standings.rank_standings: the scalar tiebreakers in the configured
+    order, then head-to-head among the teams still tied, then the fixed
+    last-resort order ("registration order"). Returns `rows`."""
+    order = tournament.get_tiebreaker_order()
+    scalars = [tb for tb in order if tb != "head_to_head"]
+    matches = None
+
+    def scalar_key(row):
+        return tuple(row[tb] for tb in scalars if tb in row)
+
+    for i in range(1, len(rows)):
+        above, row = rows[i - 1], rows[i]
+        if row["points"] != above["points"]:
+            continue
+        reason = next((TIEBREAKER_WORDS[tb] for tb in scalars if tb in row and row[tb] != above[tb]), None)
+        if reason is None and "head_to_head" in order:
+            tied = [r["team"].pk for r in rows
+                    if r["points"] == row["points"] and scalar_key(r) == scalar_key(row)]
+            if matches is None:
+                matches = _head_to_head_matches(tournament, group=group)
+            h2h = _head_to_head_points(tournament, tied, group=group, matches=matches)
+            if h2h.get(above["team"].pk) != h2h.get(row["team"].pk):
+                reason = TIEBREAKER_WORDS["head_to_head"]
+        row["separated_by"] = reason or "registration order"
+    return rows

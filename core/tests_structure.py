@@ -2,6 +2,7 @@
 withdrawals) and how standings and the AI see it."""
 from django.contrib.auth.models import User
 from django.db import connection
+from django.db.models import Q
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
@@ -468,3 +469,53 @@ class BuildStructureTests(TestCase):
         # (teams, confirmed matches, forfeits: 3 each; no head-to-head query
         # without a tie). Never a query per team or per match.
         self.assertEqual(len(ctx.captured_queries), 2 + 2 * 3)
+
+
+class SeparatedByTests(TestCase):
+    """ST-5 (T-1): teams level on points say which tiebreaker split them, so
+    the AI never has to guess ("top on goal difference")."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+        self.t = tt.make_league(self.org, tt.NAMES[:4])
+
+    def _play(self, winner_or_first, other, s1, s2):
+        match = self.t.matches.get(
+            Q(team1__name=winner_or_first, team2__name=other) | Q(team1__name=other, team2__name=winner_or_first)
+        )
+        tt.play(match, *((s1, s2) if match.team1.name == winner_or_first else (s2, s1)))
+
+    def _reasons(self):
+        rows = build_structure(self.t, _label).table
+        return [(r["team"].name, r.get("separated_by")) for r in rows]
+
+    def test_games_won(self):
+        self._play("Red Rovers", "Blue Jays", 3, 2)
+        self._play("Golden Boots", "Green Giants", 1, 0)
+        self.assertEqual(self._reasons()[:2], [("Red Rovers", None), ("Golden Boots", "games won")])
+
+    def test_game_difference_then_head_to_head(self):
+        self._play("Red Rovers", "Golden Boots", 2, 1)
+        self._play("Golden Boots", "Green Giants", 2, 1)
+        self._play("Blue Jays", "Red Rovers", 2, 1)
+        self.assertEqual(self._reasons()[:3], [
+            ("Blue Jays", None), ("Red Rovers", "game difference"), ("Golden Boots", "head-to-head"),
+        ])
+
+    def test_level_on_everything(self):
+        self._play("Red Rovers", "Golden Boots", 1, 1)
+        reasons = dict(self._reasons())
+        self.assertEqual(reasons["Golden Boots"], "registration order")
+
+    def test_untied_rows_have_no_reason(self):
+        self._play("Red Rovers", "Golden Boots", 2, 0)
+        self._play("Blue Jays", "Green Giants", 2, 1)
+        self._play("Red Rovers", "Blue Jays", 2, 0)
+        rows = dict(self._reasons())
+        self.assertIsNone(rows["Red Rovers"])
+        self.assertIsNone(rows["Blue Jays"])
+
+    def test_group_tables_get_reasons_too(self):
+        t = tt.hybrid_after_groups(self.org)
+        rows = build_structure(t, _label).groups["A"]
+        self.assertTrue(all("separated_by" not in r for r in rows))   # 9, 6, 3, 0: no ties
