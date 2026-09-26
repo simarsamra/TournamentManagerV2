@@ -7,6 +7,7 @@ places where the facts the AI is given don't say how the tournament is built, so
 tells a good-looking story that's wrong.
 
 Nothing here is fixed yet. Each item says where the problem is and suggests a fix.
+The step-by-step fix plan is [`AI_STRUCTURE_PLAN.md`](AI_STRUCTURE_PLAN.md).
 
 ## How these were found
 
