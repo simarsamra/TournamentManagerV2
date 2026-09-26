@@ -21,11 +21,12 @@ from django.db.models import F, Q
 from core import analytics
 from core.models import AIQuestion
 from core.standings import calculate_standings
+from core.structure import build_structure
 from core.views.helpers import _get_team, _team_display_label
 
 from .facts import _fit, _standings_rows
 from .recap import (
-    FINISHED, STORY_PARTS, _day, chat_story, check_story, final_placings, fixture_when, is_final,
+    FINISHED, STORY_PARTS, _day, chat_story, check_story, fixture_when, is_final,
     latest_recap, parse_story, played_on, story_schema, upcoming_fixtures,
 )
 from .snapshot import _streak
@@ -158,7 +159,7 @@ def build_team_facts(tournament, team):
         facts["your_streak"] = f"{'won' if streak[0] == 'W' else 'lost'} {streak[1:]} in a row"
     if final:
         facts["tournament"]["finished"] = True
-        placings = final_placings(tournament, standings, label)
+        placings = dict(build_structure(tournament, label).placings)
         facts.update(placings)
         facts["you_are_champion"] = placings.get("champion") == facts["your_team"]
     if tournament.format in analytics.STANDINGS_FORMATS:

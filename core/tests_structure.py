@@ -8,8 +8,10 @@ from django.db.models import Q
 from django.template.loader import render_to_string
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from core import testing_tournaments as tt
+from core.ai import recap
 from core.ai.conversation import SYSTEM_PROMPT as CONVERSATION_PROMPT
 from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
 from core.ai.facts import Route, build_facts, serialise
@@ -17,7 +19,7 @@ from core.ai.router import build_schema, route_question
 from core.ai.snapshot import MAX_SNAPSHOT_CHARS, build_snapshot
 from core.ai.structure_facts import STRUCTURE_RULE, trim
 from core.ai.testing import FakeOllama
-from core.models import Match, OrganizerProfile, Team, TeamMembership
+from core.models import AIQuestion, Match, OrganizerProfile, Team, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
 from core.structure import build_structure, stage_labels, structure_kind
 
@@ -749,3 +751,140 @@ class SnapshotStructureTests(TestCase):
 
     def test_conversation_prompt_has_the_rule(self):
         self.assertIn(STRUCTURE_RULE, CONVERSATION_PROMPT)
+
+
+def _publish(tournament):
+    """A published news update, as the worker would leave it."""
+    previous = recap.latest_recap(tournament)
+    facts, covered, _, memory = recap.build_recap_facts(tournament, previous)
+    return AIQuestion.objects.create(
+        tournament=tournament, kind="recap", question="Automatic news update", status="done",
+        answer_verified=True, finished_at=timezone.now(), facts=facts, answer="News",
+        route={"kind": "recap", "covered_match_ids": covered, "story": {"intro": "News"},
+               "positions": memory["positions"], "statuses": memory["statuses"]},
+    )
+
+
+def _story_reply(parts):
+    return json.dumps({"story": {p: "Great games." for p in parts}, "results": [], "previews": []})
+
+
+class NewsStructureTests(TestCase):
+    """ST-8 (G-1, G-4, G-6, G-7, K-1, K-2, K-5, W-1, W-3): the news board is
+    told about groups, stages, statuses and withdrawals, and is asked for a
+    story part that fits the format."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _group_rounds(self, t, rounds, upset=()):
+        for match in t.matches.exclude(group="").filter(round_number__in=rounds).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match, upset) else (0, 2)))
+
+    def _write(self, t, parts):
+        job = AIQuestion.objects.create(tournament=t, kind="recap", question="Automatic news update")
+        with FakeOllama() as fake:
+            fake.respond_chat(_story_reply(parts))
+            recap.write_recap(job)
+        return job, fake.requests[0]["body"]
+
+    def test_group_stage_facts_and_part(self):
+        t = tt.make_hybrid(self.org)
+        self._group_rounds(t, [1, 2])
+        facts, _, _, memory = recap.build_recap_facts(t)
+        self.assertNotIn("standings_top", facts)
+        self.assertEqual([g["group"] for g in facts["groups"]], ["A", "B"])
+        self.assertEqual(memory["part"], "groups")
+        self.assertEqual({r["stage"] for r in facts["new_results"]}, {"Group A", "Group B"})
+        _, body = self._write(t, recap.story_parts(False, "groups"))
+        required = body["format"]["properties"]["story"]["required"]
+        self.assertIn("groups", required)
+        self.assertNotIn("table", required)
+        self.assertIn(STRUCTURE_RULE, body["messages"][0]["content"])
+
+    def test_position_changes_stay_within_a_group(self):
+        t = tt.make_hybrid(self.org)
+        self._group_rounds(t, [1, 2])
+        _publish(t)
+        match = t.matches.get(group="B", round_number=3, team1__name="Golden Boots")
+        tt.play(match, 0, 2)          # Purple Pumas beat Golden Boots
+        facts, *_ = recap.build_recap_facts(t, recap.latest_recap(t))
+        moves = facts["position_changes_since_last_recap"]
+        self.assertEqual({m["team"] for m in moves}, {"Purple Pumas", "Golden Boots", "Blue Jays"})
+        self.assertEqual({m["group"] for m in moves}, {"B"})
+
+    def test_knockout_phase_reports_status_changes(self):
+        t = tt.hybrid_after_groups(self.org)
+        _publish(t)
+        semi = next(m for m in tt.ready(t, "winners") if m.team1.name == "Red Rovers")
+        tt.play(semi, 3, 1)
+        facts, _, _, memory = recap.build_recap_facts(t, recap.latest_recap(t))
+        self.assertEqual(memory["part"], "knockouts")
+        row = next(r for r in facts["new_results"] if r["team1"] == "Red Rovers")
+        self.assertEqual(row["stage"], "Semi-final")
+        changes = {c["team"]: (c["was"], c["now"]) for c in facts["status_changes_since_last_recap"]}
+        self.assertEqual(changes["Blue Jays"], ("through to the semi-final", "out in the semi-final"))
+        self.assertEqual(changes["Red Rovers"], ("through to the semi-final", "through to the final"))
+        self.assertNotIn("position_changes_since_last_recap", facts)
+
+    def test_hybrid_finale(self):
+        t = tt.hybrid_finished(self.org)
+        facts, _, _, memory = recap.build_recap_facts(t)
+        self.assertEqual((facts["champion"], facts["runner_up"]), ("Red Rovers", "Green Giants"))
+        self.assertNotIn("standings_top", facts)
+        self.assertEqual(memory["part"], "knockouts")
+        _, body = self._write(t, recap.story_parts(True, "knockouts"))
+        self.assertEqual(body["format"]["properties"]["story"]["required"],
+                         ["title", "intro", "champion", "results", "knockouts", "sign_off"])
+
+    def test_knockout_is_a_bracket_not_a_table(self):
+        t = tt.knockout_after_round_1(self.org)
+        _, body = self._write(t, recap.story_parts(False, "bracket"))
+        required = body["format"]["properties"]["story"]["required"]
+        self.assertIn("bracket", required)
+        self.assertNotIn("table", required)
+        system = body["messages"][0]["content"]
+        self.assertNotIn("top of the table", system)
+        facts = json.loads(body["messages"][1]["content"].split("FACTS:\n<<<\n", 1)[1].rsplit("\n>>>", 1)[0])
+        self.assertEqual(facts["bracket"]["next_round"], "Semi-final")
+        self.assertEqual({r["stage"] for r in facts["new_results"]}, {"Quarter-final"})
+
+    def test_withdrawals_are_reported_and_walkovers_marked(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        tt.withdraw(t, tt.team("Blue Jays"), policy="forfeit")
+        facts, *_ = recap.build_recap_facts(t)
+        self.assertEqual([w["team"] for w in facts["withdrawals"]], ["Blue Jays"])
+        walkovers = [r for r in facts["new_results"] if r.get("walkover_after_withdrawal")]
+        self.assertEqual(len(walkovers), 3)
+        jays = next(r for r in facts["standings_top"] if r["team"] == "Blue Jays")
+        self.assertTrue(jays["withdrawn"])
+
+    def test_withdrawals_reported_once(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        tt.withdraw(t, tt.team("Blue Jays"), policy="void")
+        _publish(t)
+        tt.play(t.matches.filter(status="upcoming").order_by("match_number").first(), 1, 0)
+        facts, *_ = recap.build_recap_facts(t, recap.latest_recap(t))
+        self.assertNotIn("withdrawals", facts)
+
+    def test_an_update_from_before_groups_were_understood(self):
+        t = tt.make_hybrid(self.org)
+        self._group_rounds(t, [1])
+        AIQuestion.objects.create(
+            tournament=t, kind="recap", question="Automatic news update", status="done",
+            answer_verified=True, finished_at=timezone.now(), answer="Old news",
+            facts={"standings_top": [{"rank": 1, "team": "Red Rovers", "points": 3}]},
+            route={"kind": "recap", "covered_match_ids": list(t.matches.filter(status="confirmed")
+                                                             .values_list("pk", flat=True)),
+                   "story": {"intro": "Old news"}},
+        )
+        self._group_rounds(t, [2])
+        facts, *_ = recap.build_recap_facts(t, recap.latest_recap(t))
+        self.assertNotIn("position_changes_since_last_recap", facts)
+        self.assertEqual(len(facts["new_results"]), 4)
+
+    def test_new_parts_render(self):
+        html = render_to_string("core/partials/news_story.html",
+                                {"story": {"title": "T", "groups": "Group A is wild."}, "final": False})
+        self.assertIn("The Groups", html)
+        self.assertIn("Group A is wild.", html)

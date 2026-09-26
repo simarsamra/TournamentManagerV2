@@ -1465,7 +1465,7 @@ class NewsBoardTests(TestCase):
         job = AIQuestion.objects.get()
         self.assertEqual((job.user, job.kind, job.status, job.answer_verified), (None, "recap", "done", True))
         self.assertEqual(job.facts["coming_up"],
-                         [{"key": "u1", "team1": "Bolts", "team2": "Comets", "when": "Sat 03 Oct, 18:00"}])
+                         [{"key": "u1", "stage": "Round 1", "team1": "Bolts", "team2": "Comets", "when": "Sat 03 Oct, 18:00"}])
         self.assertIn('"previews"', fake.requests[0]["body"]["messages"][0]["content"])
         for user in (self.player, self.organizer):
             page = self._dashboard(user)

@@ -1,11 +1,14 @@
 {% comment %}One news story in parts (core/ai/recap.py STORY_PARTS): the main news or a team's take. `final`: the tournament's finale.{% endcomment %}
-{% if story.title or story.intro or story.champion or story.results or story.table or story.next_up %}
+{% if story.title or story.intro or story.champion or story.results or story.table or story.groups or story.knockouts or story.bracket or story.next_up %}
 <article class="news-story">
     {% if story.title %}<h3 class="news-title">{{ story.title }}</h3>{% endif %}
     {% if story.intro %}<p class="news-intro">{{ story.intro }}</p>{% endif %}
     {% if story.champion %}<h4 class="news-story-heading">👑 Champions</h4><p>{{ story.champion }}</p>{% endif %}
     {% if story.results %}<p>{{ story.results }}</p>{% endif %}
     {% if story.table %}<h4 class="news-story-heading">🏆 {% if final %}Final Standings{% else %}Standings{% endif %}</h4><p>{{ story.table }}</p>{% endif %}
+    {% if story.groups %}<h4 class="news-story-heading">🏆 The Groups</h4><p>{{ story.groups }}</p>{% endif %}
+    {% if story.knockouts %}<h4 class="news-story-heading">⚔️ {% if final %}How the Knockouts Went{% else %}The Knockouts{% endif %}</h4><p>{{ story.knockouts }}</p>{% endif %}
+    {% if story.bracket %}<h4 class="news-story-heading">⚔️ {% if final %}How the Bracket Went{% else %}The Bracket{% endif %}</h4><p>{{ story.bracket }}</p>{% endif %}
     {% if story.next_up %}<h4 class="news-story-heading">🔥 Next Up</h4><p>{{ story.next_up }}</p>{% endif %}
     {% if story.sign_off %}<p class="news-sign-off">{{ story.sign_off }}</p>{% endif %}
 </article>
