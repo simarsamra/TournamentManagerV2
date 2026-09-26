@@ -1,5 +1,5 @@
 {% comment %}A recap being written (AI-9). Polls itself like a question; finished replies come back with HTTP 286.{% endcomment %}
-<div id="ai-recap-{{ q.pk }}" class="info-panel"{% if not q.is_finished %} hx-get="{% url 'ai_question_status' q.pk %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<div id="ai-recap-{{ q.pk }}" class="info-panel"{% if not q.is_finished %} hx-get="{% url 'ai_question_status' q.pk %}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{% endif %}>
     {% if not q.is_finished %}
     <p class="text-muted" role="status" style="margin:0;">Writing the recap…{% if queued_long %} The model is busy; it's queued.{% endif %}</p>
     {% elif q.status == "failed" %}

@@ -1668,7 +1668,12 @@ class TeamNewsTests(TestCase):
     def test_the_dashboard_refresh_keeps_the_side_you_picked(self):
         refresh = lambda: self.client.get("/dashboard/", {"partial": "1"}, HTTP_HX_REQUEST="true")  # noqa: E731
         self._take(self.captain)
-        self.assertContains(refresh(), "Writing the take for Aces")           # still flipped while writing
+        page = refresh()
+        self.assertContains(page, "Writing the take for Aces")               # still flipped while writing
+        # The panel polls inside the dashboard's live region, whose hx-target
+        # htmx would inherit: it must swap only itself, not the whole page.
+        self.assertRegex(page.content.decode(), r'id="news-team-take" hx-get="[^"]+" hx-trigger="every 2s" '
+                                                r'hx-target="this" hx-swap="outerHTML"')
         self._worker(self.STORY)
         page = refresh()
         self.assertContains(page, "You beat Bolts 3-1, then Comets edged you 3-2.")

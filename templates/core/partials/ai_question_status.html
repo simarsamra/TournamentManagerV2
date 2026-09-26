@@ -1,5 +1,5 @@
 {% comment %}One AI question in any state. While unfinished it polls itself every 2 s; the finished reply comes back with HTTP 286, which stops htmx polling.{% endcomment %}
-<div id="ai-question-{{ q.pk }}" class="info-panel"{% if not q.is_finished %} hx-get="{% url 'ai_question_status' q.pk %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<div id="ai-question-{{ q.pk }}" class="info-panel"{% if not q.is_finished %} hx-get="{% url 'ai_question_status' q.pk %}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{% endif %}>
     <div style="font-weight:600;margin-bottom:0.4rem;">“{{ q.question }}”</div>
     {% if not q.is_finished %}
     <p class="text-muted" role="status" style="margin:0;">Thinking…{% if queued_long %} The model is busy; your question is queued.{% endif %}</p>

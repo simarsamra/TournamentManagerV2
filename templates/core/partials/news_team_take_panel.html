@@ -1,5 +1,5 @@
 {% comment %}A team's take on the news: being written (polls itself), written, or why not. Shown after a flip (news_team_take.html) and by the dashboard's own refresh while the viewer has the board flipped.{% endcomment %}
-<div id="news-team-take"{% if q and not q.is_finished %} hx-get="{% url 'news_team_take_status' q.pk %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<div id="news-team-take"{% if q and not q.is_finished %} hx-get="{% url 'news_team_take_status' q.pk %}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{% endif %}>
     {% if error %}
     <p role="alert" style="margin:0;">{{ error }}</p>
     {% elif not q.is_finished %}
