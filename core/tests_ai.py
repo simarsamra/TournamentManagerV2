@@ -1560,6 +1560,13 @@ class NewsBoardTests(TestCase):
         self.assertEqual([(s["title"], len(s["items"])) for s in board["sections"]],
                          [("Today", 1), ("Yesterday", 1)])
         self.assertEqual([(i["team1"], i["team2"]) for i in board["coming_up"]], [("Aces", "Comets")])
+        # Played a week early: it's news on the day its score came in.
+        early = self._match(self.bolts, self.aces, 2, 3, when=at(today + timedelta(days=7), 18))
+        Match.objects.filter(pk=early.pk).update(score_submitted_at=at(today, 20))
+        board = recap.news_board(self.tournament, now=now)
+        self.assertEqual([(s["title"], len(s["items"])) for s in board["sections"]],
+                         [("Today", 2), ("Yesterday", 1)])
+        Match.objects.filter(pk=early.pk).delete()
         # Two days on, nothing today or yesterday: the last matchday instead.
         later = recap.news_board(self.tournament, now=now + timedelta(days=3))
         self.assertEqual([(s["title"], s["day"]) for s in later["sections"]], [("Last matchday", today)])
@@ -1576,6 +1583,129 @@ class NewsBoardTests(TestCase):
             AIQuestion.objects.update(created_at=timezone.now() - timedelta(hours=1))
             self._worker()
             self.assertEqual(AIQuestion.objects.count(), 1)
+
+
+# "My team's take": the news board from one team's side
+
+@override_settings(**AI_SETTINGS, AI_ANALYTICS_ENABLED=True, AI_ANALYTICS_AUDIENCE="managers",
+                   AI_QUESTIONS_PER_USER_PER_HOUR=10, AI_MAX_PENDING=20)
+class TeamNewsTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.organizer = _make_organizer("org")
+        self.tournament = Tournament.objects.create(
+            name="League", format="round_robin", status="active", players_per_team=2,
+            created_by=self.organizer,
+        )
+        self.aces, self.bolts, self.comets = (Team.objects.create(name=n) for n in ("Aces", "Bolts", "Comets"))
+        for team in (self.aces, self.bolts, self.comets):
+            TeamTournamentParticipation.objects.create(team=team, tournament=self.tournament, status="active")
+        self.captain, self.mate, self.rival = (
+            User.objects.create_user(username=n, password="Regression-Pass-1") for n in ("cap", "mate", "rival"))
+        TeamMembership.objects.create(team=self.aces, user=self.captain, role="captain")
+        TeamMembership.objects.create(team=self.aces, user=self.mate, role="member")
+        TeamMembership.objects.create(team=self.bolts, user=self.rival, role="captain")
+        self.number = 0
+        self._match(self.aces, self.bolts, 3, 1)
+        self._match(self.comets, self.aces, 3, 2)
+        self.when = timezone.make_aware(timezone.datetime(2026, 10, 3, 18, 0))
+        self._match(self.bolts, self.aces, when=self.when)
+
+    def _match(self, t1, t2, s1=None, s2=None, when=None):
+        self.number += 1
+        played = s1 is not None
+        return Match.objects.create(
+            tournament=self.tournament, match_number=self.number, team1=t1, team2=t2,
+            score_team1=s1, score_team2=s2, scheduled_time=when,
+            winner=(t1 if played and s1 > s2 else t2 if played and s2 > s1 else None),
+            status="confirmed" if played else "upcoming",
+        )
+
+    def _take(self, user):
+        self.client.force_login(user)
+        return self.client.post("/dashboard/news/team/", {"tournament": self.tournament.pk}, HTTP_HX_REQUEST="true")
+
+    def _worker(self, story):
+        with FakeOllama() as fake:
+            fake.respond_chat(json.dumps({"story": story}))
+            call_command("ai_worker", "--once", stdout=StringIO())
+        return fake
+
+    STORY = {"title": "🏓 Aces Serve Notice!", "intro": "Grab your paddles, Aces!",
+             "results": "You beat Bolts 3-1, then Comets edged you 3-2.",
+             "table": "You sit 2nd, a win from the top!",           # 2 is your rank: in the facts
+             "next_up": "Bolts await on Sat 03 Oct, 18:00.", "sign_off": "Go get 'em! 🔥"}
+
+    def test_button_flips_to_a_story_written_for_the_team(self):
+        self.client.force_login(self.captain)
+        self.assertContains(self.client.get("/dashboard/"), "My team's take")
+        page = self._take(self.captain)
+        self.assertContains(page, "Writing the take for Aces")
+        self.assertContains(page, 'id="news-flip"')                        # flipped to "Tournament news"
+        job = AIQuestion.objects.get(kind="team_news")
+        self.assertEqual((job.user, job.route["team_id"]), (self.captain, self.aces.pk))
+        fake = self._worker(self.STORY)
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.answer_verified, job.answer), ("done", True, "🏓 Aces Serve Notice!"))
+        self.assertIn("players of YOUR_TEAM", fake.requests[0]["body"]["messages"][0]["content"])
+        self.assertEqual(job.facts["your_team"], "Aces")
+        self.assertEqual(job.facts["your_results"][0]["opponent"], "Comets")          # newest first
+        self.assertEqual((job.facts["your_results"][1]["your_score"], job.facts["your_results"][1]["their_score"]),
+                         (3, 1))
+        self.assertEqual(job.facts["your_next_matches"],
+                         [{"opponent": "Bolts", "when": "Sat 03 Oct, 18:00", "opponent_rank": 3,
+                           "head_to_head": "won 1, lost 0"}])
+        status = self.client.get(f"/dashboard/news/team/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertEqual(status.status_code, 286)
+        self.assertContains(status, "You beat Bolts 3-1, then Comets edged you 3-2.", status_code=286)
+        self.assertContains(status, "Just for Aces", status_code=286)
+        # Flip back: the main board and the button to the team's take again.
+        main = self.client.get("/dashboard/news/", {"tournament": self.tournament.pk}, HTTP_HX_REQUEST="true")
+        self.assertContains(main, "My team's take")
+
+    def test_teammates_share_one_story_per_main_update(self):
+        self._take(self.captain)
+        self._worker(self.STORY)
+        page = self._take(self.mate)                                       # no new job, shown at once
+        self.assertContains(page, "You beat Bolts 3-1")
+        self.assertEqual(AIQuestion.objects.filter(kind="team_news").count(), 1)
+        # A new main update: the next click writes a fresh take.
+        AIQuestion.objects.create(user=None, tournament=self.tournament, kind="recap", question="news",
+                                  status="done", answer="News", answer_verified=True, finished_at=timezone.now())
+        self._take(self.mate)
+        self.assertEqual(AIQuestion.objects.filter(kind="team_news").count(), 2)
+
+    def test_a_failed_check_drops_parts_and_can_be_retried(self):
+        self._take(self.captain)
+        self._worker({"title": "Aces win 9-0!", "intro": "", "results": "", "table": "", "next_up": "",
+                      "sign_off": ""})
+        job = AIQuestion.objects.get(kind="team_news")
+        self.assertEqual((job.answer_verified, job.route["rejected"]), (False, ["Aces win 9-0!"]))
+        page = self._take(self.captain)                                    # retry queues a new one
+        self.assertContains(page, "Writing the take for Aces")
+        self.assertEqual(AIQuestion.objects.filter(kind="team_news").count(), 2)
+
+    def test_only_the_team_may_read_it(self):
+        self._take(self.captain)
+        job = AIQuestion.objects.get(kind="team_news")
+        self.client.force_login(self.rival)
+        self.assertEqual(self.client.get(f"/dashboard/news/team/{job.pk}/", HTTP_HX_REQUEST="true").status_code, 404)
+        # No team in this tournament: no button, and asking is refused.
+        self.client.force_login(self.organizer)
+        self.assertNotContains(self.client.get("/dashboard/"), "My team's take")
+        self.assertContains(self._take(self.organizer), "for players in this tournament")
+        # A player who left the team before the worker got to it.
+        TeamMembership.objects.filter(user=self.captain).delete()
+        with FakeOllama() as fake:
+            call_command("ai_worker", "--once", stdout=StringIO())
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error, fake.requests), ("failed", jobs.MSG_NO_ACCESS, []))
+
+    @override_settings(AI_ANALYTICS_ENABLED=False)
+    def test_disabled_is_a_404(self):
+        self.assertEqual(self._take(self.captain).status_code, 404)
 
 
 # Conversations over the whole-tournament snapshot

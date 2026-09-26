@@ -1,0 +1,16 @@
+{% comment %}A team's take on the news (views.news_team_take): being written (polls itself), written, or why not.{% endcomment %}
+{% if not error %}{% include "core/partials/news_flip.html" with mode="main" oob=True %}{% endif %}
+<div id="news-team-take"{% if q and not q.is_finished %} hx-get="{% url 'news_team_take_status' q.pk %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+    {% if error %}
+    <p role="alert" style="margin:0;">{{ error }}</p>
+    {% elif not q.is_finished %}
+    <p class="text-muted" role="status" style="margin:0;">✍️ Writing the take for {{ team_label }}… it takes about half a minute.{% if queued_long %} The AI is busy; it's queued.{% endif %}</p>
+    {% elif q.status == "done" and q.answer_verified %}
+    <div class="news-team-banner">🎯 Just for {{ team_label }}</div>
+    {% include "core/partials/news_story.html" with story=story %}
+    <div class="text-muted news-footnote">Written by AI for {{ team_label }} {{ q.finished_at|date:"M j, H:i" }}, from the latest results; every number was checked against them. Your teammates see the same take until the next news update.</div>
+    {% else %}
+    <p role="alert" style="margin:0 0 0.5rem;">{% if q.status == "failed" %}{{ q.error }}{% else %}The AI couldn't write a take whose numbers all checked out this time.{% endif %}</p>
+    <button type="button" class="btn btn-outline btn-sm" hx-post="{% url 'news_team_take' %}" hx-vals='{"tournament": "{{ tournament.pk }}"}' hx-target="#news-body" hx-swap="innerHTML" hx-disabled-elt="this">Try again</button>
+    {% endif %}
+</div>

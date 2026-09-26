@@ -65,6 +65,10 @@ def reap_stale(now=None):
 
 
 def _default_processor(job):
+    if job.kind == "team_news":
+        from .team_news import write_team_news
+
+        return write_team_news(job)
     if job.kind == "recap":
         from .recap import write_recap
 
@@ -78,6 +82,10 @@ def _allowed(job):
     if job.user_id is None:
         # The worker's own news update: nobody's access to re-check.
         return job.kind == "recap"
+    if job.kind == "team_news":
+        from .team_news import job_team_id, may_have
+
+        return may_have(job.user, job.tournament, job_team_id(job))
     check = may_write_recap if job.kind == "recap" else may_ask
     return check(job.user, job.tournament)
 

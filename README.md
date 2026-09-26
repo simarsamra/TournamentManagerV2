@@ -335,6 +335,13 @@ has a **Tournament News** board, for everyone who can view its analytics:
   shown. The match under it is still listed, with its real score.
 - Scores, fixtures, times and courts come straight from the database, so
   they're always current. Only the headline text is written by the model.
+- **🎯 My team's take.** Players see a small button in the board's header
+  that flips it to a story written just for their team: their latest
+  results, where they sit and who's around them, and their next matches
+  (with the opponent's rank and head-to-head). **📰 Tournament news** flips
+  back. It's written once per team for each main news update, in about half
+  a minute, and teammates share it. It gets the same per-part number check.
+  Organizers without a team don't see the button.
 
 ### Set it up
 

@@ -197,11 +197,12 @@ def _news_board_context(user, tournament):
     everyone (ai/recap.py), sorted into today / yesterday / coming up.
     Shown to whoever may view the tournament's analytics."""
     from ..ai.recap import news_board
+    from ..ai.team_news import viewer_team
 
     allowed, _ = analytics.can_view_analytics(user, tournament)
     if not allowed:
         return {}
-    return {"show_news_board": True, "news": news_board(tournament)}
+    return {"show_news_board": True, "news": news_board(tournament), "news_team": viewer_team(user, tournament)}
 
 
 @login_required

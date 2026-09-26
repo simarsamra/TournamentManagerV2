@@ -18,10 +18,10 @@ from django.views.decorators.http import require_POST
 
 from .. import analytics
 from ..models import AIQuestion, Tournament
-from .helpers import _is_htmx_request, throttled
+from .helpers import _is_htmx_request, _team_display_label, throttled
 from .reporting import ANALYTICS_WIDGET_PARAMS
 
-__all__ = ["ai_ask", "ai_question_status", "ai_recap"]
+__all__ = ["ai_ask", "ai_question_status", "ai_recap", "news_main", "news_team_take", "news_team_take_status"]
 
 # After this long without an answer, say the question is queued.
 QUEUED_NOTICE_SECONDS = 20
@@ -202,3 +202,103 @@ def ai_question_status(request, pk):
     context["tournament"] = question.tournament
     context["analytics_url"] = _analytics_url(question.tournament_id)
     return render(request, "core/ai_question.html", context)
+
+
+# The dashboard news board's flip between the main news and "My team's take"
+# (core/ai/team_news.py). Both are htmx fragments swapped into the board.
+
+def _news_tournament(request, source):
+    tournament = Tournament.objects.filter(pk=source.get("tournament") or None).first()
+    if tournament is None:
+        raise Http404()
+    return tournament
+
+
+def _team_take_context(request, tournament, team, job):
+    context = _status_context(request, job) if job else {}
+    context.update(tournament=tournament, team_label=_team_display_label(tournament, team),
+                   story=(job.route or {}).get("story") or {} if job else {})
+    return context
+
+
+def _team_take_response(request, context, status=200):
+    if not _is_htmx_request(request):
+        if context.get("error"):
+            messages.error(request, context["error"])
+        return redirect("dashboard")
+    return render(request, "core/partials/news_team_take.html", context, status=status)
+
+
+@login_required
+@require_POST
+@throttled("news_team_take", limit=120, window=3600, redirect_to=lambda *a, **k: reverse("dashboard"))
+def news_team_take(request):
+    """Show the viewer's team's story for the current main news, queueing
+    it if nobody on the team has asked yet (one per team per update)."""
+    _require_enabled()
+    from ..ai import team_news
+    from ..ai.recap import latest_recap
+
+    tournament = _news_tournament(request, request.POST)
+    team = team_news.viewer_team(request.user, tournament)
+    if team is None:
+        return _team_take_response(request, {"tournament": tournament,
+                                             "error": "Your team's take is for players in this tournament."})
+    job = team_news.current_story(tournament, team)
+    reusable = job and (not job.is_finished or (job.status == "done" and job.answer_verified))
+    if not reusable:
+        hour_ago = timezone.now() - timedelta(hours=1)
+        if AIQuestion.objects.filter(user=request.user, created_at__gte=hour_ago).count() \
+                >= settings.AI_QUESTIONS_PER_USER_PER_HOUR:
+            error = "You've asked the AI a lot this hour. Please try again later."
+        elif AIQuestion.objects.filter(status__in=("pending", "running")).count() >= settings.AI_MAX_PENDING:
+            error = "The AI is busy right now. Please try again in a few minutes."
+        else:
+            error = ""
+        if error:
+            context = _team_take_context(request, tournament, team, None)
+            context["error"] = error
+            return _team_take_response(request, context)
+        source = latest_recap(tournament)
+        job = AIQuestion.objects.create(
+            user=request.user, tournament=tournament, kind=team_news.KIND,
+            question=team_news.tag(team, source),
+            route={"team_id": team.pk, "source_recap_id": source.pk if source else None},
+        )
+    return _team_take_response(request, _team_take_context(request, tournament, team, job))
+
+
+@login_required
+def news_team_take_status(request, pk):
+    """Poll a team's story; anyone on that team may (it's theirs, not the
+    asker's). Someone else's team is a 404."""
+    _require_enabled()
+    from ..ai import team_news
+
+    job = get_object_or_404(AIQuestion.objects.select_related("tournament"), pk=pk, kind=team_news.KIND)
+    team = team_news.viewer_team(request.user, job.tournament)
+    if team is None or team.pk != team_news.job_team_id(job):
+        raise Http404()
+    response = _team_take_response(request, _team_take_context(request, job.tournament, team, job))
+    if job.is_finished and _is_htmx_request(request):
+        response.status_code = 286  # htmx: stop polling
+    return response
+
+
+@login_required
+def news_main(request):
+    """The main news board again, after a flip to the team's take."""
+    _require_enabled()
+    from ..ai import team_news
+    from ..ai.recap import news_board
+
+    tournament = _news_tournament(request, request.GET)
+    allowed, _ = analytics.can_view_analytics(request.user, tournament)
+    if not allowed:
+        raise Http404()
+    if not _is_htmx_request(request):
+        return redirect("dashboard")
+    return render(request, "core/partials/news_main.html", {
+        "tournament": tournament, "news": news_board(tournament),
+        "news_team": team_news.viewer_team(request.user, tournament),
+    })

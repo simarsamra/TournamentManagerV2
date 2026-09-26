@@ -1,0 +1,11 @@
+{% comment %}The news board's flip button: to the viewer's team's take (mode="team") or back to the main news. `oob` swaps it in from a fragment response.{% endcomment %}
+{% if mode == "team" %}
+<button id="news-flip" type="button" class="btn btn-outline btn-sm news-flip"{% if oob %} hx-swap-oob="true"{% endif %}
+        hx-post="{% url 'news_team_take' %}" hx-vals='{"tournament": "{{ tournament.pk }}"}'
+        hx-target="#news-body" hx-swap="innerHTML" hx-disabled-elt="this"
+        title="The news, written just for your {% if tournament.registration_mode == 'individual' %}matches{% else %}team{% endif %}">🎯 {% if tournament.registration_mode == "individual" %}My take{% else %}My team's take{% endif %}</button>
+{% else %}
+<button id="news-flip" type="button" class="btn btn-outline btn-sm news-flip"{% if oob %} hx-swap-oob="true"{% endif %}
+        hx-get="{% url 'news_main' %}?tournament={{ tournament.pk }}"
+        hx-target="#news-body" hx-swap="innerHTML" hx-disabled-elt="this">📰 Tournament news</button>
+{% endif %}

@@ -842,6 +842,7 @@ class AIQuestion(models.Model):
     KIND_CHOICES = [
         ("ask", "Question"),
         ("recap", "Recap"),
+        ("team_news", "Team news"),
     ]
 
     # Empty for the news the worker writes on its own (ai/recap.py): nobody

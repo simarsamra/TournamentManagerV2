@@ -152,9 +152,11 @@ def new_results(tournament, previous=None):
 
 
 def played_on(match):
-    """The day a finished match counts for on the board."""
-    when = match.scheduled_time or match.score_submitted_at or match.updated_at
-    return timezone.localdate(when)
+    """The day a finished match counts for on the board: its scheduled day,
+    or the day its score came in if that was earlier (played ahead of
+    schedule)."""
+    times = [t for t in (match.scheduled_time, match.score_submitted_at) if t]
+    return timezone.localdate(min(times) if times else match.updated_at)
 
 
 def _day(value):
@@ -245,6 +247,44 @@ def build_recap_facts(tournament, previous=None):
     return _fit(facts), sorted(covered), keys
 
 
+def story_schema():
+    return {
+        "type": "object",
+        "properties": {part: {"type": "string"} for part in STORY_PARTS},
+        "required": list(STORY_PARTS),
+    }
+
+
+def parse_story(story):
+    """The story parts the model sent, cleaned and capped."""
+    parts = {}
+    for part in STORY_PARTS:
+        if isinstance(story, dict) and isinstance(story.get(part), str):
+            text = clean(story[part], MAX_STORY_PART_CHARS[part])
+            if text:
+                parts[part] = text
+    return parts
+
+
+def check_story(story, facts):
+    """Drop each part that names a number not in `facts`.
+    Returns (kept parts, rejected texts)."""
+    kept, rejected = {}, []
+    for part, text in story.items():
+        if ungrounded_numbers(text, facts):
+            rejected.append(text)
+        else:
+            kept[part] = text
+    return kept, rejected
+
+
+def chat_story(facts, system, schema):
+    """One call for a story: warmer than the router, with room for a full
+    story, and a longer timeout (it's written in the background)."""
+    return client.chat(build_messages("", facts, system), schema=schema, temperature=0.8, num_predict=1500,
+                       timeout=max(settings.OLLAMA_TIMEOUT_SECONDS, NEWS_TIMEOUT_SECONDS))
+
+
 def build_schema(facts):
     def headlines(rows):
         keys = [row["key"] for row in rows]
@@ -259,11 +299,7 @@ def build_schema(facts):
     return {
         "type": "object",
         "properties": {
-            "story": {
-                "type": "object",
-                "properties": {part: {"type": "string"} for part in STORY_PARTS},
-                "required": list(STORY_PARTS),
-            },
+            "story": story_schema(),
             "results": headlines(facts.get("new_results", [])),
             "previews": headlines(facts.get("coming_up", [])),
         },
@@ -288,14 +324,7 @@ def parse_reply(content):
         for item in items if isinstance(items, list) else []:
             if isinstance(item, dict) and isinstance(item.get("key"), str) and isinstance(item.get("headline"), str):
                 pairs.append((item["key"], clean(item["headline"], MAX_HEADLINE_CHARS)))
-    story = reply.get("story") if isinstance(reply.get("story"), dict) else {}
-    parts = {}
-    for part in STORY_PARTS:
-        if isinstance(story.get(part), str):
-            text = clean(story[part], MAX_STORY_PART_CHARS[part])
-            if text:
-                parts[part] = text
-    return parts, pairs
+    return parse_story(reply.get("story")), pairs
 
 
 def write_recap(job):
@@ -304,17 +333,11 @@ def write_recap(job):
     not the update."""
     previous = latest_recap(job.tournament)
     job.facts, covered, keys = build_recap_facts(job.tournament, previous)
-    result = client.chat(build_messages("", job.facts, RECAP_PROMPT), schema=build_schema(job.facts),
-                         temperature=0.8, num_predict=1500,
-                         timeout=max(settings.OLLAMA_TIMEOUT_SECONDS, NEWS_TIMEOUT_SECONDS))
+    result = chat_story(job.facts, RECAP_PROMPT, build_schema(job.facts))
     job.model_name = result.model
     job.timings = {"recap": result.timings()}
     story, pairs = parse_reply(result.content)
-    rejected = []
-    for part, text in list(story.items()):
-        if ungrounded_numbers(text, job.facts):
-            rejected.append(text)
-            del story[part]
+    story, rejected = check_story(story, job.facts)
     headlines = {}
     for key, text in pairs:
         if key not in keys or not text:

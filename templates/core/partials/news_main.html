@@ -1,0 +1,3 @@
+{% comment %}The main news, swapped back into the board after a flip (views.news_main).{% endcomment %}
+{% if news_team %}{% include "core/partials/news_flip.html" with mode="team" oob=True %}{% endif %}
+{% include "core/partials/news_board_body.html" %}

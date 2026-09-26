@@ -724,6 +724,22 @@ every dashboard, instead of a recap someone has to ask for:
   temperature 0.8 with num_predict 1500 and a 180 s timeout. A dry run with
   gemma4:e4b on the simulated league took 21 s, with no numbers rejected
   and every result credited to the right team.
+- **Team's take.** `core/ai/team_news.py` handles `kind="team_news"` jobs
+  (migration 0038), asked for from the board's 🎯 button (`news_team_take`,
+  polled by `news_team_take_status`, flipped back by `news_main`). There is
+  one per team per published main update: `question` is the tag
+  `team_news team=<id> after=<recap id>`, so teammates reuse it, and a new
+  main update makes the next click write a fresh one. A failed or
+  unverified take can be retried. The facts cover your team's last 5
+  results as `your_score`/`their_score`, the standing with the teams just
+  above and below, the leader, your streak, and the next 3 fixtures with
+  the opponent's rank and head-to-head. Only the team's players may read it
+  (anyone else gets a 404), and the worker re-checks membership. The
+  per-user hourly quota and AI_MAX_PENDING apply, and the update rules are
+  unchanged. A dry run with gemma4:e4b took 6 s with nothing rejected.
+- **Played early.** `played_on` uses the earlier of the scheduled time and
+  when the score was submitted, so a match played ahead of schedule is news
+  on the day it happened.
 - **Days are decided when the page is viewed.** `recap.news_board()` merges
   the headlines of the last 5 published updates and sorts finished matches
   into Today / Yesterday (or Last matchday) by their local date. Coming up

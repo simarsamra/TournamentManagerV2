@@ -1,5 +1,8 @@
-{% comment %}The tournament news board on the dashboard: headlines the ai_worker writes once for everyone (core/ai/recap.py).{% endcomment %}
+{% comment %}The tournament news board on the dashboard: the main news the ai_worker writes once for everyone (core/ai/recap.py), which a player can flip to their team's take (core/ai/team_news.py).{% endcomment %}
 <div class="card mb-2" id="tournament-news">
-    <div class="card-header">📰 Tournament News</div>
-    <div class="card-body">{% include "core/partials/news_board_body.html" %}</div>
+    <div class="card-header news-header">
+        <span>📰 Tournament News</span>
+        {% if news_team %}{% include "core/partials/news_flip.html" with mode="team" %}{% endif %}
+    </div>
+    <div class="card-body" id="news-body" aria-live="polite">{% include "core/partials/news_board_body.html" %}</div>
 </div>

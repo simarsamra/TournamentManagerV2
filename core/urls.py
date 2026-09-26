@@ -102,6 +102,9 @@ urlpatterns = [
     path("analytics/ask/", views.ai_ask, name="ai_ask"),
     path("analytics/ask/<int:pk>/", views.ai_question_status, name="ai_question_status"),
     path("analytics/recap/", views.ai_recap, name="ai_recap"),
+    path("dashboard/news/", views.news_main, name="news_main"),
+    path("dashboard/news/team/", views.news_team_take, name="news_team_take"),
+    path("dashboard/news/team/<int:pk>/", views.news_team_take_status, name="news_team_take_status"),
 
     # Backup & Restore
     path("backup/", views.backup_view, name="backup"),
