@@ -2,7 +2,13 @@
 <div class="card mb-2" id="tournament-news">
     <div class="card-header news-header">
         <span>📰 Tournament News</span>
-        {% if news_team %}{% include "core/partials/news_flip.html" with mode="team" %}{% endif %}
+        {% if news_take %}{% include "core/partials/news_flip.html" with mode="main" %}{% elif news_team %}{% include "core/partials/news_flip.html" with mode="team" %}{% endif %}
     </div>
-    <div class="card-body" id="news-body" aria-live="polite">{% include "core/partials/news_board_body.html" %}</div>
+    <div class="card-body" id="news-body" aria-live="polite">
+        {% if news_take %}
+        {% include "core/partials/news_team_take_panel.html" with q=news_take.q story=news_take.story team_label=news_take.team_label queued_long=news_take.queued_long error="" %}
+        {% else %}
+        {% include "core/partials/news_board_body.html" %}
+        {% endif %}
+    </div>
 </div>

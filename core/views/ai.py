@@ -214,6 +214,29 @@ def _news_tournament(request, source):
     return tournament
 
 
+def news_view_key(tournament):
+    """Session key for which side of the news board the viewer picked, so the
+    dashboard's own 15-second refresh (and a reload) keeps it."""
+    return f"news_view_{tournament.pk}"
+
+
+def flipped_team_take(request, tournament, team):
+    """The team's take to show in place of the main news, if the viewer
+    flipped to it and it's still for the current main update; else None."""
+    from ..ai import team_news
+
+    if team is None or request.session.get(news_view_key(tournament)) != "team":
+        return None
+    job = team_news.current_story(tournament, team)
+    if job is None:
+        # A new main update came out since: show it, not a stale take.
+        request.session.pop(news_view_key(tournament), None)
+        return None
+    context = _team_take_context(request, tournament, team, job)
+    return {"q": job, "story": context["story"], "team_label": context["team_label"],
+            "queued_long": context.get("queued_long", False)}
+
+
 def _team_take_context(request, tournament, team, job):
     context = _status_context(request, job) if job else {}
     context.update(tournament=tournament, team_label=_team_display_label(tournament, team),
@@ -244,6 +267,7 @@ def news_team_take(request):
     if team is None:
         return _team_take_response(request, {"tournament": tournament,
                                              "error": "Your team's take is for players in this tournament."})
+    request.session[news_view_key(tournament)] = "team"
     job = team_news.current_story(tournament, team)
     reusable = job and (not job.is_finished or (job.status == "done" and job.answer_verified))
     if not reusable:
@@ -296,6 +320,7 @@ def news_main(request):
     allowed, _ = analytics.can_view_analytics(request.user, tournament)
     if not allowed:
         raise Http404()
+    request.session.pop(news_view_key(tournament), None)
     if not _is_htmx_request(request):
         return redirect("dashboard")
     return render(request, "core/partials/news_main.html", {

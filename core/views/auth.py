@@ -192,17 +192,21 @@ def register_view(request, pk=None):
 
 # -- Dashboard --
 
-def _news_board_context(user, tournament):
+def _news_board_context(request, tournament):
     """The tournament's news board: headlines the worker wrote once for
     everyone (ai/recap.py), sorted into today / yesterday / coming up.
     Shown to whoever may view the tournament's analytics."""
     from ..ai.recap import news_board
     from ..ai.team_news import viewer_team
+    from .ai import flipped_team_take
 
-    allowed, _ = analytics.can_view_analytics(user, tournament)
+    allowed, _ = analytics.can_view_analytics(request.user, tournament)
     if not allowed:
         return {}
-    return {"show_news_board": True, "news": news_board(tournament), "news_team": viewer_team(user, tournament)}
+    team = viewer_team(request.user, tournament)
+    take = flipped_team_take(request, tournament, team)
+    return {"show_news_board": True, "news_team": team, "news_take": take,
+            "news": None if take else news_board(tournament)}
 
 
 @login_required
@@ -561,7 +565,7 @@ def dashboard_view(request):
             for t in context["all_tournaments"]:
                 t.champion_display_label = _team_display_label(t, t.champion) if t.champion else ""
     if tournament and settings.AI_ANALYTICS_ENABLED and tournament.status in ("active", "completed"):
-        context.update(_news_board_context(request.user, tournament))
+        context.update(_news_board_context(request, tournament))
     context.update(_tournament_context(request, tournament))
     return _render_refreshable_page(
         request,

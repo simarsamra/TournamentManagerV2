@@ -1665,6 +1665,29 @@ class TeamNewsTests(TestCase):
         main = self.client.get("/dashboard/news/", {"tournament": self.tournament.pk}, HTTP_HX_REQUEST="true")
         self.assertContains(main, "My team's take")
 
+    def test_the_dashboard_refresh_keeps_the_side_you_picked(self):
+        refresh = lambda: self.client.get("/dashboard/", {"partial": "1"}, HTTP_HX_REQUEST="true")  # noqa: E731
+        self._take(self.captain)
+        self.assertContains(refresh(), "Writing the take for Aces")           # still flipped while writing
+        self._worker(self.STORY)
+        page = refresh()
+        self.assertContains(page, "You beat Bolts 3-1, then Comets edged you 3-2.")
+        self.assertContains(page, "Tournament news")                         # the button flips back
+        self.assertNotContains(page, "My team's take")
+        self.assertContains(self.client.get("/dashboard/"), "Just for Aces")  # a full reload too
+        self.client.get("/dashboard/news/", {"tournament": self.tournament.pk}, HTTP_HX_REQUEST="true")
+        page = refresh()
+        self.assertNotContains(page, "Just for Aces")
+        self.assertContains(page, "My team's take")
+        # Flipped, then a new main update comes out: the new news, not a stale take.
+        self._take(self.captain)
+        AIQuestion.objects.create(user=None, tournament=self.tournament, kind="recap", question="news",
+                                  status="done", answer="Fresh news", answer_verified=True,
+                                  finished_at=timezone.now())
+        page = refresh()
+        self.assertNotContains(page, "Just for Aces")
+        self.assertContains(page, "Fresh news")
+
     def test_teammates_share_one_story_per_main_update(self):
         self._take(self.captain)
         self._worker(self.STORY)
