@@ -6,8 +6,10 @@ but the two teams lead different groups. This file lists that bug and others lik
 places where the facts the AI is given don't say how the tournament is built, so it
 tells a good-looking story that's wrong.
 
-Nothing here is fixed yet. Each item says where the problem is and suggests a fix.
-The step-by-step fix plan is [`AI_STRUCTURE_PLAN.md`](AI_STRUCTURE_PLAN.md).
+**All of these are fixed** by the tasks in [`AI_STRUCTURE_PLAN.md`](AI_STRUCTURE_PLAN.md) (ST-0 to ST-13).
+Each gap ends with a status line naming the task and commit. Two bugs outside the AI code were found
+while planning and fixed too (X-1: a withdrawn team could be seeded into a hybrid's knockout; X-2: the
+standings page's withdrawn badge never showed), in ST-2 (83bf91d).
 
 ## How these were found
 
@@ -81,6 +83,8 @@ and through to the knockouts.
 - In team news, send the team's group, and take the teams around it and its leader from
   that group only.
 
+**Status:** fixed: routed answers ST-6 (26292dc), conversation ST-7 (ac247b5), news board ST-8 (e01402b), "My team's take" ST-9 (1600e41); the analytics page ST-13 (d081d72).
+
 ### G-2: Knockout wins count as league points in hybrid. High. [probed]
 **Where:** `core/standings.py` `calculate_standings`. When no group is given, it counts
 every confirmed match. Knockout matches in a hybrid have `group=""`, so a knockout win
@@ -107,6 +111,8 @@ The standings page and the knockout seeding are fine: they ask for one group at 
 `calculate_standings(tournament)` itself is changed, the analytics page and team
 dashboard need the same fix and their own tests.
 
+**Status:** fixed in ST-1 (f98230a), including the analytics page and the team dashboard (which now shows the rank within the group).
+
 ### G-3: Nothing says how many teams go through, or who has. High. [code]
 **Where:** all four builders. `teams_per_group_advance` is never included.
 
@@ -124,6 +130,8 @@ dashboard need the same fix and their own tests.
   group only: `through`, `out` or `in contention`, using points still available in
   group matches.
 - Give gaps to the last qualifying place in the group rather than to the overall leader.
+
+**Status:** fixed: statuses worked out in ST-4 (b1f6f2c); advance counts and gaps to the last place through in ST-6 and ST-7.
 
 ### G-4: Knockout matches aren't labelled as knockout, or by round. High. [probed]
 **Where:**
@@ -147,6 +155,8 @@ dashboard need the same fix and their own tests.
 "Group A", "Quarter-final", "Semi-final", "Final", "Third-place match". The bracket
 templates already name rounds this way (`standings_content.html`).
 
+**Status:** fixed: stage labels in ST-3 (d0c2c4e), used by every builder in ST-6 to ST-9.
+
 ### G-5: Being knocked out isn't in the facts. Medium. [probed]
 **Probe:** after Blue Jays lost their semi-final, their team news had
 `your_next_matches: []`, a rank of 4th of 8 (G-1 and G-2), and nothing else.
@@ -158,6 +168,8 @@ Teams 3rd and 4th in each group after the group stage get the same treatment.
 
 **Fix:** a per-team status: `in group stage`, `through to <stage>`, `out in <stage>`,
 `champion`. The team news prompt should use it ("your run ended in the semi-final").
+
+**Status:** fixed: statuses in ST-4 (b1f6f2c); team news says the run is over in ST-9 (1600e41).
 
 ### G-6: The hybrid finale has no runner-up or third place. Medium. [probed]
 **Where:** `recap.final_placings`. Only leagues get a top three. Other formats get just
@@ -174,6 +186,8 @@ G-2 table.
 - In the finale, drop the merged table for hybrids. Show the group tables as they ended
   the group stage, and each team's stage reached.
 
+**Status:** fixed: placings in ST-4 (b1f6f2c); the finale uses them and no merged table in ST-8 (e01402b).
+
 ### G-7: Recap position changes compare places in the merged table. Medium. [code]
 **Where:** `recap.build_recap_facts` builds `position_changes_since_last_recap` from the
 merged `standings_top`.
@@ -182,6 +196,8 @@ merged `standings_top`.
 changed in group A. Once the knockouts start, knockout wins move teams "up" (G-2).
 
 **Fix:** compute changes within each group, and only during the group stage.
+
+**Status:** fixed in ST-8 (e01402b): moves within a group only, and status changes during the knockouts.
 
 ### G-8: Questions and what-ifs don't know about groups. Medium. [code]
 **Where:**
@@ -199,6 +215,8 @@ changed in group A. Once the knockouts start, knockout wins move teams "up" (G-2
 - Re-rank a what-if within the match's group, and report the qualification status
   before and after (G-3).
 - Add a few group questions to `core/ai/eval/questions.json`.
+
+**Status:** fixed in ST-6 (26292dc): the router picks a group, and a what-if re-ranks only the match's group with status changes. The analytics page's simulator does the same in ST-13 (d081d72).
 
 ---
 
@@ -224,6 +242,8 @@ reached the semi-finals.
 - Replace `results_top` with a bracket summary: teams still in, the next round, and who
   went out in each round.
 
+**Status:** fixed: bracket summaries in ST-6 to ST-9, and a 'bracket' or 'run' story part instead of 'table' in ST-8 and ST-9.
+
 ### K-2: Rounds aren't named. High. [probed]
 The same problem as G-4, for every bracket format. The knockout probe's `coming_up`
 shows the two semi-finals with no stage, and the snapshot shows the final as
@@ -232,6 +252,8 @@ shows the two semi-finals with no stage, and the snapshot shows the final as
 **Fix:** the same `stage` label as G-4. For double elimination, also say which bracket
 ("winners bracket semi-final", "losers bracket round 2", "grand final",
 "grand final decider").
+
+**Status:** fixed: stage labels in ST-3 (d0c2c4e), including winners and losers bracket, grand final and decider, and consolation.
 
 ### K-3: Out, still in, or one life left? Not in the facts. High. [probed / code]
 **Probe:** in the knockout probe, Black Bears (lost in round 1) get team news with one
@@ -247,6 +269,8 @@ loss and `your_next_matches: []`. Nothing says they're out.
 **Fix:** the per-team status from G-5, plus a double-elimination variant:
 `winners bracket`, `losers bracket (one more loss and out)`, `out`, `champion`.
 
+**Status:** fixed: statuses in ST-4 (b1f6f2c), including one_life_left for double elimination; used in ST-6 to ST-9.
+
 ### K-4: Consolation-bracket results count the same as the main draw. Medium. [code]
 **Where:**
 - `analytics.team_performance` sorts on wins over every match.
@@ -260,11 +284,15 @@ loss and `your_next_matches: []`. Nothing says they're out.
 **Fix:** the bracket in each result's `stage` ("Consolation semi-final"). Rank on main
 draw progress first.
 
+**Status:** fixed: consolation statuses and stages in ST-3 and ST-4; the bracket summary lists the consolation bracket separately.
+
 ### K-5: Bracket finales only name the champion. Medium. [code]
 The same code as G-6. For knockout, consolation and double elimination, the runner-up
 and third place are known from the final and the third-place match, but aren't in the
 facts. The finale prompt asks to celebrate "the runner_up and third if in FACTS", so
 they never get mentioned.
+
+**Status:** fixed: placings in ST-4 (b1f6f2c), used by the news in ST-8.
 
 ### K-6: The snapshot lists "TBD v TBD" matches. Low. [probed]
 **Where:** `snapshot.build_snapshot`. `fixtures` includes placeholder matches whose
@@ -277,6 +305,8 @@ matches left mixes real fixtures with bracket slots.
 **Fix:** leave out matches with no known team, or keep them as a count
 (`"later_rounds": 3`) labelled with their stage.
 
+**Status:** fixed in ST-7 (ac247b5): placeholder matches are counted by stage, and one unknown side reads 'to be decided'.
+
 ### K-7: A team with a first-round bye looks like it hasn't started. Low. [code]
 **Where:** team news and the snapshot. A `bye` match isn't counted as finished or as
 upcoming.
@@ -285,6 +315,8 @@ upcoming.
 adventure is yet to begin", even though it's already in round 2.
 
 **Fix:** include byes as a result row: "advanced with a bye".
+
+**Status:** fixed in ST-9 (1600e41): a bye is a result row.
 
 ---
 
@@ -309,6 +341,8 @@ news names Blue Jays as the team just below them.
 **Fix:** mark withdrawn rows (`"withdrawn": true`) or leave them out, the same way in
 every builder. Never give a withdrawn team a placing.
 
+**Status:** fixed: standings rows carry 'withdrawn' (ST-2, 83bf91d); builders flag them and never place them or list them 'around you' (ST-4, ST-6 to ST-9).
+
 ### W-2: The snapshot drops withdrawn teams but keeps their rank numbers. Low. [probed]
 **Probe:** the snapshot's ranks go 1, 3, 4, 5, 6: Blue Jays' 2nd place is missing.
 `points_ahead_of_next` is worked out on the shortened list, so it compares teams that
@@ -318,6 +352,8 @@ aren't neighbours in the ranks shown.
 withdrawn team, and the model has no idea why 2nd is missing.
 
 **Fix:** the same treatment as W-1, so every builder agrees.
+
+**Status:** fixed in ST-7 (ac247b5): withdrawn rows stay at the page's rank, flagged.
 
 ### W-3: Forfeits after a withdrawal are written up as wins. Low. [code]
 **Where:** `core/withdrawals.py`.
@@ -331,6 +367,8 @@ In both cases, the fact that a team withdrew never reaches the model.
 - Add a `withdrawals` list to the recap facts (team and date).
 - Mark forfeit results that came from a withdrawal ("walkover: X withdrew").
 - Tell the prompt to report these plainly.
+
+**Status:** fixed in ST-8 (e01402b): withdrawals are listed and walkovers marked, from the participation.
 
 ---
 
@@ -349,6 +387,8 @@ games won, head-to-head, or the fixed last-resort order.
 - Add `tiebreakers` in order.
 - For each pair of teams level on points, add `separated_by` (worked out in code).
 
+**Status:** fixed: separated_by in ST-5 (743d385), carried in every table row.
+
 ### T-2: Score words don't fit the sport. Low. [code]
 Scores are sets or games in badminton, tennis, volleyball and table tennis, goals in
 soccer, and runs in cricket. The facts call the difference `game_diff`, and the model
@@ -357,12 +397,16 @@ says "goal difference" in a badminton event.
 **Fix:** a per-sport `score_unit` in the tournament facts ("sets", "goals", "runs"),
 and name the difference to match.
 
+**Status:** fixed in ST-11 (57f4f2e) with score_unit and a prompt rule. The key stays game_diff, which matches the site's GD column.
+
 ### T-3: Individual events are written as teams. Low. [code]
 In individual mode the competitors are players. `participant_label` is "Player" when
 `players_per_team == 1`. The prompts and "My team's take" still say "team",
 "your team" and "teams around you".
 
 **Fix:** pass the participant word to the prompts, and adjust the panel label.
+
+**Status:** fixed in ST-11 (57f4f2e): participant in the facts and prompts; the panel already said 'My take'.
 
 ---
 
@@ -377,6 +421,8 @@ played match whose score isn't confirmed yet is listed as a fixture and counted 
 ago.
 
 **Fix:** list those matches separately ("awaiting confirmation"), without the score.
+
+**Status:** fixed in ST-7 (ac247b5): 'awaiting_confirmation', not a fixture and not a match left.
 
 ### S-2: A corrected score keeps its old headline. Medium. [code]
 **Where:** `recap.news_board`.
@@ -393,6 +439,8 @@ result too.
   score each headline was written for, and hide a headline whose score no longer
   matches.
 
+**Status:** fixed in ST-10 (7ee12ff).
+
 ### S-3: The snapshot's result date can be broken. Low. [probed]
 **Where:** `snapshot.py` builds `"date": _when(m.scheduled_time)[:10]`.
 
@@ -401,6 +449,8 @@ the scheduled day, not the day it was played. The news board uses `played_on`, s
 two can disagree.
 
 **Fix:** use `recap.played_on`, and `None` when there's no date.
+
+**Status:** fixed in ST-7 (ac247b5).
 
 ---
 

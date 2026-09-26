@@ -796,6 +796,9 @@ README section **"AI analytics (optional)"**:
 
 ## Done when
 
+Follow-up: how the AI understands groups, knockouts, brackets and withdrawals is planned and
+recorded in [`AI_STRUCTURE_PLAN.md`](AI_STRUCTURE_PLAN.md) (gaps in [`AI_ANALYTICS_GAPS.md`](AI_ANALYTICS_GAPS.md)).
+
 - AI-1 to AI-8 and AI-11 are committed separately, each with its tests.
   AI-9 and AI-10 are done or explicitly deferred.
 - The suite is green on both backends and ruff is clean. CI never

@@ -348,6 +348,39 @@ has a **Tournament News** board, for everyone who can view its analytics:
   a minute, and teammates share it. It gets the same per-part number check.
   Organizers without a team don't see the button.
 
+**Groups, knockouts and brackets.** The AI is told how the tournament is
+built, so it doesn't treat every format as one league (full list of what was
+fixed in [`AI_ANALYTICS_GAPS.md`](AI_ANALYTICS_GAPS.md), plan in
+[`AI_STRUCTURE_PLAN.md`](AI_STRUCTURE_PLAN.md)):
+- **Groups plus knockout:** one table per group, how many go through, and
+  each team's status: "through to the knockouts", "still in the race to go
+  through", "out in the group stage", then "through to the final" or "out
+  in the semi-final". Teams are only compared within their group. Ask "who
+  leads group B?" to see just that group; a what-if on a group match
+  re-ranks only that group and says who would go through.
+- **Knockout, double elimination, consolation:** no table. The AI is given
+  who is still in, the next round, and who went out in which round. Double
+  elimination says who has "one loss, in the losers bracket". Every result
+  and fixture is labelled with its stage ("Semi-final", "Losers bracket
+  final", "Grand final decider").
+- **News:** the story's standings section fits the format (🏆 Standings,
+  The Groups, The Knockouts or The Bracket). A player's take talks about
+  "Your Group" or "Your Run", and looks back warmly once they're out.
+- **Withdrawals:** a withdrawn team keeps its row, flagged, but is never
+  given a placing, never listed "around you", and its walkovers are reported
+  as a withdrawal, not as wins.
+- **Ties and words:** when teams are level on points, the AI is told which
+  tiebreaker separated them. Scores are described in the sport's unit
+  (games, sets, goals, runs), and a player in an individual event isn't
+  called a team.
+- **Corrected scores:** if an organizer corrects a result after the news
+  was written, its old headline disappears and the next update reports the
+  correction.
+
+The same statuses appear on the analytics page: for groups-plus-knockout
+tournaments, Points Overview shows each group and each team's status, and
+the what-if simulator shows who would go through.
+
 ### Set it up
 
 The examples use `qwen3.5:9b`, which suits a 12 GB NVIDIA GPU (about
@@ -435,10 +468,14 @@ What the model is shown never includes:
 
 ### Choosing and checking the model
 
-`ai_eval` runs 42 labelled questions and 6 explanation cases through the
-real prompts and checks. It reports:
-- routing accuracy, listing each wrong route;
-- how many explanations pass the number check;
+`ai_eval` runs 42 labelled questions, 8 questions about a tournament in
+groups, and 10 explanation cases through the real prompts and checks. It
+reports:
+- routing accuracy, listing each wrong route (including a wrong group);
+- how many explanations pass the number check and the wording check. The
+  wording check catches, for example, a table invented for a knockout, two
+  group leaders called a "nail-biter", or a withdrawn team's placing
+  without saying it withdrew. Failures are listed as `WORDING` lines;
 - latency and model load time.
 
 It doesn't touch the database, so it's safe to run on the live server.

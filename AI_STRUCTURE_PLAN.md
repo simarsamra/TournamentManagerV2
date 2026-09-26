@@ -877,3 +877,26 @@ of 8 and of 16 teams.
   `calculate_standings(tournament)` for a hybrid.
 - The owner has run `ai_eval` on the server, and the results are recorded in §2 below
   the decisions.
+
+---
+
+## As built (2026-09-26)
+
+All tasks ST-0 to ST-13 are done, on `claude/ai-analytics-ollama-plan`, with the suite at 673 tests
+(3 skipped) on SQLite and PostgreSQL CI. Where the build differs from the text above:
+
+- **`status_text()` lives in `core/structure.py`**, not `core/ai/structure_facts.py`: the analytics page
+  (ST-13) shows the same words, and pages never import `core.ai`.
+- **Group tables keep the league key names.** A league's facts still say `standings_top` (routed answers)
+  and `table` (the conversation snapshot); groups say `groups`, brackets `bracket`.
+- **What a news update remembers** for the next one (each team's group and rank, its status, each
+  covered match's result) is stored in the update's `route`, not its facts, so the model never sees it.
+  Updates written before this have none of it and still work.
+- **The facts key `game_diff` was kept** (ST-11). It matches the site's GD column and the eval data; a
+  per-sport `score_unit` and a prompt rule give the model the right words.
+- **The story part names** are `table` (league), `groups` then `knockouts` (hybrid), `bracket` (bracket
+  formats) for the main news, and `table`, `group` or `run` for a team's take.
+- **X-1 was real:** a team that withdrew while 1st in its group was seeded into the semi-finals. ST-2
+  fixed it, with a test.
+- **Found while building:** a news-board test compared JSON key order, which PostgreSQL's jsonb doesn't
+  keep. It failed on CI, never locally; fixed in 93e0941. The page itself was never affected.
