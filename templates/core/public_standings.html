@@ -51,7 +51,7 @@
             {% for s in standings %}
             <tr>
                 <td><strong>{{ s.rank }}</strong></td>
-                <td>{{ s.display_label|default:s.team.name }}</td>
+                <td>{{ s.display_label|default:s.team.name }}{% if s.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}</td>
                 <td>{{ s.played }}</td>
                 <td>{{ s.wins }}</td>
                 <td>{{ s.losses }}</td>
@@ -75,7 +75,7 @@
             <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
             <tbody>
             {% for s in st %}
-            <tr><td>{{ s.rank }}</td><td>{{ s.display_label|default:s.team.name }}</td><td>{{ s.played }}</td><td>{{ s.wins }}</td><td>{{ s.losses }}</td><td>{{ s.game_diff }}</td><td><strong>{{ s.points }}</strong></td></tr>
+            <tr><td>{{ s.rank }}</td><td>{{ s.display_label|default:s.team.name }}{% if s.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}</td><td>{{ s.played }}</td><td>{{ s.wins }}</td><td>{{ s.losses }}</td><td>{{ s.game_diff }}</td><td><strong>{{ s.points }}</strong></td></tr>
             {% endfor %}
             </tbody>
         </table>

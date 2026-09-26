@@ -150,3 +150,54 @@ class HybridDashboardRankTests(TestCase):
         response = self.client.get("/dashboard/", {"tournament": league.pk})
         self.assertIsNone(response.context.get("team_standing_group"))
         self.assertNotContains(response, "in Group")
+
+
+class WithdrawnTeamTests(TestCase):
+    """ST-2 (X-1, X-2): a withdrawn team could be seeded into a hybrid's
+    knockout from the group table, and the standings page's "W" badge tested
+    Team.status, which is never "withdrawn" (withdrawal is recorded on the
+    participation)."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _withdraw_red_rovers_mid_groups(self):
+        t = tt.make_hybrid(self.org, name="Hybrid")
+        for match in t.matches.exclude(group="").filter(round_number__lte=2).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match) else (0, 2)))
+        a = {r["team"].name: r["points"] for r in calculate_standings(t, group="A")}
+        self.assertEqual(a["Red Rovers"], 6)
+        tt.withdraw(t, tt.team("Red Rovers"), policy="void")
+        return tt.play_group_stage(t)
+
+    def test_a_withdrawn_team_is_not_seeded(self):
+        t = self._withdraw_red_rovers_mid_groups()
+        seeded = set()
+        for match in t.matches.filter(group="", bracket_type="winners").select_related("team1", "team2"):
+            seeded.update(name for name in _names(match) if name)
+        self.assertNotIn("Red Rovers", seeded)
+        self.assertTrue({"Green Giants", "Silver Hawks"} <= seeded)
+
+    def test_standings_rows_say_who_withdrew(self):
+        t = tt.league_with_withdrawal(self.org)
+        flags = {r["team"].name: r["withdrawn"] for r in calculate_standings(t)}
+        self.assertTrue(flags["Blue Jays"])
+        self.assertEqual([n for n, w in flags.items() if w], ["Blue Jays"])
+
+    def test_standings_page_shows_the_badge(self):
+        t = tt.league_with_withdrawal(self.org)
+        self.client.force_login(self.org)
+        response = self.client.get("/standings/", {"tournament": t.pk})
+        self.assertContains(response, "badge-withdrawn", count=1)
+
+    def test_group_tables_show_the_badge(self):
+        t = self._withdraw_red_rovers_mid_groups()
+        self.client.force_login(self.org)
+        response = self.client.get("/standings/", {"tournament": t.pk})
+        self.assertContains(response, "badge-withdrawn", count=1)
+
+    def test_public_standings_show_the_badge(self):
+        t = tt.league_with_withdrawal(self.org)
+        self.client.force_login(self.org)
+        response = self.client.get("/public/standings/", {"tournament": t.pk})
+        self.assertContains(response, "badge-withdrawn", count=1)

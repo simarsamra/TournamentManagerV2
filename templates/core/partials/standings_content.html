@@ -121,7 +121,7 @@
                 <td><strong>{{ s.rank }}</strong></td>
                 <td>
                     <a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.display_label|default:s.team.name }}</a>
-                    {% if s.team.status == "withdrawn" %}<span class="badge badge-withdrawn">W</span>{% endif %}
+                    {% if s.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}
                 </td>
                 <td>{{ s.played }}</td>
                 <td>{{ s.wins }}</td>
@@ -152,7 +152,7 @@
             {% for s in st %}
             <tr{% if s.rank <= tournament.teams_per_group_advance %} class="row-advance"{% endif %}>
                 <td><strong>{{ s.rank }}</strong></td>
-                <td><a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.display_label|default:s.team.name }}</a></td>
+                <td><a href="{% url 'team_detail' pk=s.team.pk %}">{{ s.display_label|default:s.team.name }}</a>{% if s.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}</td>
                 <td>{{ s.played }}</td>
                 <td>{{ s.wins }}</td>
                 <td>{{ s.losses }}</td>

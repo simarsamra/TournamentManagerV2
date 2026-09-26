@@ -12,6 +12,7 @@ def _tournament_teams(tournament, statuses):
         participations__status__in=statuses,
     ).annotate(
         group=F("participations__group"),
+        participation_status=F("participations__status"),
     ).distinct()
 
 
@@ -46,6 +47,9 @@ def calculate_standings(tournament, group=None):
             "games_lost": 0,
             "game_diff": 0,
             "points": 0,
+            # Withdrawn teams keep their row (and the points they earned) but
+            # never advance or take a placing (AI_STRUCTURE_PLAN.md ST-2).
+            "withdrawn": team.participation_status == "withdrawn",
         }
 
     for match in matches:
@@ -504,7 +508,9 @@ def check_group_stage_complete(tournament):
     advancing = []
     for group_name in sorted(groups):
         standings = calculate_standings(tournament, group=group_name)
-        top = standings[:tournament.teams_per_group_advance]
+        # A withdrawn team keeps its table row but can't go through: the next
+        # team moves up into its place (X-1).
+        top = [s for s in standings if not s["withdrawn"]][:tournament.teams_per_group_advance]
         for s in top:
             advancing.append(s["team"])
 
