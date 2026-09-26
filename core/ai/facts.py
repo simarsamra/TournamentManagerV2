@@ -119,7 +119,7 @@ def build_facts(tournament, user, route):
                 "draw": tournament.points_per_draw,
                 "loss": tournament.points_per_loss,
             },
-            **structure_facts.tournament_facts(structure),
+            **structure_facts.tournament_facts(tournament, structure),
         },
     }
     # One table per group, a bracket summary, or the league table: never

@@ -17,7 +17,7 @@ from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
 from core.ai.facts import Route, build_facts, serialise
 from core.ai.router import build_schema, route_question
 from core.ai.snapshot import MAX_SNAPSHOT_CHARS, build_snapshot
-from core.ai.structure_facts import STRUCTURE_RULE, trim
+from core.ai.structure_facts import STRUCTURE_RULE, WORDING_RULE, trim
 from core.ai.testing import FakeOllama
 from core.models import AIQuestion, Match, OrganizerProfile, Team, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
@@ -1026,3 +1026,38 @@ class CorrectedResultTests(TestCase):
         self._override(1, 3)
         self.assertEqual(self._headline(), "Rovers romp 3-0")
         self.assertFalse(recap.new_results(self.t, recap.latest_recap(self.t)).filter(pk=self.match.pk).exists())
+
+
+class WordingTests(TestCase):
+    """ST-11 (T-2, T-3): scores and competitors in the tournament's words."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def test_score_unit_and_participant_everywhere(self):
+        t = tt.make_league(self.org, tt.NAMES[:4], sport_type="badminton", players_per_team=1)
+        tt.play(t.matches.order_by("match_number").first(), 2, 1)
+        blocks = [
+            build_facts(t, self.org, Route("standings"))["tournament"],
+            build_snapshot(t, self.org)["tournament"],
+            recap.build_recap_facts(t)[0]["tournament"],
+            team_news.build_team_facts(t, tt.team("Red Rovers"))[0]["tournament"],
+        ]
+        for block in blocks:
+            self.assertEqual((block["score_unit"], block["participant"]), ("games", "player"))
+
+    def test_teams_and_goals(self):
+        t = tt.make_league(self.org, tt.NAMES[:4], players_per_team=5)
+        block = build_facts(t, self.org, Route("standings"))["tournament"]
+        self.assertEqual((block["score_unit"], block["participant"]), ("goals", "team"))
+
+    def test_every_prompt_explains_the_words(self):
+        for prompt in (EXPLAIN_PROMPT, CONVERSATION_PROMPT, recap.RECAP_PROMPT, team_news.PROMPT):
+            self.assertIn(WORDING_RULE, prompt)
+            self.assertIn(STRUCTURE_RULE, prompt)
+
+    def test_individual_events_say_my_take(self):
+        t = tt.make_league(self.org, tt.NAMES[:4], registration_mode="individual")
+        html = render_to_string("core/partials/news_flip.html", {"tournament": t, "mode": "team"})
+        self.assertIn("My take", html)
+        self.assertNotIn("My team's take", html)

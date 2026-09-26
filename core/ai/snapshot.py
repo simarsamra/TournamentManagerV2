@@ -136,7 +136,7 @@ def build_snapshot(tournament, user):
             "matches_played": len(finished),
             "matches_left": sum(1 for m in known if m.team1_id and m.team2_id),
             "phase": structure_facts.PHASE_WORDS[structure.phase],
-            **structure_facts.tournament_facts(structure),
+            **structure_facts.tournament_facts(tournament, structure),
         },
     }
     if structure.placings:

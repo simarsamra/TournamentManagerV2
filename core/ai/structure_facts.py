@@ -15,6 +15,19 @@ STRUCTURE_RULE = (
     "talk about who is still in and the next round."
 )
 
+# T-2, T-3: say scores and competitors in the tournament's own words.
+WORDING_RULE = (
+    "Scores are counted in tournament.score_unit, and game_diff is the difference in them: say \"goal "
+    "difference\" only when score_unit is goals. The competitors are tournament.participant (a team, or a "
+    "single player): don't call a player a team."
+)
+PROMPT_RULES = STRUCTURE_RULE + "\n" + WORDING_RULE
+
+SCORE_UNITS = {
+    "badminton": "games", "tennis": "sets", "table_tennis": "games", "volleyball": "sets",
+    "soccer": "goals", "basketball": "points", "cricket": "runs", "other": "points",
+}
+
 PHASE_WORDS = {"league": "league", "group_stage": "group stage", "knockout": "knockout", "finished": "finished"}
 STILL_IN = ("alive", "unbeaten", "one_life_left")
 
@@ -107,9 +120,17 @@ def standings_facts(structure, *, rows=None, only_group=None):
     return facts
 
 
-def tournament_facts(structure):
+def wording_facts(tournament):
+    """How to talk about this tournament's scores and competitors."""
+    return {
+        "score_unit": SCORE_UNITS.get(tournament.sport_type, "points"),
+        "participant": tournament.participant_label.lower(),
+    }
+
+
+def tournament_facts(tournament, structure):
     """Extra keys for a facts document's "tournament" block."""
-    return {"kind": structure.kind, "tiebreakers": structure.tiebreakers}
+    return {"kind": structure.kind, "tiebreakers": structure.tiebreakers, **wording_facts(tournament)}
 
 
 def team_facts(structure, team_id):

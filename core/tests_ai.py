@@ -1679,7 +1679,7 @@ class TeamNewsTests(TestCase):
         fake = self._worker(self.STORY)
         job.refresh_from_db()
         self.assertEqual((job.status, job.answer_verified, job.answer), ("done", True, "🏓 Aces Serve Notice!"))
-        self.assertIn("players of YOUR_TEAM", fake.requests[0]["body"]["messages"][0]["content"])
+        self.assertIn("special edition just for your_team", fake.requests[0]["body"]["messages"][0]["content"])
         self.assertEqual(job.facts["your_team"], "Aces")
         self.assertEqual([r["opponent"] for r in job.facts["your_results"]], ["Bolts", "Comets"])  # in order
         self.assertEqual((job.facts["your_results"][0]["your_score"], job.facts["your_results"][0]["their_score"]),

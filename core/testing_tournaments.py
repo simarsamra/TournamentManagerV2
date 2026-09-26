@@ -23,9 +23,9 @@ STRENGTH = {name: len(NAMES) - i for i, name in enumerate(NAMES)}
 
 
 def _make(organizer, fmt, names, name=None, **fields):
+    fields.setdefault("sport_type", "soccer")
     tournament = Tournament.objects.create(
-        name=name or f"Test {fmt}", format=fmt, status="active", created_by=organizer,
-        sport_type="soccer", **fields,
+        name=name or f"Test {fmt}", format=fmt, status="active", created_by=organizer, **fields,
     )
     for team_name in names:
         team, _ = Team.objects.get_or_create(name=team_name)
