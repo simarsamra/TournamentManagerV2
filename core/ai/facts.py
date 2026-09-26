@@ -197,7 +197,7 @@ def build_facts(tournament, user, route):
                 }
                 if group:
                     facts["what_if"]["group"] = group
-                    after = group_outlook(tournament, group, simulated, match)
+                    after = group_outlook(tournament, group, simulated, [match])
                     changes = []
                     for team in (match.team1, match.team2):
                         before_text = status(team)

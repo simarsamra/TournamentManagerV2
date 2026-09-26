@@ -307,13 +307,14 @@ class SimulatorHybridTests(TestCase):
     def test_forged_knockout_draw_changes_nothing(self):
         response = self._get(**{f"sim_{self.knockout_match.pk}": "draw"})
         self.assertFalse(response.context["simulator_has_choices"])
-        self.assertEqual(
-            [row["point_change"] for row in response.context["simulated_standings"]], [0, 0]
-        )
+        # A hybrid is simulated group by group (ST-13): no group was touched.
+        self.assertEqual(response.context["simulated_groups"], [])
 
     def test_group_draw_still_applies(self):
         response = self._get(**{f"sim_{self.group_match.pk}": "draw"})
-        changes = {row["team"].pk: row["point_change"] for row in response.context["simulated_standings"]}
+        [group] = response.context["simulated_groups"]
+        self.assertEqual(group["group"], "A")
+        changes = {row["team"].pk: row["point_change"] for row in group["rows"]}
         self.assertEqual(changes, {
             self.a.pk: self.tournament.points_per_draw,
             self.b.pk: self.tournament.points_per_draw,

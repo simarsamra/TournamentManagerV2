@@ -30,6 +30,23 @@
             </div>
             <button type="submit" class="btn btn-primary btn-sm mt-1">Simulate</button>
         </form>
+        {% for g in simulated_groups %}
+        <p style="margin:0.75rem 0 0.25rem;"><strong>Group {{ g.group }}</strong></p>
+        <table>
+            <thead><tr><th>Rank</th><th>Team</th><th>Points</th><th>Δ</th><th>Would be</th></tr></thead>
+            <tbody>
+                {% for row in g.rows %}
+                <tr>
+                    <td>{{ row.rank }}</td>
+                    <td>{{ row.display_label|default:row.team.name }}</td>
+                    <td>{{ row.points }}</td>
+                    <td>{% if row.point_change > 0 %}<span style="color:var(--success);">+{{ row.point_change }}</span>{% elif row.point_change < 0 %}<span style="color:var(--danger);">{{ row.point_change }}</span>{% else %}0{% endif %}</td>
+                    <td>{% if row.status_after != row.status_before %}<strong>{{ row.status_after }}</strong>{% else %}<span class="text-muted">{{ row.status_after }}</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endfor %}
         {% if simulated_standings %}
         <table class="mt-1">
             <thead><tr><th>Rank</th><th>Team</th><th>Points</th><th>Δ</th></tr></thead>

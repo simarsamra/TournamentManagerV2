@@ -26,6 +26,7 @@ from ..models import (
     Tournament,
     TournamentIndividualRegistration,
 )
+from ..structure import build_structure, group_outlook, status_text
 from ..standings import (
     calculate_standings,
     get_bracket_data,
@@ -233,6 +234,29 @@ def analytics_view(request):
     }
     if tournament.format in analytics.STANDINGS_FORMATS:
         context["standings"] = standings
+    structure = None
+    if tournament.format == "hybrid":
+        # One Points Overview per group, with who goes through (ST-13, D-5).
+        structure = build_structure(
+            tournament, lambda team: label_map.get(team.pk) or _team_display_label(tournament, team)
+        )
+        point_groups = []
+        for letter, rows in structure.groups.items():
+            analytics.set_points_pct(rows)
+            for row in rows:
+                state = structure.teams.get(row["team"].pk)
+                row["status_text"] = state.text if state else ""
+            point_groups.append({"group": letter, "rows": rows})
+        context["point_groups"] = point_groups
+        context["advance_per_group"] = structure.advance_per_group
+        if structure.phase in ("knockout", "finished"):
+            teams = sorted(structure.teams.values(), key=lambda s: s.label.lower())
+            stages = {s.detail for s in teams if s.status == "alive" and s.detail}
+            context["knockout_summary"] = {
+                "still_in": [s.label for s in teams if s.status == "alive"],
+                "next_round": stages.pop() if len(stages) == 1 else "",
+                "champion": structure.placings.get("champion", ""),
+            }
     # The Ask box (AI_ANALYTICS_PLAN.md AI-6). core.ai is only imported when
     # the feature is on.
     if settings.AI_ANALYTICS_ENABLED:
@@ -274,10 +298,28 @@ def analytics_view(request):
 
     # --- What-if standings simulator ---
     simulator_matches, simulator_total = analytics.simulator_matches(tournament)
-    simulated_standings, simulator_has_choices = analytics.simulate(
-        tournament, standings, simulator_matches,
-        {m.pk: request.GET.get(f"sim_{m.pk}") for m in simulator_matches},
-    )
+    picks = {m.pk: request.GET.get(f"sim_{m.pk}") for m in simulator_matches}
+    simulated_groups = []
+    if structure is not None and structure.groups:
+        # A group match only moves its own group: re-rank each group a pick
+        # touches, and say who would go through (ST-13).
+        simulated_standings, simulator_has_choices = None, False
+        for letter, rows in structure.groups.items():
+            simulated, _ = analytics.simulate(tournament, rows, simulator_matches, picks)
+            chosen = [m for m in simulator_matches if m.group == letter and m.selected_outcome]
+            if not chosen:
+                continue
+            simulator_has_choices = True
+            after = group_outlook(tournament, letter, simulated, chosen)
+            for row in simulated:
+                state = structure.teams.get(row["team"].pk)
+                row["status_before"] = state.text if state else ""
+                row["status_after"] = status_text(after.get(row["team"].pk, ""))
+            simulated_groups.append({"group": letter, "rows": simulated})
+    else:
+        simulated_standings, simulator_has_choices = analytics.simulate(
+            tournament, standings, simulator_matches, picks,
+        )
 
     context.update({
         "analytics_teams": active_teams,
@@ -296,6 +338,7 @@ def analytics_view(request):
         "simulator_total": simulator_total,
         "simulator_limit": analytics.SIMULATOR_MATCH_LIMIT,
         "simulated_standings": simulated_standings,
+        "simulated_groups": simulated_groups,
         "simulator_has_choices": simulator_has_choices,
         "analytics_hidden": _analytics_hidden_state(request, tournament, simulator_matches),
     })

@@ -301,19 +301,19 @@ def group_statuses(rows, left, places, most, over=False):
     return statuses
 
 
-def matches_left(group_matches, skip=None):
-    """{team pk: unfinished group matches}, leaving out the match `skip`."""
+def matches_left(group_matches, skip=()):
+    """{team pk: unfinished group matches}, leaving out the matches in `skip`."""
     left = defaultdict(int)
     for m in group_matches:
-        if m.status in UNFINISHED and (skip is None or m.pk != skip):
+        if m.status in UNFINISHED and m.pk not in skip:
             for pk in _teams_of(m):
                 if pk:
                     left[pk] += 1
     return left
 
 
-def group_is_over(group_matches, skip=None):
-    return all(m.status in GROUP_MATCH_OVER or m.pk == skip for m in group_matches)
+def group_is_over(group_matches, skip=()):
+    return all(m.status in GROUP_MATCH_OVER or m.pk in skip for m in group_matches)
 
 
 def _group_states(tournament, structure, matches):
@@ -327,13 +327,15 @@ def _group_states(tournament, structure, matches):
             structure.teams[pk].status = status
 
 
-def group_outlook(tournament, group, rows, played_match):
-    """Statuses for a group's (projected) `rows` once `played_match` has been
-    decided: the what-if simulator's "would they go through?" (ST-6)."""
+def group_outlook(tournament, group, rows, played_matches):
+    """Statuses for a group's (projected) `rows` once `played_matches` have
+    been decided: the what-if simulator's "would they go through?" (ST-6,
+    ST-13)."""
     group_matches = list(tournament.matches.filter(group=group))
+    skip = {m.pk for m in played_matches}
     return group_statuses(
-        rows, matches_left(group_matches, skip=played_match.pk), tournament.teams_per_group_advance or 0,
-        _most_points(tournament), over=group_is_over(group_matches, skip=played_match.pk),
+        rows, matches_left(group_matches, skip=skip), tournament.teams_per_group_advance or 0,
+        _most_points(tournament), over=group_is_over(group_matches, skip=skip),
     )
 
 

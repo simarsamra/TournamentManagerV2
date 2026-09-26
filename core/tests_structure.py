@@ -1159,3 +1159,74 @@ class StructureInvariantTests(TestCase):
                 self.assertFalse({r["team"] for r in rows} & withdrawn, f"{path}.{key}")
             if isinstance(value, dict) and value.get("team") in withdrawn and "rank" in value:
                 self.assertTrue(value.get("withdrawn"), f"{path}.{key}: {value}")
+
+
+class AnalyticsPageByGroupTests(TestCase):
+    """ST-13 (D-5): the analytics page shows a hybrid's points and what-ifs
+    group by group."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+        self.client.force_login(self.org)
+
+    def test_points_overview_per_group(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        response = self.client.get("/analytics/", {"tournament": t.pk})
+        groups = response.context["point_groups"]
+        self.assertEqual([g["group"] for g in groups], ["A", "B"])
+        a = {r["team"].name: (r["points"], r["points_pct"], r["status_text"]) for r in groups[0]["rows"]}
+        self.assertEqual(a["Red Rovers"], (9, 100, "through to the final"))
+        self.assertEqual(a["Green Giants"], (6, 67, "through to the semi-final"))
+        self.assertEqual(response.context["knockout_summary"]["still_in"], ["Golden Boots", "Green Giants", "Red Rovers"])
+        self.assertContains(response, "top 2 go through")
+        self.assertContains(response, "Knockout matches don't earn points.")
+
+    def test_what_if_per_group(self):
+        # Favourites win rounds 1-2; what if Red Rovers beat Silver Hawks?
+        t = tt.make_hybrid(self.org)
+        for match in t.matches.exclude(group="").filter(round_number__lte=2).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match) else (0, 2)))
+        match = t.matches.get(group="A", round_number=3, team1__name="Red Rovers")
+        response = self.client.get("/analytics/", {"tournament": t.pk, f"sim_{match.pk}": "team1"})
+        [group] = response.context["simulated_groups"]
+        self.assertEqual(group["group"], "A")
+        rovers = next(r for r in group["rows"] if r["team"].name == "Red Rovers")
+        self.assertEqual((rovers["points"], rovers["status_before"], rovers["status_after"]),
+                         (9, "still in the race to go through", "through to the knockouts"))
+        self.assertContains(response, "<strong>through to the knockouts</strong>", html=False)
+
+    def test_two_picks_decide_a_group(self):
+        # After round 1 (Red Rovers and Silver Hawks won), what if Red Rovers
+        # beat Black Bears and Silver Hawks beat Green Giants? 6, 6, 0, 0
+        # with one round left: the top two are through, the others out.
+        t = tt.make_hybrid(self.org)
+        for match in t.matches.exclude(group="").filter(round_number=1).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match) else (0, 2)))
+        picks = {}
+        for match in t.matches.filter(group="A", round_number=2).select_related("team1", "team2"):
+            winner = "Red Rovers" if "Red Rovers" in _names(match) else "Silver Hawks"
+            picks[f"sim_{match.pk}"] = "team1" if match.team1.name == winner else "team2"
+        response = self.client.get("/analytics/", {"tournament": t.pk, **picks})
+        [group] = response.context["simulated_groups"]
+        after = {r["team"].name: r["status_after"] for r in group["rows"]}
+        self.assertEqual(after, {
+            "Red Rovers": "through to the knockouts", "Silver Hawks": "through to the knockouts",
+            "Green Giants": "out in the group stage", "Black Bears": "out in the group stage",
+        })
+
+    def test_query_count_is_flat_for_hybrids(self):
+        def count(size):
+            names = [f"H{size}-{i}" for i in range(size)]
+            t = tt.play_group_stage(tt.make_hybrid(self.org, names, name=f"Hybrid {size}"))
+            self.client.get("/analytics/", {"tournament": t.pk})
+            with CaptureQueriesContext(connection) as ctx:
+                self.client.get("/analytics/", {"tournament": t.pk})
+            return len(ctx.captured_queries)
+
+        self.assertEqual(count(8), count(16))
+
+    def test_leagues_are_unchanged(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        response = self.client.get("/analytics/", {"tournament": t.pk})
+        self.assertNotIn("point_groups", response.context)
+        self.assertEqual(len(response.context["standings"]), 4)

@@ -109,7 +109,34 @@
     {% include "core/partials/analytics_simulator.html" %}
 </div>
 
-{% if standings %}
+{% if point_groups %}
+<!-- Points Chart, one block per group (a hybrid) -->
+<div class="card mt-2" id="analytics-points">
+    <div class="card-header">Points Overview</div>
+    <div class="card-body">
+        {% if knockout_summary %}
+        <p style="margin:0 0 0.75rem;"><strong>Knockout:</strong>
+            {% if knockout_summary.champion %}{{ knockout_summary.champion }} won the tournament.
+            {% else %}{% if knockout_summary.next_round %}next round {{ knockout_summary.next_round }}; {% endif %}still in: {{ knockout_summary.still_in|join:", " }}.{% endif %}
+            <span class="text-muted" style="font-size:0.85rem;">Knockout matches don't earn points.</span></p>
+        {% endif %}
+        {% for g in point_groups %}
+        <h4 style="margin:0.75rem 0 0.4rem;font-size:0.95rem;">Group {{ g.group }}{% if advance_per_group %} <span class="text-muted" style="font-weight:400;font-size:0.85rem;">· top {{ advance_per_group }} go through</span>{% endif %}</h4>
+        {% for s in g.rows %}
+        <div class="d-flex align-center gap-1 mb-1">
+            <span style="width:120px;font-size:0.85rem;">{{ s.display_label|default:s.team.name }}{% if s.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}</span>
+            <div class="bar-track" style="flex:1;height:24px;position:relative;">
+                <div style="background:var(--primary);border-radius:4px;height:24px;width:{{ s.points_pct }}%;display:flex;align-items:center;padding-left:0.5rem;">
+                    <span style="color:white;font-size:0.75rem;font-weight:600;">{{ s.points }} pts</span>
+                </div>
+            </div>
+            <span class="text-muted" style="width:170px;font-size:0.78rem;">{{ s.status_text }}</span>
+        </div>
+        {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+{% elif standings %}
 <!-- Points Chart -->
 <div class="card mt-2" id="analytics-points">
     <div class="card-header">Points Overview</div>
