@@ -11,7 +11,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from core import testing_tournaments as tt
-from core.ai import recap
+from core.ai import recap, team_news
 from core.ai.conversation import SYSTEM_PROMPT as CONVERSATION_PROMPT
 from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
 from core.ai.facts import Route, build_facts, serialise
@@ -888,3 +888,83 @@ class NewsStructureTests(TestCase):
                                 {"story": {"title": "T", "groups": "Group A is wild."}, "final": False})
         self.assertIn("The Groups", html)
         self.assertIn("Group A is wild.", html)
+
+
+class TeamNewsStructureTests(TestCase):
+    """ST-9 (G-1, G-5, K-3, K-4, K-7): "My team's take" knows the team's
+    group, its status, its stages and its byes."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _facts(self, tournament, name):
+        tournament.refresh_from_db()
+        return team_news.build_team_facts(tournament, tt.team(name))
+
+    def _write(self, tournament, name, parts):
+        job = AIQuestion.objects.create(tournament=tournament, kind="team_news", question="take",
+                                        route={"team_id": tt.team(name).pk})
+        with FakeOllama() as fake:
+            fake.respond_chat(json.dumps({"story": {p: "Nice one." for p in parts}}))
+            team_news.write_team_news(job)
+        return fake.requests[0]["body"]
+
+    def test_group_stage_story_stays_in_the_group(self):
+        t = tt.make_hybrid(self.org)
+        for match in t.matches.exclude(group="").filter(round_number__lte=2).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match) else (0, 2)))
+        facts, part, run_over = self._facts(t, "Blue Jays")
+        self.assertEqual((facts["your_group"], part, run_over), ("B", "group", False))
+        group_b = {"Golden Boots", "Purple Pumas", "Orange Owls"}
+        self.assertTrue({r["team"] for r in facts["teams_around_you"]} <= group_b)
+        self.assertEqual(facts["leader"]["team"], "Golden Boots")
+        self.assertEqual(facts["teams_in_group"], 4)
+        self.assertEqual({r["stage"] for r in facts["your_results"]}, {"Group B"})
+        body = self._write(t, "Blue Jays", recap.story_parts(False, "group"))
+        self.assertIn("group", body["format"]["properties"]["story"]["required"])
+        self.assertNotIn("table", body["format"]["properties"]["story"]["required"])
+
+    def test_out_in_the_semi_final(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        facts, part, run_over = self._facts(t, "Blue Jays")
+        self.assertEqual((facts["your_status"], part, run_over), ("out in the semi-final", "run", True))
+        semi = facts["your_results"][-1]
+        self.assertEqual((semi["stage"], semi["result"]), ("Semi-final", "lost"))
+        body = self._write(t, "Blue Jays", recap.story_parts(False, "run"))
+        self.assertIn(team_news.RUN_OVER_NOTE, body["messages"][0]["content"])
+        self.assertIn("run", body["format"]["properties"]["story"]["required"])
+
+    def test_still_in(self):
+        facts, part, run_over = self._facts(tt.hybrid_after_one_semi(self.org), "Red Rovers")
+        self.assertEqual((facts["your_status"], part, run_over), ("through to the final", "run", False))
+        # The final's other side isn't known yet, so no next match to hype.
+        self.assertEqual(facts["your_next_matches"], [])
+
+    def test_knockout_loser(self):
+        facts, part, _ = self._facts(tt.knockout_after_round_1(self.org), "Black Bears")
+        self.assertEqual((facts["your_status"], part), ("out in the quarter-final", "run"))
+        self.assertNotIn("your_standing", facts)
+        self.assertNotIn("teams_around_you", facts)
+
+    def test_double_elimination_one_life(self):
+        t = tt.make_double_elimination(self.org)
+        tt.play_ready(t, "winners")
+        facts, _, run_over = self._facts(t, "Black Bears")
+        self.assertIn("losers bracket", facts["your_status"])
+        self.assertIn("one more", facts["your_status"])
+        self.assertFalse(run_over)
+        self.assertEqual(facts["your_next_matches"][0]["stage"], "Losers bracket round 1")
+
+    def test_a_bye_is_a_result(self):
+        t = tt.make_knockout(self.org, tt.NAMES[:6])
+        bye = t.matches.filter(status="bye").exclude(winner=None).select_related("winner").first()
+        facts, *_ = self._facts(t, bye.winner.name)
+        self.assertEqual(facts["your_results"], [{"played": facts["your_results"][0]["played"],
+                                                  "stage": "Quarter-final", "result": "advanced with a bye"}])
+
+    def test_a_withdrawn_neighbour_is_skipped(self):
+        t = tt.league_with_withdrawal(self.org)
+        facts, part, _ = self._facts(t, "Red Rovers")
+        self.assertEqual(part, "table")
+        self.assertNotIn("Blue Jays", [r["team"] for r in facts["teams_around_you"]])
+        self.assertEqual(facts["teams_in_table"], 5)

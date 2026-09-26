@@ -1687,7 +1687,7 @@ class TeamNewsTests(TestCase):
         self.assertNotIn("finished", job.facts["tournament"])
         self.assertIn('"next_up"', fake.requests[0]["body"]["messages"][0]["content"])
         self.assertEqual(job.facts["your_next_matches"],
-                         [{"opponent": "Bolts", "when": "Sat 03 Oct, 18:00", "opponent_rank": 3,
+                         [{"opponent": "Bolts", "stage": "Round 1", "when": "Sat 03 Oct, 18:00", "opponent_rank": 3,
                            "head_to_head": "won 1, lost 0"}])
         status = self.client.get(f"/dashboard/news/team/{job.pk}/", HTTP_HX_REQUEST="true")
         self.assertEqual(status.status_code, 286)

@@ -96,10 +96,12 @@ FINALE_NOTE = """  The tournament is FINISHED (tournament.finished): this is the
   matches, so never tease a next match or round."""
 
 # The parts of the main story, in the order they're shown.
-STORY_PARTS = ("title", "intro", "champion", "results", "table", "groups", "knockouts", "bracket",
-               "next_up", "sign_off")
+# "group" and "run" are a team's own story's (team_news.py).
+STORY_PARTS = ("title", "intro", "champion", "results", "table", "groups", "group", "knockouts", "bracket",
+               "run", "next_up", "sign_off")
 MAX_STORY_PART_CHARS = {"title": 120, "intro": 250, "champion": 400, "results": 1200, "table": 500,
-                        "groups": 600, "knockouts": 500, "bracket": 500, "next_up": 400, "sign_off": 200}
+                        "groups": 600, "group": 500, "knockouts": 500, "bracket": 500, "run": 500,
+                        "next_up": 400, "sign_off": 200}
 # Which parts a league is asked for while it runs, and in its finale; other
 # formats swap "table" for their standings_part().
 RUNNING_PARTS = ("title", "intro", "results", "table", "next_up", "sign_off")
