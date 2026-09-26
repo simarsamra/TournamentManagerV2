@@ -1,5 +1,5 @@
 {% comment %}The news board's contents (core/ai/recap.py news_board): the top story, headlines by day, and what's coming up. Used on the dashboard and the analytics page.{% endcomment %}
-{% include "core/partials/news_story.html" with story=news.story %}
+{% include "core/partials/news_story.html" with story=news.story final=news.final %}
 {% for section in news.sections %}
 <div class="news-section">
     <h4 class="news-day">{{ section.title }} <span class="text-muted">&middot; {{ section.day|date:"D j M" }}</span></h4>

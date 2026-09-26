@@ -737,6 +737,18 @@ every dashboard, instead of a recap someone has to ask for:
   (anyone else gets a 404), and the worker re-checks membership. The
   per-user hourly quota and AI_MAX_PENDING apply, and the update rules are
   unchanged. A dry run with gemma4:e4b took 6 s with nothing rejected.
+- **Season finale.** Once `tournament.status == "completed"`, both prompts
+  switch to finale parts: a `champion` part replaces `next_up`, and the
+  facts gain `tournament.finished`, `champion`/`runner_up`/`third` (a
+  league's top three, else `tournament.champion`) and, for a team,
+  `you_are_champion`. `schedule_news` queues one finale (`route.final`) for
+  a finished tournament whose latest published news isn't one, even with no
+  new results. When everything is already covered, it tells the final
+  matchday. Results in the facts are now oldest first, since newest-first
+  led the model to narrate them backwards. `tournament.sport` is in the
+  facts, so the model doesn't guess the sport. Dry runs on the finished
+  simulated league with gemma4:e4b took 11 s (finale) and 7 s (team look
+  back), with nothing rejected.
 - **Played early.** `played_on` uses the earlier of the scheduled time and
   when the score was submitted, so a match played ahead of schedule is news
   on the day it happened.

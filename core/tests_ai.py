@@ -1370,8 +1370,8 @@ class RecapTests(TestCase):
         self._work("Comets won twice.")
         job.refresh_from_db()
         teams = [(r["team1"], r["team2"]) for r in job.facts["new_results"]]
-        self.assertEqual(teams, [("Comets", "Bolts"), ("Comets", "Aces")])   # newest first, m1 excluded
-        forfeit = job.facts["new_results"][0]
+        self.assertEqual(teams, [("Comets", "Aces"), ("Comets", "Bolts")])   # in order played, m1 excluded
+        forfeit = job.facts["new_results"][1]
         self.assertEqual((forfeit["team1"], forfeit["team2"], forfeit["forfeit_won_by"]),
                          ("Comets", "Bolts", "Comets"))
         self.assertNotIn("score1", forfeit)
@@ -1517,8 +1517,8 @@ class NewsBoardTests(TestCase):
              "results": "Comets edged past Aces 3-2, and Aces served up a 3-1 win over Bolts.",
              "table": "Comets top the table on 9 points.",                 # 9 isn't in the facts
              "next_up": "Bolts take on Comets next.", "sign_off": "No mercy at the net! 🏓"},
-            results=[("r1", "Comets burn bright, edge Aces 3-2"),
-                     ("r2", "Aces thump Bolts 7-0"),              # 7 and 0 aren't in the results
+            results=[("r1", "Aces thump Bolts 7-0"),              # 7 and 0 aren't in the results
+                     ("r2", "Comets burn bright, edge Aces 3-2"),
                      ("r9", "A match that doesn't exist")],
             previews=[("u1", "Bolts out to zap the Comets")],
         ))
@@ -1530,7 +1530,7 @@ class NewsBoardTests(TestCase):
                                                   str(fixture.pk): "Bolts out to zap the Comets"})
         self.assertEqual(job.route["rejected"], ["Comets top the table on 9 points.", "Aces thump Bolts 7-0"])
         schema = fake.requests[0]["body"]["format"]
-        self.assertEqual(schema["properties"]["story"]["required"], list(recap.STORY_PARTS))
+        self.assertEqual(schema["properties"]["story"]["required"], list(recap.RUNNING_PARTS))
         self.assertEqual(fake.requests[0]["timeout"], recap.NEWS_TIMEOUT_SECONDS)
         self.assertEqual(schema["properties"]["results"]["items"]["properties"]["key"]["enum"], ["r1", "r2"])
         self.assertEqual(schema["properties"]["previews"]["items"]["properties"]["key"]["enum"], ["u1"])
@@ -1570,6 +1570,34 @@ class NewsBoardTests(TestCase):
         # Two days on, nothing today or yesterday: the last matchday instead.
         later = recap.news_board(self.tournament, now=now + timedelta(days=3))
         self.assertEqual([(s["title"], s["day"]) for s in later["sections"]], [("Last matchday", today)])
+
+    def test_a_finished_tournament_gets_one_season_finale(self):
+        self._match(self.aces, self.bolts, 3, 1)
+        self._match(self.comets, self.aces, 3, 2)
+        self._worker("Comets edged Aces 3-2.")                             # the last round's news
+        Tournament.objects.filter(pk=self.tournament.pk).update(status="completed")
+        later = timezone.now() + timedelta(minutes=31)
+        [job] = recap.schedule_news(now=later)                             # due with no new results
+        fake = self._worker(json.dumps({"story": {
+            "title": "🏓 Aces Crowned!", "intro": "The curtain has come down!",
+            "champion": "Aces are champions, with Comets runner_up.", "results": "Comets edged Aces 3-2.",
+            "table": "Aces finish 1st on 3 points.", "sign_off": "What a season!"},
+            "results": [], "previews": []}))
+        job.refresh_from_db()
+        body = fake.requests[0]["body"]
+        self.assertIn("this is the season finale", body["messages"][0]["content"])
+        self.assertEqual(body["format"]["properties"]["story"]["required"],
+                         ["title", "intro", "champion", "results", "table", "sign_off"])
+        self.assertEqual((job.facts["champion"], job.facts["runner_up"], job.facts["third"]),
+                         ("Aces", "Comets", "Bolts"))
+        # Every result was already covered: the finale tells the final matchday.
+        self.assertEqual(len(job.facts["new_results"]), 2)
+        self.assertEqual((job.route["final"], job.answer_verified), (True, True))
+        page = self._dashboard(self.player)
+        self.assertContains(page, "👑 Champions")
+        self.assertContains(page, "Final Standings")
+        # Just the one finale.
+        self.assertEqual(recap.schedule_news(now=later + timedelta(hours=2)), [])
 
     def test_no_board_without_access_or_while_disabled(self):
         self._match(self.aces, self.bolts, 3, 1)
@@ -1651,9 +1679,11 @@ class TeamNewsTests(TestCase):
         self.assertEqual((job.status, job.answer_verified, job.answer), ("done", True, "🏓 Aces Serve Notice!"))
         self.assertIn("players of YOUR_TEAM", fake.requests[0]["body"]["messages"][0]["content"])
         self.assertEqual(job.facts["your_team"], "Aces")
-        self.assertEqual(job.facts["your_results"][0]["opponent"], "Comets")          # newest first
-        self.assertEqual((job.facts["your_results"][1]["your_score"], job.facts["your_results"][1]["their_score"]),
+        self.assertEqual([r["opponent"] for r in job.facts["your_results"]], ["Bolts", "Comets"])  # in order
+        self.assertEqual((job.facts["your_results"][0]["your_score"], job.facts["your_results"][0]["their_score"]),
                          (3, 1))
+        self.assertNotIn("finished", job.facts["tournament"])
+        self.assertIn('"next_up"', fake.requests[0]["body"]["messages"][0]["content"])
         self.assertEqual(job.facts["your_next_matches"],
                          [{"opponent": "Bolts", "when": "Sat 03 Oct, 18:00", "opponent_rank": 3,
                            "head_to_head": "won 1, lost 0"}])
@@ -1730,6 +1760,29 @@ class TeamNewsTests(TestCase):
             call_command("ai_worker", "--once", stdout=StringIO())
         job.refresh_from_db()
         self.assertEqual((job.status, job.error, fake.requests), ("failed", jobs.MSG_NO_ACCESS, []))
+
+    def test_finished_tournament_gets_a_season_look_back(self):
+        Match.objects.filter(status="upcoming").update(status="confirmed", score_team1=3, score_team2=0,
+                                                       winner=self.bolts)
+        Tournament.objects.filter(pk=self.tournament.pk).update(status="completed")
+        self._take(self.captain)
+        fake = self._worker({"title": "🏓 Aces: What a Season!", "intro": "The curtain has come down!",
+                             "champion": "Bolts took the crown.", "results": "You beat Bolts 3-1.",
+                             "table": "You finished 3rd.", "sign_off": "Proud of you! 🏓"})
+        job = AIQuestion.objects.get(kind="team_news")
+        prompt = fake.requests[0]["body"]["messages"][0]["content"]
+        self.assertIn("The tournament is FINISHED", prompt)
+        self.assertNotIn("hyping their next matches", prompt)
+        schema = fake.requests[0]["body"]["format"]["properties"]["story"]
+        self.assertIn("champion", schema["required"])
+        self.assertNotIn("next_up", schema["required"])
+        self.assertEqual((job.facts["tournament"]["finished"], job.facts["you_are_champion"],
+                          job.facts["champion"], job.facts["your_next_matches"]), (True, False, "Bolts", []))
+        self.assertEqual(job.route["final"], True)
+        status = self.client.get(f"/dashboard/news/team/{job.pk}/", HTTP_HX_REQUEST="true")
+        self.assertContains(status, "👑 Champions", status_code=286)
+        self.assertContains(status, "Final Standings", status_code=286)
+        self.assertContains(status, "season's final take", status_code=286)
 
     @override_settings(AI_ANALYTICS_ENABLED=False)
     def test_disabled_is_a_404(self):

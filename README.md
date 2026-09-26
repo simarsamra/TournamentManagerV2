@@ -322,6 +322,11 @@ has a **Tournament News** board, for everyone who can view its analytics:
   the results with wordplay, 🏆 Standings, 🔥 Next Up and a sign-off), a
   fun headline for each new result, and a teaser for each of the next
   fixtures. Before the first result it previews the opening fixtures.
+- **When the tournament finishes**, the worker writes one season finale
+  automatically, even with no new results. It crowns the champion (with the
+  runner-up and third in a league) under 👑 Champions, and shows the final
+  standings with no "next up". Players' team takes become a look back on
+  their whole season.
 - The board sorts the headlines into **Today**, **Yesterday** (or the
   **Last matchday** when neither had matches) and **Coming up** when the page
   is opened, so "Today" stays right the next day.
