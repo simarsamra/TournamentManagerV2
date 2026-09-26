@@ -1,12 +1,14 @@
 """Tests for AI_STRUCTURE_PLAN.md: tournament structure (groups, brackets,
 withdrawals) and how standings and the AI see it."""
 from django.contrib.auth.models import User
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 from core import testing_tournaments as tt
-from core.models import OrganizerProfile, TeamMembership
+from core.models import OrganizerProfile, Team, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
-from core.structure import stage_labels, structure_kind
+from core.structure import build_structure, stage_labels, structure_kind
 
 
 def _make_organizer(username="org"):
@@ -258,3 +260,211 @@ class StageLabelTests(TestCase):
         self.assertEqual(structure_kind(tt.make_league(self.org, tt.NAMES[:4], name="L")), "league")
         self.assertEqual(structure_kind(tt.make_hybrid(self.org, name="H")), "groups")
         self.assertEqual(structure_kind(tt.make_consolation(self.org, name="C")), "bracket")
+
+
+def _label(team):
+    return team.name
+
+
+class BuildStructureTests(TestCase):
+    """ST-4: each team's status, the phase and the placings, per format."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _states(self, tournament):
+        tournament.refresh_from_db()
+        structure = build_structure(tournament, _label)
+        names = {tt.team(n).pk: n for n in tt.NAMES if Team.objects.filter(name=n).exists()}
+        return structure, {names[pk]: (s.status, s.detail) for pk, s in structure.teams.items() if pk in names}
+
+    # -- hybrid --
+    def test_hybrid_after_the_groups(self):
+        structure, states = self._states(tt.hybrid_after_groups(self.org))
+        self.assertEqual(structure.phase, "knockout")
+        self.assertEqual(structure.kind, "groups")
+        self.assertEqual(structure.advance_per_group, 2)
+        self.assertEqual(sorted(structure.groups), ["A", "B"])
+        for name in ("Red Rovers", "Green Giants", "Golden Boots", "Blue Jays"):
+            self.assertEqual(states[name], ("alive", "Semi-final"), name)
+        for name in ("Silver Hawks", "Black Bears", "Purple Pumas", "Orange Owls"):
+            self.assertEqual(states[name], ("out_in_groups", ""), name)
+        self.assertEqual(structure.teams[tt.team("Blue Jays").pk].text, "through to the semi-final")
+
+    def _group_a_rounds(self, tournament, rounds, upset=()):
+        for match in tournament.matches.filter(group="A", round_number__in=rounds).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match, upset) else (0, 2)))
+
+    def test_nobody_is_through_after_one_round(self):
+        t = tt.make_hybrid(self.org)
+        self._group_a_rounds(t, [1])
+        structure, states = self._states(t)
+        self.assertEqual(structure.phase, "group_stage")
+        self.assertEqual({states[n][0] for n in ("Red Rovers", "Green Giants", "Silver Hawks", "Black Bears")},
+                         {"in_contention"})
+
+    def test_a_possible_three_way_tie_decides_nothing(self):
+        # Favourites win rounds 1-2: Red Rovers 6, Green Giants 3, Silver
+        # Hawks 3, Black Bears 0. Round 3 could still leave Red Rovers, Silver
+        # Hawks and Green Giants level on 6, or three teams level on 3 for
+        # second, so nobody is through or out yet.
+        t = tt.make_hybrid(self.org)
+        self._group_a_rounds(t, [1, 2])
+        _, states = self._states(t)
+        self.assertEqual({states[n][0] for n in ("Red Rovers", "Green Giants", "Silver Hawks", "Black Bears")},
+                         {"in_contention"})
+
+    def test_through_and_out_before_the_last_round(self):
+        # Silver Hawks beat Green Giants: Red Rovers 6, Silver Hawks 6, Green
+        # Giants 0, Black Bears 0, with one round left (3 points at most).
+        t = tt.make_hybrid(self.org)
+        self._group_a_rounds(t, [1, 2], upset=("Silver Hawks",))
+        a = {r["team"].name: r["points"] for r in calculate_standings(t, group="A")}
+        self.assertEqual(a, {"Red Rovers": 6, "Silver Hawks": 6, "Green Giants": 0, "Black Bears": 0})
+        _, states = self._states(t)
+        self.assertEqual(states["Red Rovers"][0], "through")
+        self.assertEqual(states["Silver Hawks"][0], "through")
+        self.assertEqual(states["Green Giants"][0], "out_in_groups")
+        self.assertEqual(states["Black Bears"][0], "out_in_groups")
+
+    def test_group_statuses_on_the_rows(self):
+        t = tt.make_hybrid(self.org)
+        self._group_a_rounds(t, [1, 2], upset=("Silver Hawks",))
+        structure = build_structure(t, _label)
+        self.assertEqual({r["team"].name: r["status"] for r in structure.groups["A"]}["Red Rovers"], "through")
+
+    def test_hybrid_after_one_semi(self):
+        _, states = self._states(tt.hybrid_after_one_semi(self.org))
+        self.assertEqual(states["Blue Jays"], ("out", "Semi-final"))
+        self.assertEqual(states["Red Rovers"], ("alive", "Final"))
+
+    def test_semi_loser_plays_for_third(self):
+        _, states = self._states(tt.hybrid_after_one_semi(self.org, third_place=True))
+        self.assertEqual(states["Blue Jays"], ("playing_for_third", ""))
+
+    def test_hybrid_finished(self):
+        structure, states = self._states(tt.hybrid_finished(self.org))
+        self.assertEqual(structure.phase, "finished")
+        self.assertEqual(states["Red Rovers"][0], "champion")
+        self.assertEqual(states["Green Giants"][0], "runner_up")
+        self.assertEqual(structure.placings, {
+            "champion": "Red Rovers", "runner_up": "Green Giants",
+            "semi_finalists": ["Blue Jays", "Golden Boots"],
+        })
+
+    # -- brackets --
+    def test_knockout_after_round_1(self):
+        structure, states = self._states(tt.knockout_after_round_1(self.org))
+        self.assertEqual(structure.kind, "bracket")
+        for name in tt.NAMES[:4]:
+            self.assertEqual(states[name], ("alive", "Semi-final"), name)
+        for name in tt.NAMES[4:]:
+            self.assertEqual(states[name], ("out", "Quarter-final"), name)
+        self.assertEqual(structure.teams[tt.team("Black Bears").pk].text, "out in the quarter-final")
+
+    def test_third_place_match_decides_third(self):
+        t = tt.make_knockout(self.org, third_place=True)
+        tt.play_ready(t)          # quarter-finals
+        tt.play_ready(t)          # semi-finals
+        tt.play_ready(t, "third_place")
+        tt.play_ready(t)          # final
+        structure, states = self._states(t)
+        self.assertEqual(structure.placings["champion"], "Red Rovers")
+        self.assertEqual(structure.placings["runner_up"], "Golden Boots")
+        self.assertEqual(structure.placings["third"], "Blue Jays")
+        self.assertEqual(states["Green Giants"], ("out", "Third-place match"))
+        self.assertNotIn("semi_finalists", structure.placings)
+
+    def test_double_elimination_losses(self):
+        t = tt.make_double_elimination(self.org)
+        tt.play_ready(t, "winners")
+        _, states = self._states(t)
+        self.assertEqual({states[n][0] for n in tt.NAMES[:4]}, {"unbeaten"})
+        self.assertEqual({states[n][0] for n in tt.NAMES[4:]}, {"one_life_left"})
+        tt.play_ready(t, "losers")
+        _, states = self._states(t)
+        out = [n for n in tt.NAMES[4:] if states[n][0] == "out"]
+        self.assertEqual(len(out), 2)
+        self.assertTrue(all(states[n][1] == "Losers bracket round 1" for n in out))
+
+    def _play_de_to_grand_final(self, t, upset=()):
+        for _ in range(12):
+            if tt.ready(t, "grand_final"):
+                break
+            tt.play_ready(t, "losers") or tt.play_ready(t, "winners")
+        return tt.ready(t, "grand_final")[0]
+
+    def test_grand_final_loser_from_the_winners_bracket_gets_a_decider(self):
+        t = tt.make_double_elimination(self.org, reset=True)
+        final = self._play_de_to_grand_final(t)
+        unbeaten = final.team1 if final.team1.name == "Red Rovers" else final.team2
+        other = final.team2 if unbeaten == final.team1 else final.team1
+        tt.play(final, *((0, 2) if final.team1 == unbeaten else (2, 0)))
+        _, states = self._states(t)
+        self.assertEqual(states["Red Rovers"][0], "one_life_left")
+        self.assertEqual(states[other.name][0], "one_life_left")
+
+    def test_without_a_reset_the_grand_final_decides(self):
+        t = tt.make_double_elimination(self.org, reset=False, name="No reset")
+        final = self._play_de_to_grand_final(t)
+        tt.play(final, *((0, 2) if final.team1.name == "Red Rovers" else (2, 0)))
+        structure, states = self._states(t)
+        self.assertEqual(states["Red Rovers"][0], "runner_up")
+        self.assertEqual(structure.placings["runner_up"], "Red Rovers")
+
+    def test_consolation(self):
+        t = tt.make_consolation(self.org)
+        tt.play_ready(t)
+        _, states = self._states(t)
+        self.assertEqual({states[n] for n in tt.NAMES[4:]}, {("in_consolation", "Consolation semi-final")})
+        tt.play_ready(t, "consolation")
+        tt.play_ready(t, "consolation")
+        _, states = self._states(t)
+        self.assertEqual(states["Silver Hawks"], ("consolation_winner", ""))
+        self.assertEqual(states["Black Bears"], ("out", "Consolation semi-final"))
+
+    # -- leagues and withdrawals --
+    def test_league_running_and_finished(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        structure, states = self._states(t)
+        self.assertEqual((structure.kind, structure.phase), ("league", "league"))
+        self.assertEqual(set(states.values()), {("in_league", "")})
+        for match in t.matches.order_by("match_number"):
+            tt.play(match, *((1, 0) if tt._stronger_first(match) else (0, 1)))
+        structure, states = self._states(t)
+        self.assertEqual(structure.phase, "finished")
+        self.assertEqual(structure.placings, {"champion": "Red Rovers", "runner_up": "Golden Boots", "third": "Blue Jays"})
+        self.assertEqual(states["Green Giants"], ("placed", "4th"))
+
+    def test_withdrawn_team_takes_no_placing(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        matches = list(t.matches.order_by("match_number"))
+        for match in matches:
+            if "Red Rovers" in _names(match):
+                tt.play(match, *((1, 0) if match.team1.name == "Red Rovers" else (0, 1)))
+        tt.withdraw(t, tt.team("Red Rovers"), policy="void")
+        for match in t.matches.filter(status="upcoming").order_by("match_number"):
+            tt.play(match, *((1, 0) if tt._stronger_first(match) else (0, 1)))
+        t.refresh_from_db()
+        self.assertEqual(calculate_standings(t)[0]["team"].name, "Red Rovers")
+        structure, states = self._states(t)
+        self.assertEqual(states["Red Rovers"], ("withdrawn", ""))
+        self.assertEqual(structure.placings["champion"], "Golden Boots")
+
+    def test_withdrawn_mid_season(self):
+        t = tt.league_with_withdrawal(self.org)
+        _, states = self._states(t)
+        self.assertEqual(states["Blue Jays"], ("withdrawn", ""))
+
+    def test_tiebreakers_in_words(self):
+        structure = build_structure(tt.make_league(self.org, tt.NAMES[:4]), _label)
+        self.assertEqual(structure.tiebreakers, ["game difference", "games won", "head-to-head"])
+
+    def test_query_budget(self):
+        t = tt.hybrid_finished(self.org)
+        with CaptureQueriesContext(connection) as ctx:
+            build_structure(t, _label)
+        # Matches and participations once, then calculate_standings per group
+        # (teams, confirmed matches, forfeits: 3 each; no head-to-head query
+        # without a tie). Never a query per team or per match.
+        self.assertEqual(len(ctx.captured_queries), 2 + 2 * 3)
