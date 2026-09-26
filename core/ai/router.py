@@ -45,6 +45,8 @@ intent:
 - unknown: anything else
 
 team_a, team_b: keys from TEAMS (like "T1"), or "none". Use team_a for a single team.
+group: only when GROUPS are listed: the group letter the question is about (like "B"), or "none"
+for the whole tournament.
 window: how many recent matches for form (3, 5, 8, 10 or 15; 5 if not said).
 winner: for what_if, "team_a", "team_b" or "draw"; otherwise "none".
 
@@ -57,7 +59,10 @@ Examples, if TEAMS were T1 = Lions and T2 = Tigers:
 "who do the tigers play next" -> {"intent":"next_match","team_a":"T2","team_b":"none","window":5,"winner":"none"}
 "what if tigers beat lions" -> {"intent":"what_if","team_a":"T2","team_b":"T1","window":5,"winner":"team_a"}
 "who is winning the league" -> {"intent":"standings","team_a":"none","team_b":"none","window":5,"winner":"none"}
-"what's the weather" -> {"intent":"unknown","team_a":"none","team_b":"none","window":5,"winner":"none"}"""
+"what's the weather" -> {"intent":"unknown","team_a":"none","team_b":"none","window":5,"winner":"none"}
+With GROUPS listed, the same replies also carry "group":
+"who leads group b" -> {"intent":"standings","team_a":"none","team_b":"none","window":5,"winner":"none","group":"B"}
+"who is through to the knockouts" -> {"intent":"standings","team_a":"none","team_b":"none","window":5,"winner":"none","group":"none"}"""
 
 # Card names match ANALYTICS_WIDGET_PARAMS in core/views/reporting.py, plus
 # the two page cards that take no parameters.
@@ -89,9 +94,11 @@ class RouteResult:
         }
 
 
-def build_schema(keys):
+def build_schema(keys, groups=()):
+    """The reply schema. `groups` (a hybrid's group letters) adds a "group"
+    field; other tournaments' schema is unchanged."""
     team_enum = [*keys, NO_TEAM]
-    return {
+    schema = {
         "type": "object",
         "properties": {
             "intent": {"type": "string", "enum": list(INTENTS)},
@@ -102,6 +109,21 @@ def build_schema(keys):
         },
         "required": ["intent", "team_a", "team_b", "window", "winner"],
     }
+    if groups:
+        schema["properties"]["group"] = {"type": "string", "enum": [*groups, NO_TEAM]}
+        schema["required"].append("group")
+    return schema
+
+
+def tournament_groups(tournament):
+    """{letter: [team pk, ...]} for a hybrid; {} otherwise."""
+    if tournament.format != "hybrid":
+        return {}
+    groups = {}
+    for team_id, letter in (tournament.team_participations.filter(status="active").exclude(group="")
+                            .values_list("team_id", "group")):
+        groups.setdefault(letter, []).append(team_id)
+    return dict(sorted(groups.items()))
 
 
 def _data(text):
@@ -110,10 +132,16 @@ def _data(text):
     return text.replace("<<<", "‹‹‹").replace(">>>", "›››").strip()
 
 
-def build_messages(question, keys, earlier=()):
+def build_messages(question, keys, earlier=(), groups=None):
     """`earlier` are the conversation's previous questions, oldest first, so
-    a follow-up like "and their next match?" can name its team."""
+    a follow-up like "and their next match?" can name its team. `groups`
+    ({letter: [team pk]}) lists which teams are in which group."""
     teams = "\n".join(f"{key} = {_data(team.display_label)}" for key, team in keys.items())
+    if groups:
+        key_of = {team.pk: key for key, team in keys.items()}
+        lines = "\n".join(f"{letter}: {', '.join(key_of[pk] for pk in pks if pk in key_of)}"
+                          for letter, pks in groups.items())
+        teams += f"\n>>>\nGROUPS:\n<<<\n{lines}"
     context = ""
     if earlier:
         lines = "\n".join(_data(q) for q in earlier)
@@ -134,15 +162,17 @@ def route_question(tournament, question, earlier=()):
     standings = calculate_standings(tournament)
     label_map = analytics.label_standings(tournament, standings)
     keys = team_keys(analytics.active_teams(tournament, label_map))
+    groups = tournament_groups(tournament)
     result = client.chat(
-        build_messages(question, keys, earlier), schema=build_schema(keys), temperature=0.0, num_predict=128,
+        build_messages(question, keys, earlier, groups), schema=build_schema(keys, list(groups)),
+        temperature=0.0, num_predict=128,
     )
     try:
         reply = json.loads(result.content)
     except ValueError:
         logger.warning("Router reply wasn't JSON: %r", result.content[:200])
         reply = None
-    routed = validate(tournament, reply, keys)
+    routed = validate(tournament, reply, keys, list(groups))
     routed.model_reply = reply if isinstance(reply, dict) else None
     routed.chat = result
     return routed
@@ -152,20 +182,25 @@ def _unknown(message=MSG_UNKNOWN):
     return RouteResult(Route("unknown"), message=message)
 
 
-def validate(tournament, reply, keys):
+def validate(tournament, reply, keys, groups=()):
     """Turn the model's JSON into a RouteResult, trusting nothing in it."""
     if not isinstance(reply, dict):
         return _unknown()
     intent = reply.get("intent")
     if intent not in INTENTS or intent == "unknown":
         return _unknown()
+    group = reply.get("group", NO_TEAM)
+    if group in (None, "", NO_TEAM) or not groups:
+        group = ""
+    elif group not in groups:
+        return _unknown(f"There's no group {_data(group)[:5]} in this tournament.")
     team_a = keys.get(reply.get("team_a"))
     team_b = keys.get(reply.get("team_b"))
     window = reply.get("window") if reply.get("window") in WINDOWS else 5
     card = CARD_FOR_INTENT[intent]
 
     if intent in ("standings", "team_performance"):
-        return RouteResult(Route(intent), card=card)
+        return RouteResult(Route(intent, group=group), card=card)
 
     if intent in ("form", "next_match"):
         team = team_a or team_b

@@ -1,0 +1,7 @@
+{% comment %}A bracket summary from the facts (core/ai/structure_facts.py bracket_facts): who is still in, and who went out where.{% endcomment %}
+<div class="ai-bracket" style="margin-top:0.4rem;">
+{% if b.next_round %}<p style="margin:0 0 0.2rem;"><strong>Next round:</strong> {{ b.next_round }}</p>{% endif %}
+{% if b.still_in %}<p style="margin:0 0 0.2rem;"><strong>Still in:</strong> {% for t in b.still_in %}{{ t.team }}{% if t.status %} <span class="text-muted">({{ t.status }})</span>{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{% if b.playing_for_third %}<p style="margin:0 0 0.2rem;"><strong>Playing for third:</strong> {{ b.playing_for_third|join:", " }}</p>{% endif %}
+{% if b.knocked_out %}<p class="text-muted" style="margin:0;font-size:0.88rem;">Out: {% for t in b.knocked_out %}{{ t.team }} ({{ t.out_in }}){% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+</div>

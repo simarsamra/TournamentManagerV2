@@ -23,6 +23,16 @@
 {% for r in w.projected_standings_top %}<tr><td>{{ r.rank }}</td><td>{{ r.team }}</td><td>{{ r.points }}</td><td>{% if r.points_change > 0 %}+{% endif %}{{ r.points_change }}</td></tr>{% endfor %}
 </tbody></table>
 {% endwith %}
+{% elif facts.groups %}
+{% for g in facts.groups %}
+<p style="margin:0.4rem 0 0.2rem;"><strong>Group {{ g.group }}</strong>{% if g.advance %} <span class="text-muted">· top {{ g.advance }} go through</span>{% endif %}</p>
+<table><thead><tr><th>Rank</th><th>Team</th><th>P</th><th>Pts</th><th>Status</th></tr></thead><tbody>
+{% for r in g.table %}<tr><td>{{ r.rank }}</td><td>{{ r.team }}{% if r.withdrawn %} <span class="badge badge-withdrawn" title="Withdrawn">W</span>{% endif %}</td><td>{{ r.played }}</td><td>{{ r.points }}</td><td>{{ r.status }}</td></tr>{% endfor %}
+</tbody></table>
+{% endfor %}
+{% if facts.bracket %}{% include "core/partials/ai_answer_bracket.html" with b=facts.bracket %}{% endif %}
+{% elif facts.bracket and not facts.results_top %}
+{% include "core/partials/ai_answer_bracket.html" with b=facts.bracket %}
 {% elif facts.standings_top %}
 <table><thead><tr><th>Rank</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>Pts</th></tr></thead><tbody>
 {% for r in facts.standings_top %}<tr><td>{{ r.rank }}</td><td>{{ r.team }}</td><td>{{ r.played }}</td><td>{{ r.wins }}</td><td>{{ r.draws }}</td><td>{{ r.losses }}</td><td>{{ r.points }}</td></tr>{% endfor %}

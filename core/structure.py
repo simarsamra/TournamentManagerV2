@@ -268,40 +268,73 @@ def _league_states(tournament, structure):
             state.status, state.detail = "placed", ordinal(position)
 
 
-def _group_states(tournament, structure, matches):
-    """ST-4 rule 4: through / out / in contention, from the group alone.
+def _most_points(tournament):
+    return max(tournament.points_per_win, tournament.points_per_draw, tournament.points_per_loss, 0)
 
-    "Through" and "out" are certain, whatever the remaining results: ties
-    count against the team, because tiebreakers aren't predicted.
+
+def group_statuses(rows, left, places, most, over=False):
+    """{team pk: "through" | "out_in_groups" | "in_contention"} for one
+    group's ranked rows (ST-4 rule 4).
+
+    `left` maps team pk -> group matches still to play; `most` is the most
+    points one match can give. "Through" and "out" are certain whatever the
+    remaining results: ties count against the team, because tiebreakers
+    aren't predicted. When the group is `over`, the table decides.
     """
-    most = max(tournament.points_per_win, tournament.points_per_draw, tournament.points_per_loss, 0)
+    rivals = [row for row in rows if not row.get("withdrawn")]
+    places = min(places, len(rivals))
+    if over:
+        return {row["team"].pk: "through" if i < places else "out_in_groups" for i, row in enumerate(rivals)}
+    best = {row["team"].pk: row["points"] + left.get(row["team"].pk, 0) * most for row in rivals}
+    statuses = {}
+    for row in rivals:
+        pk, points = row["team"].pk, row["points"]
+        others = [r for r in rivals if r["team"].pk != pk]
+        can_reach = sum(1 for r in others if best[r["team"].pk] >= points)
+        out_of_reach = sum(1 for r in others if r["points"] > best[pk])
+        if can_reach < places:
+            statuses[pk] = "through"
+        elif out_of_reach >= places:
+            statuses[pk] = "out_in_groups"
+        else:
+            statuses[pk] = "in_contention"
+    return statuses
+
+
+def matches_left(group_matches, skip=None):
+    """{team pk: unfinished group matches}, leaving out the match `skip`."""
+    left = defaultdict(int)
+    for m in group_matches:
+        if m.status in UNFINISHED and (skip is None or m.pk != skip):
+            for pk in _teams_of(m):
+                if pk:
+                    left[pk] += 1
+    return left
+
+
+def group_is_over(group_matches, skip=None):
+    return all(m.status in GROUP_MATCH_OVER or m.pk == skip for m in group_matches)
+
+
+def _group_states(tournament, structure, matches):
+    """ST-4 rule 4: through / out / in contention, from the group alone."""
+    most = _most_points(tournament)
     for letter, rows in structure.groups.items():
         group_matches = [m for m in matches if m.group == letter]
-        rivals = [row for row in rows if not row["withdrawn"]]
-        places = min(structure.advance_per_group or 0, len(rivals))
-        if all(m.status in GROUP_MATCH_OVER for m in group_matches):
-            for i, row in enumerate(rivals):
-                structure.teams[row["team"].pk].status = "through" if i < places else "out_in_groups"
-            continue
-        left = {row["team"].pk: 0 for row in rivals}
-        for m in group_matches:
-            if m.status in UNFINISHED:
-                for pk in _teams_of(m):
-                    if pk in left:
-                        left[pk] += 1
-        best = {row["team"].pk: row["points"] + left[row["team"].pk] * most for row in rivals}
-        for row in rivals:
-            pk, points = row["team"].pk, row["points"]
-            others = [r for r in rivals if r["team"].pk != pk]
-            can_reach = sum(1 for r in others if best[r["team"].pk] >= points)
-            out_of_reach = sum(1 for r in others if r["points"] > best[pk])
-            if can_reach < places:
-                status = "through"
-            elif out_of_reach >= places:
-                status = "out_in_groups"
-            else:
-                status = "in_contention"
+        statuses = group_statuses(rows, matches_left(group_matches), structure.advance_per_group or 0, most,
+                                  over=group_is_over(group_matches))
+        for pk, status in statuses.items():
             structure.teams[pk].status = status
+
+
+def group_outlook(tournament, group, rows, played_match):
+    """Statuses for a group's (projected) `rows` once `played_match` has been
+    decided: the what-if simulator's "would they go through?" (ST-6)."""
+    group_matches = list(tournament.matches.filter(group=group))
+    return group_statuses(
+        rows, matches_left(group_matches, skip=played_match.pk), tournament.teams_per_group_advance or 0,
+        _most_points(tournament), over=group_is_over(group_matches, skip=played_match.pk),
+    )
 
 
 def _knockout_states(tournament, structure, matches, candidates):

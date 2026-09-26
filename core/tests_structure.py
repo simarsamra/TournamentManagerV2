@@ -1,12 +1,20 @@
 """Tests for AI_STRUCTURE_PLAN.md: tournament structure (groups, brackets,
 withdrawals) and how standings and the AI see it."""
+import json
+
 from django.contrib.auth.models import User
 from django.db import connection
 from django.db.models import Q
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
 from core import testing_tournaments as tt
+from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
+from core.ai.facts import Route, build_facts, serialise
+from core.ai.router import build_schema, route_question
+from core.ai.structure_facts import STRUCTURE_RULE, trim
+from core.ai.testing import FakeOllama
 from core.models import OrganizerProfile, Team, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
 from core.structure import build_structure, stage_labels, structure_kind
@@ -519,3 +527,138 @@ class SeparatedByTests(TestCase):
         t = tt.hybrid_after_groups(self.org)
         rows = build_structure(t, _label).groups["A"]
         self.assertTrue(all("separated_by" not in r for r in rows))   # 9, 6, 3, 0: no ties
+
+
+def _walk(value, path=""):
+    """Yield (path, key, value) for every dict entry in a facts document."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield path, key, item
+            yield from _walk(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            yield from _walk(item, f"{path}[{i}]")
+
+
+class RoutedFactsStructureTests(TestCase):
+    """ST-6 (G-1, G-8): routed answers see one table per group, a bracket
+    summary in brackets, and what-ifs within the match's group."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def test_hybrid_standings_are_per_group(self):
+        t = tt.hybrid_after_groups(self.org)
+        facts = build_facts(t, self.org, Route("standings"))
+        self.assertNotIn("standings_top", facts)
+        self.assertEqual([g["group"] for g in facts["groups"]], ["A", "B"])
+        self.assertEqual([len(g["table"]) for g in facts["groups"]], [4, 4])
+        self.assertEqual({g["advance"] for g in facts["groups"]}, {2})
+        b = facts["groups"][1]["table"]
+        self.assertEqual([(r["team"], r["points"], r["status"]) for r in b[:2]], [
+            ("Golden Boots", 9, "through to the semi-final"), ("Blue Jays", 6, "through to the semi-final"),
+        ])
+        self.assertEqual(facts["phase"], "knockout")
+        self.assertEqual(facts["bracket"]["next_round"], "Semi-final")
+        self.assertEqual(facts["tournament"]["kind"], "groups")
+
+    def test_one_group(self):
+        t = tt.hybrid_after_groups(self.org)
+        facts = build_facts(t, self.org, Route("standings", group="B"))
+        self.assertEqual([g["group"] for g in facts["groups"]], ["B"])
+
+    def test_knockout_has_no_table(self):
+        t = tt.knockout_after_round_1(self.org)
+        facts = build_facts(t, self.org, Route("standings"))
+        keys = {key for _, key, _ in _walk(facts)}
+        self.assertFalse(keys & {"rank", "points", "table", "standings_top", "results_top"})
+        self.assertEqual(facts["bracket"]["next_round"], "Semi-final")
+        self.assertEqual({row["out_in"] for row in facts["bracket"]["knocked_out"]}, {"Quarter-final"})
+
+    def test_named_teams_carry_their_status(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        facts = build_facts(t, self.org, Route("head_to_head", tt.team("Red Rovers"), tt.team("Blue Jays")))
+        self.assertEqual(facts["head_to_head"]["team_a_status"], "through to the final")
+        self.assertEqual(facts["head_to_head"]["team_b_status"], "out in the semi-final")
+
+    def test_next_match_has_a_stage(self):
+        t = tt.hybrid_after_one_semi(self.org)
+        facts = build_facts(t, self.org, Route("next_match", tt.team("Green Giants")))
+        self.assertEqual(facts["next_match"]["stage"], "Semi-final")
+
+    def test_what_if_stays_in_the_group(self):
+        # Favourites win group rounds 1-2: A = Red Rovers 6, Green Giants 3,
+        # Silver Hawks 3, Black Bears 0, all still in contention. What if Red
+        # Rovers beat Silver Hawks? Red Rovers reach 9: through.
+        t = tt.make_hybrid(self.org)
+        for match in t.matches.exclude(group="").filter(round_number__lte=2).order_by("match_number"):
+            tt.play(match, *((2, 0) if tt._stronger_first(match) else (0, 2)))
+        match = t.matches.get(group="A", round_number=3, team1__name="Red Rovers")
+        winner = "team1" if match.team1.name == "Red Rovers" else "team2"
+        facts = build_facts(t, self.org, Route("what_if", tt.team("Red Rovers"), tt.team("Silver Hawks"),
+                                               match=match, winner=winner))
+        what_if = facts["what_if"]
+        self.assertEqual(what_if["group"], "A")
+        self.assertEqual({r["team"] for r in what_if["projected_standings_top"]},
+                         {"Red Rovers", "Green Giants", "Silver Hawks", "Black Bears"})
+        self.assertEqual(what_if["status_changes"], [{
+            "team": "Red Rovers", "before": "still in the race to go through", "after": "through to the knockouts",
+        }])
+
+    def test_group_schema_only_for_hybrids(self):
+        keys = {"T1": object()}
+        self.assertNotIn("group", build_schema(keys)["properties"])
+        self.assertEqual(build_schema(keys, ["A", "B"])["properties"]["group"]["enum"], ["A", "B", "none"])
+
+    def test_router_picks_a_group(self):
+        t = tt.hybrid_after_groups(self.org)
+        with FakeOllama() as fake:
+            fake.respond_chat(json.dumps({"intent": "standings", "team_a": "none", "team_b": "none",
+                                          "window": 5, "winner": "none", "group": "B"}))
+            routed = route_question(t, "who leads group b")
+        self.assertEqual((routed.route.intent, routed.route.group), ("standings", "B"))
+        body = fake.requests[0]["body"]
+        self.assertIn("GROUPS:", body["messages"][1]["content"])
+        self.assertIn("group", body["format"]["properties"])
+
+    def test_unknown_group_is_refused(self):
+        t = tt.hybrid_after_groups(self.org)
+        with FakeOllama() as fake:
+            fake.respond_chat(json.dumps({"intent": "standings", "team_a": "none", "team_b": "none",
+                                          "window": 5, "winner": "none", "group": "Z"}))
+            routed = route_question(t, "who leads group z")
+        self.assertEqual(routed.route.intent, "unknown")
+        self.assertIn("no group Z", routed.message)
+
+    def test_explanations_are_told_the_structure_rule(self):
+        self.assertIn(STRUCTURE_RULE, EXPLAIN_PROMPT)
+
+    def test_trim_keeps_who_goes_through(self):
+        t = tt.hybrid_after_groups(self.org)
+        facts = build_facts(t, self.org, Route("standings"))
+        trim(facts, 10, lambda f: len(serialise(f)), keep_groups={"B"})
+        self.assertEqual([len(g["table"]) for g in facts["groups"]], [3, 4])
+
+
+class AnswerCardTests(TestCase):
+    """ST-6: the answer card shows what the facts hold, per group or as a
+    bracket summary."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _render(self, facts):
+        return render_to_string("core/partials/ai_answer_facts.html",
+                                {"facts": facts, "route": {"intent": "standings"}})
+
+    def test_group_tables(self):
+        html = self._render(build_facts(tt.hybrid_after_groups(self.org), self.org, Route("standings")))
+        self.assertIn("Group A", html)
+        self.assertIn("top 2 go through", html)
+        self.assertIn("through to the semi-final", html)
+        self.assertIn("Next round:</strong> Semi-final", html)
+
+    def test_bracket_summary(self):
+        html = self._render(build_facts(tt.knockout_after_round_1(self.org), self.org, Route("standings")))
+        self.assertIn("Black Bears (Quarter-final)", html)
+        self.assertNotIn("<th>Pts</th>", html)

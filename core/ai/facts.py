@@ -17,6 +17,10 @@ from django.utils import timezone
 
 from core import analytics
 from core.standings import calculate_standings
+from core.views.helpers import _team_display_label
+from core.structure import KIND_BRACKET, build_structure, group_outlook, status_text
+
+from . import structure_facts
 
 MAX_FACTS_CHARS = 6000
 TOP_ROWS = 8
@@ -38,6 +42,7 @@ class Route:
     window: int = 5
     match: object = None       # Match, for what_if
     winner: str = ""           # "team1" | "team2" | "draw", for what_if
+    group: str = ""            # a hybrid's group letter, for standings
 
     def __post_init__(self):
         if self.intent not in INTENTS:
@@ -98,6 +103,12 @@ def build_facts(tournament, user, route):
     def label(team):
         return active_labels[team.pk]
 
+    # Display labels only (A-3): never an internal shadow-team name.
+    structure = build_structure(tournament, lambda team: label_map.get(team.pk) or _team_display_label(tournament, team))
+
+    def status(team):
+        return structure_facts.status_of(structure, team.pk)
+
     facts = {
         "tournament": {
             "name": tournament.name,
@@ -108,11 +119,13 @@ def build_facts(tournament, user, route):
                 "draw": tournament.points_per_draw,
                 "loss": tournament.points_per_loss,
             },
+            **structure_facts.tournament_facts(structure),
         },
     }
-    if tournament.format in analytics.STANDINGS_FORMATS:
-        facts["standings_top"] = _standings_rows(standings[:TOP_ROWS])
-    else:
+    # One table per group, a bracket summary, or the league table: never
+    # one ranked table across groups (G-1).
+    facts.update(structure_facts.standings_facts(structure, rows=TOP_ROWS, only_group=route.group or None))
+    if structure.kind == KIND_BRACKET and route.intent == "team_performance":
         stats, _ = analytics.team_performance(tournament, standings, active)
         facts["results_top"] = _performance_rows(stats[:TOP_ROWS])
 
@@ -121,6 +134,7 @@ def build_facts(tournament, user, route):
         if card is not None:
             facts["head_to_head"] = {
                 "team_a": label(route.team_a), "team_b": label(route.team_b),
+                **_statuses(("team_a_status", status(route.team_a)), ("team_b_status", status(route.team_b))),
                 "meetings": card["total_matches"],
                 "team_a_wins": card["team1_wins"], "team_b_wins": card["team2_wins"],
                 "draws": card["draws"],
@@ -132,6 +146,7 @@ def build_facts(tournament, user, route):
         rows = analytics.rolling_form(tournament, route.team_a, route.window)
         facts["form"] = {
             "team": label(route.team_a),
+            **_statuses(("team_status", status(route.team_a))),
             "window": route.window,
             "matches": [{"opponent": r["opponent"], "result": r["result"]} for r in rows],
             "win_rate_pct": rows[-1]["win_rate"] if rows else None,
@@ -139,14 +154,17 @@ def build_facts(tournament, user, route):
 
     elif route.intent == "next_match" and route.team_a:
         prep = analytics.next_opponent_prep(tournament, route.team_a)
+        team_status = _statuses(("team_status", status(route.team_a)))
         if prep is None:
-            facts["next_match"] = {"team": label(route.team_a), "scheduled": False}
+            facts["next_match"] = {"team": label(route.team_a), "scheduled": False, **team_status}
         else:
             when = prep["match"].scheduled_time
             facts["next_match"] = {
                 "team": label(route.team_a),
+                **team_status,
                 "scheduled": True,
-                "opponent": prep["opponent_label"] or "TBD",
+                "stage": structure.stages.get(prep["match"].pk, ""),
+                "opponent": prep["opponent_label"] or "to be decided",
                 "when": timezone.localtime(when).strftime("%Y-%m-%d %H:%M") if when else "not yet scheduled",
                 "opponent_last_5": prep["opponent_record"],
                 "head_to_head": prep["h2h"],
@@ -155,8 +173,13 @@ def build_facts(tournament, user, route):
     elif route.intent == "what_if" and route.match is not None and route.winner:
         offered, _ = analytics.simulator_matches(tournament)
         if any(m.pk == route.match.pk for m in offered):
+            group = route.match.group
+            # A group match only moves its own group's table (G-8).
+            base = calculate_standings(tournament, group=group) if group else standings
+            if group:
+                analytics.label_standings(tournament, base)
             simulated, applied = analytics.simulate(
-                tournament, standings, offered, {route.match.pk: route.winner}
+                tournament, base, offered, {route.match.pk: route.winner}
             )
             if applied:
                 match = next(m for m in offered if m.pk == route.match.pk)
@@ -172,20 +195,38 @@ def build_facts(tournament, user, route):
                         for row, sim in zip(_standings_rows(simulated[:TOP_ROWS]), simulated[:TOP_ROWS])
                     ],
                 }
+                if group:
+                    facts["what_if"]["group"] = group
+                    after = group_outlook(tournament, group, simulated, match)
+                    changes = []
+                    for team in (match.team1, match.team2):
+                        before_text = status(team)
+                        after_text = status_text(after.get(team.pk, ""))
+                        if after_text and after_text != before_text:
+                            changes.append({"team": label(team), "before": before_text, "after": after_text})
+                    if changes:
+                        facts["what_if"]["status_changes"] = changes
 
-    return _fit(facts)
+    keep = {structure_facts.group_of(structure, t.pk) for t in (route.team_a, route.team_b) if t is not None}
+    return _fit(facts, keep_groups=keep - {""})
+
+
+def _statuses(*pairs):
+    """{key: status} for the pairs whose status says something."""
+    return {key: value for key, value in pairs if value}
 
 
 def serialise(facts):
     return json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
 
 
-def _fit(facts):
+def _fit(facts, keep_groups=()):
     """Trim the table until the document fits MAX_FACTS_CHARS. The rows the
     question is about (head-to-head, form, next match) are kept longest."""
     for key in ("standings_top", "results_top"):
         while len(serialise(facts)) > MAX_FACTS_CHARS and len(facts.get(key, [])) > 3:
             facts[key] = facts[key][:-1]
+    structure_facts.trim(facts, MAX_FACTS_CHARS, lambda f: len(serialise(f)), keep_groups=keep_groups)
     what_if = facts.get("what_if")
     while what_if and len(serialise(facts)) > MAX_FACTS_CHARS and len(what_if["projected_standings_top"]) > 3:
         what_if["projected_standings_top"] = what_if["projected_standings_top"][:-1]
