@@ -32,7 +32,8 @@ class Command(BaseCommand):
         results = []
         for model in models:
             extra = "" if options["no_explain"] else f" and {len(data['explain_cases'])} explanations"
-            count = min(options["limit"] or len(data["questions"]), len(data["questions"]))
+            total = len(data["questions"]) + len((data.get("group_questions") or {}).get("questions", []))
+            count = min(options["limit"] or total, total)
             self.stdout.write(f"Evaluating {model} on {count} questions{extra}…")
 
             def progress(report):

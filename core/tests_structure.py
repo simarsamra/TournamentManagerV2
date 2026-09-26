@@ -14,12 +14,12 @@ from core import testing_tournaments as tt
 from core.ai import recap, team_news
 from core.ai.conversation import SYSTEM_PROMPT as CONVERSATION_PROMPT
 from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
-from core.ai.facts import Route, build_facts, serialise
+from core.ai.facts import MAX_FACTS_CHARS, Route, build_facts, serialise
 from core.ai.router import build_schema, route_question
 from core.ai.snapshot import MAX_SNAPSHOT_CHARS, build_snapshot
 from core.ai.structure_facts import STRUCTURE_RULE, WORDING_RULE, trim
 from core.ai.testing import FakeOllama
-from core.models import AIQuestion, Match, OrganizerProfile, Team, TeamMembership
+from core.models import AIQuestion, Match, OrganizerProfile, Team, TeamMembership, Tournament
 from core.standings import _head_to_head_matches, calculate_standings
 from core.structure import build_structure, stage_labels, structure_kind
 
@@ -1061,3 +1061,101 @@ class WordingTests(TestCase):
         html = render_to_string("core/partials/news_flip.html", {"tournament": t, "mode": "team"})
         self.assertIn("My take", html)
         self.assertNotIn("My team's take", html)
+
+
+ROW_LISTS = ("new_results", "coming_up", "results", "fixtures", "your_results", "your_next_matches",
+             "awaiting_confirmation")
+TEAM_KEYS = ("team", "team1", "team2", "opponent", "team_a", "team_b")
+
+
+class StructureInvariantTests(TestCase):
+    """ST-12: every facts document, for every format, obeys the structure
+    rules. Written to fail on de71909, where one ranked table was built for
+    every format."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def _scenarios(self):
+        def league():
+            t = tt.make_league(self.org, tt.NAMES[:4], name="League")
+            tt.play(t.matches.order_by("match_number").first(), 2, 1)
+            return t
+
+        def hybrid_group_stage():
+            t = tt.make_hybrid(self.org, name="Hybrid groups")
+            for match in t.matches.exclude(group="").filter(round_number=1).order_by("match_number"):
+                tt.play(match, 2, 0)
+            return t
+
+        def double_elimination():
+            t = tt.make_double_elimination(self.org, name="Double")
+            tt.play_ready(t, "winners")
+            return t
+
+        def consolation():
+            t = tt.make_consolation(self.org, name="Consolation")
+            tt.play_ready(t)
+            return t
+
+        def withdrawal():
+            return tt.league_with_withdrawal(self.org)
+
+        return [
+            ("league", league), ("hybrid group stage", hybrid_group_stage),
+            ("hybrid knockout", lambda: tt.hybrid_after_one_semi(self.org)),
+            ("hybrid finished", lambda: tt.hybrid_finished(self.org)),
+            ("knockout", lambda: tt.knockout_after_round_1(self.org)),
+            ("double elimination", double_elimination), ("consolation", consolation),
+            ("league with a withdrawal", withdrawal),
+        ]
+
+    def _documents(self, t):
+        t.refresh_from_db()
+        team = t.team_participations.filter(status="active").order_by("team__name").first().team
+        return {
+            "routed": build_facts(t, self.org, Route("standings")),
+            "snapshot": build_snapshot(t, self.org),
+            "news": recap.build_recap_facts(t)[0],
+            "team news": team_news.build_team_facts(t, team)[0],
+        }
+
+    def test_every_format_and_builder(self):
+        for name, make in self._scenarios():
+            Tournament.objects.all().delete()
+            t = make()
+            group_of = dict(t.team_participations.values_list("team__name", "group"))
+            withdrawn = set(t.team_participations.filter(status="withdrawn").values_list("team__name", flat=True))
+            kind = structure_kind(t)
+            for doc_name, facts in self._documents(t).items():
+                with self.subTest(scenario=name, document=doc_name):
+                    self.assertIsNotNone(facts)
+                    self._check(facts, kind, group_of, withdrawn)
+                    limit = MAX_SNAPSHOT_CHARS if doc_name == "snapshot" else MAX_FACTS_CHARS
+                    self.assertLessEqual(len(serialise(facts)), limit)
+
+    def _check(self, facts, kind, group_of, withdrawn):
+        for path, key, value in _walk(facts):
+            # G-1: a ranked list never mixes teams from two groups.
+            if isinstance(value, list) and kind == "groups":
+                ranked = [r for r in value if isinstance(r, dict) and "rank" in r and "team" in r]
+                groups = {group_of.get(r["team"]) for r in ranked}
+                self.assertLessEqual(len(groups), 1, f"{path}.{key} mixes groups {groups}")
+            # K-1: a bracket has no table.
+            if kind == "bracket":
+                self.assertNotIn(key, ("rank", "points", "table", "standings_top", "groups"), f"{path}.{key}")
+            # G-4, K-2: every result and fixture says what it was.
+            if key in ROW_LISTS:
+                for row in value:
+                    self.assertTrue(row.get("stage"), f"{path}.{key}: {row}")
+            # K-6: never "TBD" as if it were a team.
+            if key in TEAM_KEYS:
+                self.assertNotEqual(value, "TBD", f"{path}.{key}")
+            # W-1: withdrawn teams take no placing and aren't anyone's neighbours.
+            if key in ("champion", "runner_up", "third"):
+                self.assertNotIn(value, withdrawn, f"{path}.{key}")
+            if key in ("teams_around_you", "leader"):
+                rows = value if isinstance(value, list) else [value]
+                self.assertFalse({r["team"] for r in rows} & withdrawn, f"{path}.{key}")
+            if isinstance(value, dict) and value.get("team") in withdrawn and "rank" in value:
+                self.assertTrue(value.get("withdrawn"), f"{path}.{key}: {value}")

@@ -97,6 +97,60 @@
       "results_top": [
         {"team": "Eagles", "played": 3, "wins": 3, "draws": 0, "losses": 0, "win_rate_pct": 100.0},
         {"team": "Aces", "played": 3, "wins": 2, "draws": 0, "losses": 1, "win_rate_pct": 66.7},
-        {"team": "Bolts", "played": 2, "wins": 0, "draws": 0, "losses": 2, "win_rate_pct": 0.0}]}}
-  ]
+        {"team": "Bolts", "played": 2, "wins": 0, "draws": 0, "losses": 2, "win_rate_pct": 0.0}]}},
+
+    {"q": "Who's top?", "must_mention_all": ["Red Rovers", "Golden Boots"], "must_not_contain": ["nail-biter", "neck and neck"],
+     "facts": {
+      "tournament": {"name": "Summer Cup", "format": "Hybrid (Groups + Knockout)", "status": "Active", "kind": "groups",
+                     "points_for": {"win": 3, "draw": 1, "loss": 0}, "score_unit": "goals", "participant": "team"},
+      "phase": "group stage",
+      "groups": [
+        {"group": "A", "advance": 2, "table": [
+          {"rank": 1, "team": "Red Rovers", "played": 3, "wins": 3, "draws": 0, "losses": 0, "points": 9, "game_diff": 6, "status": "through to the knockouts"},
+          {"rank": 2, "team": "Green Giants", "played": 3, "wins": 2, "draws": 0, "losses": 1, "points": 6, "game_diff": 2, "status": "through to the knockouts"},
+          {"rank": 3, "team": "Silver Hawks", "played": 3, "wins": 1, "draws": 0, "losses": 2, "points": 3, "game_diff": -2, "status": "out in the group stage"}]},
+        {"group": "B", "advance": 2, "table": [
+          {"rank": 1, "team": "Golden Boots", "played": 3, "wins": 3, "draws": 0, "losses": 0, "points": 9, "game_diff": 6, "status": "through to the knockouts"},
+          {"rank": 2, "team": "Blue Jays", "played": 3, "wins": 2, "draws": 0, "losses": 1, "points": 6, "game_diff": 2, "status": "through to the knockouts"},
+          {"rank": 3, "team": "Purple Pumas", "played": 3, "wins": 1, "draws": 0, "losses": 2, "points": 3, "game_diff": -2, "status": "out in the group stage"}]}]}},
+    {"q": "Who's leading?", "must_mention_any": ["semi-final", "semi final", "semis"], "must_not_contain": ["top of the table", "points", "the table"],
+     "facts": {
+      "tournament": {"name": "Winter Knockout", "format": "Knockout", "status": "Active", "kind": "bracket", "score_unit": "games", "participant": "player"},
+      "phase": "knockout",
+      "bracket": {
+        "still_in": [{"team": "Aces", "status": "through to the semi-final"}, {"team": "Bolts", "status": "through to the semi-final"},
+                     {"team": "Comets", "status": "through to the semi-final"}, {"team": "Drakes", "status": "through to the semi-final"}],
+        "next_round": "Semi-final",
+        "knocked_out": [{"team": "Eagles", "out_in": "Quarter-final"}, {"team": "Falcons", "out_in": "Quarter-final"},
+                        {"team": "Geckos", "out_in": "Quarter-final"}, {"team": "Hornets", "out_in": "Quarter-final"}]}}},
+    {"q": "Are the Bolts out?", "must_mention_any": ["losers bracket", "one more", "one loss", "not out", "still in"],
+     "facts": {
+      "tournament": {"name": "Double Trouble", "format": "Double Elimination", "status": "Active", "kind": "bracket", "score_unit": "sets", "participant": "team"},
+      "phase": "knockout",
+      "bracket": {"still_in": [{"team": "Aces", "status": "unbeaten, in the winners bracket"},
+                               {"team": "Bolts", "status": "one loss, in the losers bracket: one more and they're out"}]}}},
+    {"q": "Who is second?", "must_mention_any": ["withdr"],
+     "facts": {
+      "tournament": {"name": "Spring League", "format": "Round Robin", "status": "Active", "kind": "league",
+                     "points_for": {"win": 3, "draw": 1, "loss": 0}, "score_unit": "goals", "participant": "team"},
+      "standings_top": [
+        {"rank": 1, "team": "Aces", "played": 4, "wins": 3, "draws": 0, "losses": 1, "points": 9, "game_diff": 4},
+        {"rank": 2, "team": "Bolts", "played": 3, "wins": 2, "draws": 0, "losses": 1, "points": 6, "game_diff": 2, "status": "withdrew", "withdrawn": true},
+        {"rank": 3, "team": "Comets", "played": 4, "wins": 1, "draws": 0, "losses": 3, "points": 3, "game_diff": -3}],
+      "withdrawn": ["Bolts"]}}
+  ],
+  "group_questions": {
+    "_about": "The same teams split into groups (a hybrid tournament): the router is shown GROUPS and its schema gains a group field (AI_STRUCTURE_PLAN.md ST-12).",
+    "groups": {"A": ["T1", "T2", "T3"], "B": ["T4", "T5", "T6"]},
+    "questions": [
+      {"q": "who leads group b", "expect": {"intent": "standings", "group": "B"}},
+      {"q": "group A table please", "expect": {"intent": "standings", "group": "A"}},
+      {"q": "top of group a?", "expect": {"intent": "standings", "group": "A"}},
+      {"q": "how is group B looking", "expect": {"intent": "standings", "group": "B"}},
+      {"q": "who is through to the knockouts", "expect": {"intent": "standings", "group": "none"}},
+      {"q": "show me the standings", "expect": {"intent": "standings", "group": "none"}},
+      {"q": "Bolts vs Aces head to head", "expect": {"intent": "head_to_head", "teams": ["T1", "T2"]}},
+      {"q": "when do the drakes play next", "expect": {"intent": "next_match", "team": "T4"}}
+    ]
+  }
 }

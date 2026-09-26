@@ -1211,6 +1211,8 @@ class EvaluationTests(SimpleTestCase):
         if expect["intent"] == "what_if":
             reply["winner"] = "draw" if expect["winner"] == "draw" else (
                 "team_a" if expect["winner"] == reply["team_a"] else "team_b")
+        if "group" in expect:
+            reply["group"] = expect["group"]
         return json.dumps(reply)
 
     @override_settings(**AI_SETTINGS)
@@ -1218,28 +1220,68 @@ class EvaluationTests(SimpleTestCase):
         from core.ai.evaluation import evaluate, summary_lines
 
         questions = self.data["questions"]
+        grouped = self.data["group_questions"]["questions"]
+        total = len(questions) + len(grouped)
         with FakeOllama() as fake:
             fake.respond_chat(self._perfect_reply(questions[0]["expect"]), load_ns=3_000_000_000)
             for item in questions[1:-1]:
                 fake.respond_chat(self._perfect_reply(item["expect"]))
             fake.respond_chat(_route_json("unknown"))                                   # last question misrouted
+            for item in grouped:
+                fake.respond_chat(self._perfect_reply(item["expect"]))
             fake.respond_chat("The Aces won 2 of their last 5, a 40.0% win rate.")      # grounded
             fake.respond_chat("They drew 0 and each won 1.")                            # grounded
             fake.respond_chat("The Bolts play the Drakes next, on 2026-10-01.")          # grounded
             fake.respond_chat("The Bolts would climb to 7 points.")                      # 7 isn't in the facts
             fake.respond_chat("")                                                        # empty
             fake.respond(client.OllamaTimeout("slow"))                                   # error, counted
+            fake.respond_chat("Red Rovers top group A and Golden Boots top group B.")    # right words
+            fake.respond_chat("Aces sit top of the table.")                              # no table in a knockout
+            fake.respond_chat("No: the Bolts have one loss and are in the losers bracket.")
+            fake.respond_chat("Bolts are second on 6 points.")                           # withdrew: not said
             report = evaluate("qwen3.5:9b", self.data)
-        self.assertEqual((report.routed, report.route_total), (len(questions) - 1, len(questions)))
+        self.assertEqual((report.routed, report.route_total), (total - 1, total))
         self.assertEqual(report.misrouted[0][0], questions[-1]["q"])
-        self.assertEqual((report.explained, report.explain_total, report.explain_empty, report.errors), (3, 6, 1, 1))
+        self.assertEqual((report.explained, report.explain_total, report.explain_empty, report.errors), (5, 10, 1, 1))
         self.assertEqual(report.explain_hidden[0][2], ["7"])
+        self.assertEqual([(q, problem) for q, _, problem in report.wording_failed], [
+            ("Who's leading?", "says 'top of the table'"), ("Who is second?", "mentions none of 'withdr'"),
+        ])
         self.assertEqual(report.cold_load_ms, 3000)
         self.assertEqual({r["body"]["model"] for r in fake.requests}, {"qwen3.5:9b"})
+        group_request = fake.requests[len(questions)]["body"]
+        self.assertIn("GROUPS:", group_request["messages"][1]["content"])
+        self.assertEqual(group_request["format"]["properties"]["group"]["enum"], ["A", "B", "none"])
+        self.assertNotIn("group", fake.requests[0]["body"]["format"]["properties"])
         text = "\n".join(summary_lines(report))
-        self.assertIn(f"Routing       {len(questions) - 1}/{len(questions)}", text)
-        self.assertIn("Explanations  3/6 (50%) passed the number check (1 hidden, 1 empty)", text)
+        self.assertIn(f"Routing       {total - 1}/{total}", text)
+        self.assertIn("Explanations  5/10 (50%) passed the number and wording checks"
+                      " (1 hidden, 2 wrong words, 1 empty)", text)
         self.assertIn("MISROUTED", text)
+        self.assertIn("WORDING", text)
+
+    def test_group_routing_is_scored(self):
+        from core.ai.evaluation import score_route
+
+        expect = {"intent": "standings", "group": "B"}
+        self.assertEqual(score_route(expect, {"intent": "standings", "group": "B"}), (True, ""))
+        self.assertEqual(score_route(expect, {"intent": "standings", "group": "none"}), (False, "group 'none'"))
+        self.assertEqual(score_route(expect, {"intent": "standings"}), (False, "group None"))
+
+    def test_group_questions_are_well_formed(self):
+        from core.ai.facts import INTENTS
+
+        grouped = self.data["group_questions"]
+        teams = set(self.data["teams"])
+        self.assertLessEqual({t for members in grouped["groups"].values() for t in members}, teams)
+        for item in grouped["questions"]:
+            with self.subTest(q=item["q"]):
+                self.assertIn(item["expect"]["intent"], INTENTS)
+                if "group" in item["expect"]:
+                    self.assertIn(item["expect"]["group"], [*grouped["groups"], "none"])
+        for case in self.data["explain_cases"]:
+            for key in ("must_mention_all", "must_mention_any", "must_not_contain"):
+                self.assertIsInstance(case.get(key, []), list)
 
     @override_settings(**AI_SETTINGS)
     def test_command_compares_models_and_writes_json(self):
