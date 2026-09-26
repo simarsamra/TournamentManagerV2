@@ -968,3 +968,61 @@ class TeamNewsStructureTests(TestCase):
         self.assertEqual(part, "table")
         self.assertNotIn("Blue Jays", [r["team"] for r in facts["teams_around_you"]])
         self.assertEqual(facts["teams_in_table"], 5)
+
+
+class CorrectedResultTests(TestCase):
+    """ST-10 (S-2): a corrected score no longer keeps the headline written
+    about the old one, and the next update tells the correction."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+        self.t = tt.make_league(self.org, tt.NAMES[:4])
+        self.match = self.t.matches.get(team1__name="Red Rovers", team2__name="Golden Boots")
+        tt.play(self.match, 3, 0)
+
+    def _write_update(self, headline):
+        job = AIQuestion.objects.create(tournament=self.t, kind="recap", question="Automatic news update")
+        with FakeOllama() as fake:
+            fake.respond_chat(json.dumps({"story": {"title": "News", "intro": "Big day."},
+                                          "results": [{"key": "r1", "headline": headline}], "previews": []}))
+            recap.write_recap(job)
+        job.status, job.finished_at = "done", timezone.now()
+        job.save()
+        return job, json.loads(fake.requests[0]["body"]["messages"][1]["content"]
+                               .split("FACTS:\n<<<\n", 1)[1].rsplit("\n>>>", 1)[0])
+
+    def _headline(self):
+        board = recap.news_board(self.t)
+        items = [i for s in board["sections"] for i in s["items"] if i["match"].pk == self.match.pk]
+        return items[0]["headline"]
+
+    def _override(self, s1, s2):
+        self.client.force_login(self.org)
+        self.client.post(f"/match/{self.match.pk}/override-result/",
+                         {"override_score_team1": s1, "override_score_team2": s2, "override_reason": "typo"})
+        self.match.refresh_from_db()
+        self.assertEqual((self.match.score_team1, self.match.score_team2), (s1, s2))
+
+    def test_the_old_headline_goes_and_the_correction_is_told(self):
+        self._write_update("Rovers romp 3-0")
+        self.assertEqual(self._headline(), "Rovers romp 3-0")
+        self._override(1, 3)
+        self.assertEqual(self._headline(), "")
+        self.assertTrue(recap.new_results(self.t, recap.latest_recap(self.t)).filter(pk=self.match.pk).exists())
+        _, facts = self._write_update("Boots bounce back 3-1")
+        row = next(r for r in facts["new_results"] if r["team1"] == "Red Rovers")
+        self.assertEqual((row["score1"], row["score2"], row.get("corrected")), (1, 3, True))
+        self.assertEqual(self._headline(), "Boots bounce back 3-1")
+
+    def test_an_unchanged_result_stays_covered(self):
+        self._write_update("Rovers romp 3-0")
+        self.assertFalse(recap.new_results(self.t, recap.latest_recap(self.t)).exists())
+
+    def test_updates_from_before_keep_their_headlines(self):
+        job, _ = self._write_update("Rovers romp 3-0")
+        route = dict(job.route)
+        route.pop("covered_scores")
+        AIQuestion.objects.filter(pk=job.pk).update(route=route)
+        self._override(1, 3)
+        self.assertEqual(self._headline(), "Rovers romp 3-0")
+        self.assertFalse(recap.new_results(self.t, recap.latest_recap(self.t)).filter(pk=self.match.pk).exists())

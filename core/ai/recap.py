@@ -208,12 +208,30 @@ def _covered_ids(recap):
     return set((recap.route or {}).get("covered_match_ids", [])) if recap else set()
 
 
+def result_of(match):
+    """What a covered result is remembered as, to notice a correction."""
+    return [match.status, match.score_team1, match.score_team2, match.winner_id]
+
+
+def corrected_ids(tournament, previous=None):
+    """Covered matches whose result changed after the previous update was
+    written (an organizer override, a resolved dispute) (S-2). An update
+    from before results were remembered has nothing to compare: none."""
+    remembered = ((previous.route or {}).get("covered_scores") or {}) if previous else {}
+    if not remembered:
+        return set()
+    return {
+        match.pk for match in tournament.matches.filter(pk__in=[int(pk) for pk in remembered], status__in=FINISHED)
+        if result_of(match) != remembered[str(match.pk)]
+    }
+
+
 def new_results(tournament, previous=None):
-    """Finished matches the previous published recap didn't cover, newest
-    first."""
+    """Finished matches the previous published recap didn't cover, or whose
+    result has been corrected since, newest first."""
     return (
         tournament.matches.filter(status__in=("confirmed", "forfeited"))
-        .exclude(pk__in=_covered_ids(previous))
+        .exclude(pk__in=_covered_ids(previous) - corrected_ids(tournament, previous))
         .select_related("team1", "team2", "winner")
         .order_by("-match_number")
     )
@@ -270,6 +288,7 @@ def build_recap_facts(tournament, previous=None):
 
     structure = build_structure(tournament, label)
     withdrawn_ids = {pk for pk, state in structure.teams.items() if state.withdrawn}
+    corrected = corrected_ids(tournament, previous)
     fresh = list(new_results(tournament, previous))
     keys = {}
     results = []
@@ -295,6 +314,8 @@ def build_recap_facts(tournament, previous=None):
         else:
             row.update(score1=match.score_team1, score2=match.score_team2,
                        winner=label(match.winner) if match.winner_id else "draw")
+        if match.pk in corrected:
+            row["corrected"] = True
         results.append(row)
     coming_up = []
     for n, match in enumerate(upcoming_fixtures(tournament)[:COMING_UP], start=1):
@@ -499,7 +520,10 @@ def write_recap(job):
     # `answer` is the story's one-line summary: the analytics status and
     # the admin show it.
     job.answer = story.get("title") or story.get("intro", "")
-    job.route = {"kind": "recap", "covered_match_ids": covered,
+    covered_scores = {
+        str(m.pk): result_of(m) for m in job.tournament.matches.filter(pk__in=covered)
+    }
+    job.route = {"kind": "recap", "covered_match_ids": covered, "covered_scores": covered_scores,
                  "previous_recap_id": previous.pk if previous else None,
                  "story": story, "headlines": headlines, "rejected": rejected, "final": final,
                  "positions": memory["positions"], "statuses": memory["statuses"]}
@@ -520,8 +544,12 @@ def news_board(tournament, now=None):
         .order_by("-finished_at", "-pk")[:BOARD_UPDATES]
     )
     headlines = {}
+    written_for = {}                     # match pk -> the result a headline was written about
     for update in reversed(updates):     # newer headlines win
-        headlines.update((update.route or {}).get("headlines") or {})
+        route = update.route or {}
+        for pk, text in (route.get("headlines") or {}).items():
+            headlines[pk] = text
+            written_for[pk] = (route.get("covered_scores") or {}).get(pk)
 
     recent = list(
         tournament.matches.filter(status__in=FINISHED)
@@ -534,11 +562,16 @@ def news_board(tournament, now=None):
     })
 
     def item(match):
+        headline = headlines.get(str(match.pk), "")
+        was = written_for.get(str(match.pk))
+        if headline and was is not None and was != result_of(match):
+            # The score was corrected after the headline was written (S-2).
+            headline = ""
         return {
             "match": match,
             "team1": labels.get(match.team1_id, "TBD"),
             "team2": labels.get(match.team2_id, "TBD"),
-            "headline": headlines.get(str(match.pk), ""),
+            "headline": headline,
         }
 
     by_day = {}
