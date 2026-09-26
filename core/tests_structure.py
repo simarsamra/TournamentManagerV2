@@ -10,12 +10,14 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
 from core import testing_tournaments as tt
+from core.ai.conversation import SYSTEM_PROMPT as CONVERSATION_PROMPT
 from core.ai.explain import SYSTEM_PROMPT as EXPLAIN_PROMPT
 from core.ai.facts import Route, build_facts, serialise
 from core.ai.router import build_schema, route_question
+from core.ai.snapshot import MAX_SNAPSHOT_CHARS, build_snapshot
 from core.ai.structure_facts import STRUCTURE_RULE, trim
 from core.ai.testing import FakeOllama
-from core.models import OrganizerProfile, Team, TeamMembership
+from core.models import Match, OrganizerProfile, Team, TeamMembership
 from core.standings import _head_to_head_matches, calculate_standings
 from core.structure import build_structure, stage_labels, structure_kind
 
@@ -662,3 +664,88 @@ class AnswerCardTests(TestCase):
         html = self._render(build_facts(tt.knockout_after_round_1(self.org), self.org, Route("standings")))
         self.assertIn("Black Bears (Quarter-final)", html)
         self.assertNotIn("<th>Pts</th>", html)
+
+
+class SnapshotStructureTests(TestCase):
+    """ST-7 (G-1, G-3, G-4, K-2, K-6, W-2, S-1, S-3): the conversation's
+    snapshot knows groups, stages, statuses and withdrawals."""
+
+    def setUp(self):
+        self.org = _make_organizer()
+
+    def test_hybrid_groups_and_gaps(self):
+        snap = build_snapshot(tt.hybrid_after_one_semi(self.org), self.org)
+        self.assertNotIn("table", snap)
+        self.assertEqual([len(g["table"]) for g in snap["groups"]], [4, 4])
+        rows = {r["team"]: r for g in snap["groups"] for r in g["table"]}
+        self.assertLessEqual(max(r["points"] for r in rows.values()), 9)
+        hawks = rows["Silver Hawks"]
+        self.assertEqual(hawks["points_behind_group_leader"], 6)       # Red Rovers 9, not the overall leader
+        self.assertEqual(hawks["points_behind_last_place_through"], 3)  # Green Giants 6
+        self.assertEqual(hawks["status"], "out in the group stage")
+        self.assertEqual(rows["Blue Jays"]["status"], "out in the semi-final")
+        self.assertEqual(snap["tournament"]["phase"], "knockout")
+
+    def test_stages_and_undecided_matches(self):
+        snap = build_snapshot(tt.hybrid_after_one_semi(self.org), self.org)
+        semi = next(r for r in snap["results"] if r["stage"] == "Semi-final")
+        self.assertEqual((semi["team1"], semi["score1"]), ("Red Rovers", 3))
+        self.assertNotIn("round", semi)
+        teams = {v for f in snap["fixtures"] for v in (f["team1"], f["team2"])}
+        self.assertNotIn("TBD", teams)
+        final = next(f for f in snap["fixtures"] if f["stage"] == "Final")
+        self.assertEqual({final["team1"], final["team2"]}, {"Red Rovers", "to be decided"})
+        self.assertEqual(snap["tournament"]["matches_left"], 1)     # the other semi-final
+
+    def test_placeholders_are_counted_by_stage(self):
+        snap = build_snapshot(tt.hybrid_after_groups(self.org), self.org)
+        self.assertEqual(snap["later_matches_to_be_decided"], [{"stage": "Final", "matches": 1}])
+
+    def test_withdrawn_rows_stay_flagged(self):
+        t = tt.league_with_withdrawal(self.org)
+        snap = build_snapshot(t, self.org)
+        ranks = [r["rank"] for r in snap["table"]]
+        self.assertEqual(ranks, list(range(1, 7)))
+        jays = next(r for r in snap["table"] if r["team"] == "Blue Jays")
+        self.assertTrue(jays["withdrawn"])
+        self.assertEqual(jays["status"], "withdrew")
+        self.assertEqual(snap["withdrawn"], ["Blue Jays"])
+
+    def test_leader_gap_ignores_a_withdrawn_leader(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        for match in t.matches.filter(Q(team1__name="Blue Jays") | Q(team2__name="Blue Jays")).order_by("match_number")[:2]:
+            tt.play(match, *((1, 0) if match.team1.name == "Blue Jays" else (0, 1)))
+        tt.withdraw(t, tt.team("Blue Jays"), policy="void")
+        snap = build_snapshot(t, self.org)
+        self.assertEqual(snap["table"][0]["team"], "Blue Jays")
+        second = snap["table"][1]
+        self.assertEqual(second["points_behind_leader"], 0)
+
+    def test_awaiting_confirmation(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        match = t.matches.order_by("match_number").first()
+        match.score_team1, match.score_team2, match.status = 2, 1, "pending_confirmation"
+        match.save()
+        snap = build_snapshot(t, self.org)
+        self.assertEqual([a["match"] for a in snap["awaiting_confirmation"]], [match.match_number])
+        self.assertNotIn(match.match_number, [f["match"] for f in snap["fixtures"]])
+        self.assertEqual(snap["tournament"]["matches_left"], 5)
+        self.assertNotIn("score1", snap["awaiting_confirmation"][0])
+
+    def test_unscheduled_result_has_no_broken_date(self):
+        t = tt.make_league(self.org, tt.NAMES[:4])
+        match = t.matches.order_by("match_number").first()
+        Match.objects.filter(pk=match.pk).update(scheduled_time=None)
+        tt.play(match, 1, 0)
+        Match.objects.filter(pk=match.pk).update(score_submitted_at=None)
+        snap = build_snapshot(t, self.org)
+        self.assertIsNone(snap["results"][0]["date"])
+        self.assertNotIn('"not schedu"', serialise(snap))
+
+    def test_fits(self):
+        snap = build_snapshot(tt.hybrid_finished(self.org), self.org)
+        self.assertLess(len(serialise(snap)), MAX_SNAPSHOT_CHARS)
+        self.assertEqual(snap["tournament"]["placings"]["champion"], "Red Rovers")
+
+    def test_conversation_prompt_has_the_rule(self):
+        self.assertIn(STRUCTURE_RULE, CONVERSATION_PROMPT)

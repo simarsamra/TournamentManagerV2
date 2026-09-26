@@ -21,11 +21,16 @@ from core import analytics
 from core.standings import calculate_standings
 from core.views.helpers import _team_display_label
 
+from core.structure import KIND_GROUPS, KIND_LEAGUE, build_structure
+
+from . import structure_facts
 from .facts import serialise
 
 MAX_SNAPSHOT_CHARS = 14000
 FINISHED = ("confirmed", "forfeited")
-UPCOMING = ("upcoming", "in_progress", "pending_confirmation", "disputed")
+TO_PLAY = ("upcoming", "in_progress")
+AWAITING = ("pending_confirmation", "disputed")
+UPCOMING = TO_PLAY + AWAITING
 MIN_RESULTS_KEPT = 10
 
 
@@ -45,6 +50,12 @@ def _streak(results):
     return f"{results[0]}{count}"
 
 
+def _played_day(match):
+    """The day a finished match was played (the news board's rule), or None."""
+    times = [t for t in (match.scheduled_time, match.score_submitted_at) if t]
+    return timezone.localtime(min(times)).strftime("%Y-%m-%d") if times else None
+
+
 def build_snapshot(tournament, user):
     """Return the tournament's facts document, or None if it can't fit.
 
@@ -57,12 +68,14 @@ def build_snapshot(tournament, user):
     standings = calculate_standings(tournament)
     label_map = analytics.label_standings(tournament, standings)
     active = analytics.active_teams(tournament, label_map)
-    active_ids = {team.pk for team in active}
 
     def label(team):
         if team is None:
-            return "TBD"
+            return "to be decided"
         return label_map.get(team.pk) or _team_display_label(tournament, team)
+
+    structure = build_structure(tournament, label)
+    team_ids = set(structure.teams)
 
     matches = list(
         tournament.matches.filter(Q(status__in=FINISHED) | Q(status__in=UPCOMING))
@@ -70,10 +83,14 @@ def build_snapshot(tournament, user):
         .order_by("match_number")
     )
     finished = [m for m in matches if m.status in FINISHED]
-    upcoming = [m for m in matches if m.status in UPCOMING]
+    # Played, score not yet confirmed: neither a result nor still to play (S-1).
+    awaiting = [m for m in matches if m.status in AWAITING]
+    upcoming = [m for m in matches if m.status in TO_PLAY]
+    known = [m for m in upcoming if m.team1_id or m.team2_id]
+    undecided = [m for m in upcoming if not (m.team1_id or m.team2_id)]
 
     # Per-team extras from the finished matches, oldest first.
-    extra = {pk: {"for": 0, "against": 0, "results": []} for pk in active_ids}
+    extra = {pk: {"for": 0, "against": 0, "results": []} for pk in team_ids}
     for m in finished:
         for team, own, other in ((m.team1, m.score_team1, m.score_team2),
                                  (m.team2, m.score_team2, m.score_team1)):
@@ -84,11 +101,14 @@ def build_snapshot(tournament, user):
                 row["for"] += own
                 row["against"] += other
             row["results"].append("W" if m.winner_id == team.pk else "L" if m.winner_id else "D")
-    left = {pk: 0 for pk in active_ids}
-    for m in upcoming:
-        for team in (m.team1, m.team2):
-            if team is not None and team.pk in left:
-                left[team.pk] += 1
+    left = {pk: 0 for pk in team_ids}
+    group_left = {pk: 0 for pk in team_ids}
+    for m in known:
+        for pk in (m.team1_id, m.team2_id):
+            if pk in left:
+                left[pk] += 1
+                if m.group:
+                    group_left[pk] += 1
 
     def team_extras(pk):
         row = extra[pk]
@@ -114,45 +134,72 @@ def build_snapshot(tournament, user):
                 "loss": tournament.points_per_loss,
             },
             "matches_played": len(finished),
-            "matches_left": len(upcoming),
+            "matches_left": sum(1 for m in known if m.team1_id and m.team2_id),
+            "phase": structure_facts.PHASE_WORDS[structure.phase],
+            **structure_facts.tournament_facts(structure),
         },
     }
+    if structure.placings:
+        facts["tournament"]["placings"] = dict(structure.placings)
 
-    if tournament.format in analytics.STANDINGS_FORMATS:
-        rows = [row for row in standings if row["team"].pk in active_ids]
-        leader_points = rows[0]["points"] if rows else 0
+    def table_rows(rows, through_places=None, group=False):
+        shown = [r for r in rows if r["team"].pk in team_ids]
+        contenders = [r for r in shown if not r.get("withdrawn")]
+        leader_points = contenders[0]["points"] if contenders else 0
+        last_through = (contenders[through_places - 1]["points"]
+                        if through_places and len(contenders) >= through_places else None)
         table = []
-        for i, row in enumerate(rows):
-            entry = {
-                "rank": row["rank"], "team": row["display_label"],
-                "played": row["played"], "wins": row["wins"], "draws": row["draws"],
-                "losses": row["losses"], "points": row["points"], "game_diff": row["game_diff"],
-                "points_behind_leader": leader_points - row["points"],
-            }
-            if i + 1 < len(rows):
-                entry["points_ahead_of_next"] = row["points"] - rows[i + 1]["points"]
-            entry.update(team_extras(row["team"].pk))
-            # "Can they still catch ...?" without the model doing sums.
-            entry["max_possible_points"] = row["points"] + entry["matches_left"] * tournament.points_per_win
+        for i, row in enumerate(shown):
+            pk = row["team"].pk
+            entry = structure_facts.table_row(structure, row)
+            behind = "points_behind_group_leader" if group else "points_behind_leader"
+            entry[behind] = leader_points - row["points"]
+            if last_through is not None:
+                entry["points_behind_last_place_through"] = max(0, last_through - row["points"])
+            if i + 1 < len(shown):
+                entry["points_ahead_of_next"] = row["points"] - shown[i + 1]["points"]
+            entry.update(team_extras(pk))
+            if group:
+                entry["group_matches_left"] = group_left[pk]
+                # "Can they still catch ...?" within the group, without sums.
+                entry["max_possible_group_points"] = row["points"] + group_left[pk] * tournament.points_per_win
+            else:
+                entry["max_possible_points"] = row["points"] + entry["matches_left"] * tournament.points_per_win
             table.append(entry)
-        facts["table"] = table
+        return table
+
+    if structure.kind == KIND_LEAGUE:
+        facts["table"] = table_rows(structure.table)
+    elif structure.kind == KIND_GROUPS:
+        advance = structure.advance_per_group or 0
+        facts["groups"] = [
+            {"group": letter, "advance": advance, "table": table_rows(rows, advance, group=True)}
+            for letter, rows in structure.groups.items()
+        ]
+        if structure.phase in ("knockout", "finished"):
+            facts["bracket"] = structure_facts.bracket_facts(structure)
     else:
         stats, _ = analytics.team_performance(tournament, standings, active)
         facts["teams"] = [
             {
-                "team": s["display_label"], "played": s["played"], "wins": s["wins"],
-                "draws": s["draws"], "losses": s["losses"], "win_rate_pct": s["win_rate"],
+                "team": s["display_label"], "status": structure_facts.status_of(structure, s["team"].pk),
+                "played": s["played"], "wins": s["wins"], "draws": s["draws"], "losses": s["losses"],
                 **team_extras(s["team"].pk),
             }
             for s in stats
         ]
+        facts["bracket"] = structure_facts.bracket_facts(structure)
+    withdrawn = sorted(st.label for st in structure.teams.values() if st.withdrawn)
+    if withdrawn:
+        facts["withdrawn"] = withdrawn
+
+    def stage(match):
+        return structure.stages.get(match.pk, "")
 
     results = []
     for m in finished:
-        row = {"match": m.match_number, "round": m.round_number,
-               "date": _when(m.scheduled_time)[:10], "team1": label(m.team1), "team2": label(m.team2)}
-        if m.group:
-            row["group"] = m.group
+        row = {"match": m.match_number, "stage": stage(m), "date": _played_day(m),
+               "team1": label(m.team1), "team2": label(m.team2)}
         if m.status == "forfeited":
             row["forfeit_won_by"] = label(m.winner) if m.winner_id else "nobody"
         else:
@@ -164,11 +211,22 @@ def build_snapshot(tournament, user):
     facts["results"] = results
 
     facts["fixtures"] = [
-        {"match": m.match_number, "round": m.round_number, "when": _when(m.scheduled_time),
+        {"match": m.match_number, "stage": stage(m), "when": _when(m.scheduled_time),
          "court": m.court.name if m.court else "", "team1": label(m.team1), "team2": label(m.team2),
          "status": m.get_status_display()}
-        for m in upcoming
+        for m in known
     ]
+    if undecided:
+        counts = {}
+        for m in undecided:
+            counts[stage(m)] = counts.get(stage(m), 0) + 1
+        facts["later_matches_to_be_decided"] = [{"stage": k, "matches": v} for k, v in counts.items()]
+    if awaiting:
+        facts["awaiting_confirmation"] = [
+            {"match": m.match_number, "stage": stage(m), "team1": label(m.team1), "team2": label(m.team2),
+             "status": m.get_status_display()}
+            for m in awaiting
+        ]
 
     pairs = {}
     for m in finished:
