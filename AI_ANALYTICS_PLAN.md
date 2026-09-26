@@ -709,6 +709,21 @@ every dashboard, instead of a recap someone has to ask for:
   lets a job with no user through only when it is a recap.
 - The manual button on the analytics page still works. A manual recap
   counts as the latest attempt, so it pushes the next automatic one back.
+- **Headlines, not a paragraph.** The model replies in JSON, following a
+  schema whose keys are enums of the facts' match keys ("r1", "u1"). It
+  writes one headline per new result, one teaser per upcoming fixture, and a
+  lead of at most 2 sentences. The facts add each result's day and winner,
+  plus `streaks` (3 or more wins or losses in a row). Every headline and the
+  lead are number-checked separately, and a failing one is dropped and
+  logged (`route.rejected`). Kept headlines are stored in
+  `route.headlines` by match id, so the model never sees ids. A reply that
+  isn't JSON is treated as the lead.
+- **Days are decided when the page is viewed.** `recap.news_board()` merges
+  the headlines of the last 5 published updates and sorts finished matches
+  into Today / Yesterday (or Last matchday) by their local date. Coming up
+  is the next 4 fixtures. The prompt forbids "today" or "yesterday" in the
+  text, since the board provides the dates. The analytics page's recap card
+  shows the same board.
 
 ---
 

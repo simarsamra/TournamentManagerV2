@@ -1,13 +1,8 @@
-{% comment %}The latest published recap (AI-9), for everyone who can view the analytics; managers can commission a new one.{% endcomment %}
+{% comment %}The news board (AI-9 recaps, see core/ai/recap.py news_board), for everyone who can view the analytics; managers can commission a new one.{% endcomment %}
 <div class="card mb-2" id="analytics-recap">
-    <div class="card-header">Latest recap</div>
+    <div class="card-header">📰 Tournament News</div>
     <div class="card-body">
-        {% if ai_recap %}
-        <p style="margin:0 0 0.4rem;">{{ ai_recap.answer }}</p>
-        <div class="text-muted" style="font-size:0.75rem;">AI-generated from the results on {{ ai_recap.finished_at|date:"M j, H:i" }}; every number was checked against them.</div>
-        {% else %}
-        <p class="text-muted" style="margin:0;">No recap yet.</p>
-        {% endif %}
+        {% if news %}{% include "core/partials/news_board_body.html" %}{% endif %}
         {% if ai_can_recap %}
         <form method="post" action="{% url 'ai_recap' %}" hx-post="{% url 'ai_recap' %}" hx-target="#ai-recap-status" hx-swap="innerHTML" hx-disabled-elt="#ai-recap-button" class="mt-1">
             {% csrf_token %}

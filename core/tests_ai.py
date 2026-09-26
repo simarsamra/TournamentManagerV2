@@ -1322,9 +1322,12 @@ class RecapTests(TestCase):
         job.refresh_from_db()
         self.assertEqual((job.status, job.answer_verified), ("done", True))
         body = fake.requests[0]["body"]
-        self.assertIn("latest results for its players and fans", body["messages"][0]["content"])
-        self.assertEqual(body["options"]["num_predict"], 260)
-        self.assertEqual(job.facts["new_results"], [{"team1": "Aces", "team2": "Bolts", "score1": 3, "score2": 1}])
+        self.assertIn("reporter for one sports tournament's news board", body["messages"][0]["content"])
+        self.assertEqual(body["options"]["num_predict"], 700)
+        [row] = job.facts["new_results"]
+        self.assertEqual({k: row[k] for k in ("key", "team1", "team2", "score1", "score2", "winner")},
+                         {"key": "r1", "team1": "Aces", "team2": "Bolts", "score1": 3, "score2": 1,
+                          "winner": "Aces"})
         self.assertEqual(job.route["covered_match_ids"], [self.m1.pk])
         # An enrolled player can't ask (audience = managers) but does see the recap.
         self.client.force_login(self.player)
@@ -1368,8 +1371,10 @@ class RecapTests(TestCase):
         job.refresh_from_db()
         teams = [(r["team1"], r["team2"]) for r in job.facts["new_results"]]
         self.assertEqual(teams, [("Comets", "Bolts"), ("Comets", "Aces")])   # newest first, m1 excluded
-        self.assertEqual(job.facts["new_results"][0], {"team1": "Comets", "team2": "Bolts",
-                                                       "forfeit_won_by": "Comets"})
+        forfeit = job.facts["new_results"][0]
+        self.assertEqual((forfeit["team1"], forfeit["team2"], forfeit["forfeit_won_by"]),
+                         ("Comets", "Bolts", "Comets"))
+        self.assertNotIn("score1", forfeit)
         # Comets were 2nd after the first recap (0 pts, goal difference 0 beats Bolts' -2).
         self.assertEqual(job.facts["position_changes_since_last_recap"],
                          [{"team": "Comets", "was": 2, "now": 1}, {"team": "Aces", "was": 1, "now": 2}])
@@ -1460,8 +1465,8 @@ class NewsBoardTests(TestCase):
         job = AIQuestion.objects.get()
         self.assertEqual((job.user, job.kind, job.status, job.answer_verified), (None, "recap", "done", True))
         self.assertEqual(job.facts["coming_up"],
-                         [{"team1": "Bolts", "team2": "Comets", "when": "Sat 03 Oct, 18:00"}])
-        self.assertIn("coming up next", fake.requests[0]["body"]["messages"][0]["content"])
+                         [{"key": "u1", "team1": "Bolts", "team2": "Comets", "when": "Sat 03 Oct, 18:00"}])
+        self.assertIn('"previews"', fake.requests[0]["body"]["messages"][0]["content"])
         for user in (self.player, self.organizer):
             page = self._dashboard(user)
             self.assertContains(page, "Tournament News")
@@ -1495,6 +1500,58 @@ class NewsBoardTests(TestCase):
         page = self._dashboard(self.player)
         self.assertContains(page, "The season opens with Aces against Bolts.")
         self.assertNotContains(page, "9-1")
+
+    def _headlines_reply(self, lead, results=(), previews=()):
+        return json.dumps({
+            "lead": lead,
+            "results": [{"key": k, "headline": h} for k, h in results],
+            "previews": [{"key": k, "headline": h} for k, h in previews],
+        })
+
+    def test_headlines_are_checked_one_by_one_and_filed_by_match(self):
+        first = self._match(self.aces, self.bolts, 3, 1)
+        second = self._match(self.comets, self.aces, 3, 2)
+        fixture = self._match(self.bolts, self.comets)
+        fake = self._worker(self._headlines_reply(
+            "Comets crash the party 🎉",
+            results=[("r1", "Comets burn bright, edge Aces 3-2"),
+                     ("r2", "Aces thump Bolts 7-0"),              # 7 and 0 aren't in the results
+                     ("r9", "A match that doesn't exist")],
+            previews=[("u1", "Bolts out to zap the Comets")],
+        ))
+        job = AIQuestion.objects.get()
+        self.assertTrue(job.answer_verified)
+        self.assertEqual(job.answer, "Comets crash the party 🎉")
+        self.assertEqual(job.route["headlines"], {str(second.pk): "Comets burn bright, edge Aces 3-2",
+                                                  str(fixture.pk): "Bolts out to zap the Comets"})
+        self.assertEqual(job.route["rejected"], ["Aces thump Bolts 7-0"])
+        schema = fake.requests[0]["body"]["format"]
+        self.assertEqual(schema["properties"]["results"]["items"]["properties"]["key"]["enum"], ["r1", "r2"])
+        self.assertEqual(schema["properties"]["previews"]["items"]["properties"]["key"]["enum"], ["u1"])
+        page = self._dashboard(self.player)
+        self.assertContains(page, "Comets burn bright, edge Aces 3-2")
+        self.assertContains(page, "Bolts out to zap the Comets")
+        self.assertNotContains(page, "thump")
+        self.assertContains(page, f'href="/match/{first.pk}/"')      # no headline: still listed
+
+    def test_board_sorts_results_into_today_yesterday_and_coming_up_when_viewed(self):
+        now = timezone.localtime().replace(hour=21, minute=0, second=0, microsecond=0)
+        today, yesterday = now.date(), now.date() - timedelta(days=1)
+
+        def at(day, hour):
+            return timezone.make_aware(timezone.datetime.combine(day, timezone.datetime.min.time()).replace(hour=hour))
+
+        self._match(self.aces, self.bolts, 3, 0, when=at(today - timedelta(days=5), 18))
+        self._match(self.bolts, self.comets, 1, 3, when=at(yesterday, 18))
+        self._match(self.comets, self.aces, 3, 1, when=at(today, 18))
+        self._match(self.aces, self.comets, when=now + timedelta(days=2))
+        board = recap.news_board(self.tournament, now=now)
+        self.assertEqual([(s["title"], len(s["items"])) for s in board["sections"]],
+                         [("Today", 1), ("Yesterday", 1)])
+        self.assertEqual([(i["team1"], i["team2"]) for i in board["coming_up"]], [("Aces", "Comets")])
+        # Two days on, nothing today or yesterday: the last matchday instead.
+        later = recap.news_board(self.tournament, now=now + timedelta(days=3))
+        self.assertEqual([(s["title"], s["day"]) for s in later["sections"]], [("Last matchday", today)])
 
     def test_no_board_without_access_or_while_disabled(self):
         self._match(self.aces, self.bolts, 3, 1)

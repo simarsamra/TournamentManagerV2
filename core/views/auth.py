@@ -193,23 +193,15 @@ def register_view(request, pk=None):
 # -- Dashboard --
 
 def _news_board_context(user, tournament):
-    """The tournament's news board: the latest AI news update, written once
-    by the worker for everyone (ai/recap.py), and the next fixtures. Shown
-    to whoever may view the tournament's analytics, like the recap card."""
-    from ..ai.recap import COMING_UP, fixture_when, latest_recap, upcoming_fixtures
+    """The tournament's news board: headlines the worker wrote once for
+    everyone (ai/recap.py), sorted into today / yesterday / coming up.
+    Shown to whoever may view the tournament's analytics."""
+    from ..ai.recap import news_board
 
     allowed, _ = analytics.can_view_analytics(user, tournament)
     if not allowed:
         return {}
-    coming_up = []
-    for match in upcoming_fixtures(tournament)[:COMING_UP]:
-        coming_up.append({
-            "match": match,
-            "team1": _team_display_label(tournament, match.team1),
-            "team2": _team_display_label(tournament, match.team2),
-            "when": fixture_when(match),
-        })
-    return {"show_news_board": True, "news": latest_recap(tournament), "news_coming_up": coming_up}
+    return {"show_news_board": True, "news": news_board(tournament)}
 
 
 @login_required

@@ -1,0 +1,34 @@
+{% comment %}The news board's contents (core/ai/recap.py news_board): the top story, headlines by day, and what's coming up. Used on the dashboard and the analytics page.{% endcomment %}
+{% if news.lead %}
+<p class="news-lead">{{ news.lead }}</p>
+{% endif %}
+{% for section in news.sections %}
+<div class="news-section">
+    <h4 class="news-day">{{ section.title }} <span class="text-muted">&middot; {{ section.day|date:"D j M" }}</span></h4>
+    {% for it in section.items %}
+    <a class="news-item" href="{% url 'match_detail' pk=it.match.pk %}">
+        {% if it.headline %}<strong>{{ it.headline }}</strong>{% endif %}
+        <span class="news-score{% if not it.headline %} news-score-only{% endif %}">{{ it.team1 }}
+            {% if it.match.status == "forfeited" %}vs {{ it.team2 }} &middot; forfeit{% else %}<b>{{ it.match.score_team1 }}&ndash;{{ it.match.score_team2 }}</b> {{ it.team2 }}{% endif %}</span>
+    </a>
+    {% empty %}
+    <p class="text-muted news-empty">No results in yet{% if section.first_start %}. First serve at {{ section.first_start|time:"H:i" }}{% endif %}.</p>
+    {% endfor %}
+</div>
+{% endfor %}
+{% if news.coming_up %}
+<div class="news-section">
+    <h4 class="news-day">Coming up</h4>
+    {% for it in news.coming_up %}
+    <a class="news-item" href="{% url 'match_detail' pk=it.match.pk %}">
+        {% if it.headline %}<strong>{{ it.headline }}</strong>{% endif %}
+        <span class="news-score{% if not it.headline %} news-score-only{% endif %}">{{ it.team1 }} vs {{ it.team2 }} &middot; {{ it.when }}{% if it.match.court %} &middot; {{ it.match.court.name }}{% endif %}</span>
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+{% if news.updated_at %}
+<div class="text-muted news-footnote">Headlines by AI, updated {{ news.updated_at|date:"M j, H:i" }}; every number was checked against the results. Scores and times come straight from the schedule.</div>
+{% elif not news.sections and not news.coming_up %}
+<p class="text-muted" style="margin:0;">News about the tournament will appear here as results come in.</p>
+{% endif %}

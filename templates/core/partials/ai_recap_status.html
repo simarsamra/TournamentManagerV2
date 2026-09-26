@@ -5,7 +5,7 @@
     {% elif q.status == "failed" %}
     <p role="alert" style="margin:0;color:var(--danger);">{{ q.error }}</p>
     {% elif q.answer_verified %}
-    <p style="margin:0 0 0.4rem;"><strong>Published:</strong> {{ q.answer }}</p>
+    <p style="margin:0 0 0.4rem;"><strong>Published:</strong> {{ q.answer|default:"new headlines on the news board." }}</p>
     <div class="text-muted" style="font-size:0.75rem;">Everyone who can view this tournament's analytics now sees this recap. {{ q.model_name }}{% if seconds %} · {{ seconds }} s{% endif %}</div>
     {% else %}
     <p role="alert" style="margin:0;">The recap mentioned numbers that aren't in the results, so it wasn't published. Please try again.</p>

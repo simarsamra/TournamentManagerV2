@@ -792,3 +792,16 @@ html[data-theme="dark"] .bracket-info-label {
     top: 0;
     left: 0;
 }
+
+/* Tournament news board (templates/core/partials/news_board_body.html) */
+.news-lead { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.75rem; padding-left: 0.75rem; border-left: 3px solid var(--primary); }
+.news-section { margin-bottom: 0.9rem; }
+.news-day { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.35rem; color: var(--primary); }
+.news-day .text-muted { text-transform: none; letter-spacing: 0; }
+.news-item { display: block; padding: 0.45rem 0.6rem; margin-bottom: 0.3rem; border-radius: 6px; border: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.news-item:hover { border-color: var(--primary); }
+.news-item strong { display: block; line-height: 1.3; }
+.news-score { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; }
+.news-score-only { font-size: 0.9rem; color: var(--text); margin-top: 0; }
+.news-empty { font-size: 0.85rem; margin: 0; }
+.news-footnote { font-size: 0.72rem; }
