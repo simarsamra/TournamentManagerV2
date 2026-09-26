@@ -794,7 +794,12 @@ html[data-theme="dark"] .bracket-info-label {
 }
 
 /* Tournament news board (templates/core/partials/news_board_body.html) */
-.news-lead { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.75rem; padding-left: 0.75rem; border-left: 3px solid var(--primary); }
+.news-story { margin: 0 0 1rem; padding: 0.2rem 0 0.2rem 0.9rem; border-left: 3px solid var(--primary); }
+.news-story p { margin: 0 0 0.55rem; line-height: 1.5; }
+.news-title { font-size: 1.2rem; font-weight: 800; margin: 0 0 0.35rem; line-height: 1.25; }
+.news-intro { font-weight: 600; }
+.news-story-heading { font-size: 0.95rem; margin: 0.7rem 0 0.25rem; }
+.news-sign-off { font-style: italic; color: var(--text-muted); margin-bottom: 0 !important; }
 .news-section { margin-bottom: 0.9rem; }
 .news-day { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.35rem; color: var(--primary); }
 .news-day .text-muted { text-transform: none; letter-spacing: 0; }

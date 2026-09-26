@@ -1,7 +1,14 @@
 {% comment %}The news board's contents (core/ai/recap.py news_board): the top story, headlines by day, and what's coming up. Used on the dashboard and the analytics page.{% endcomment %}
-{% if news.lead %}
-<p class="news-lead">{{ news.lead }}</p>
-{% endif %}
+{% with story=news.story %}{% if story.title or story.intro or story.results %}
+<article class="news-story">
+    {% if story.title %}<h3 class="news-title">{{ story.title }}</h3>{% endif %}
+    {% if story.intro %}<p class="news-intro">{{ story.intro }}</p>{% endif %}
+    {% if story.results %}<p>{{ story.results }}</p>{% endif %}
+    {% if story.table %}<h4 class="news-story-heading">🏆 Standings</h4><p>{{ story.table }}</p>{% endif %}
+    {% if story.next_up %}<h4 class="news-story-heading">🔥 Next Up</h4><p>{{ story.next_up }}</p>{% endif %}
+    {% if story.sign_off %}<p class="news-sign-off">{{ story.sign_off }}</p>{% endif %}
+</article>
+{% endif %}{% endwith %}
 {% for section in news.sections %}
 <div class="news-section">
     <h4 class="news-day">{{ section.title }} <span class="text-muted">&middot; {{ section.day|date:"D j M" }}</span></h4>

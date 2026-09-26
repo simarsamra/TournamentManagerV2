@@ -718,6 +718,12 @@ every dashboard, instead of a recap someone has to ask for:
   logged (`route.rejected`). Kept headlines are stored in
   `route.headlines` by match id, so the model never sees ids. A reply that
   isn't JSON is treated as the lead.
+- **Main story.** The lead is now a `story` object: title, intro, results,
+  table, next_up, sign_off. Each part is checked and dropped separately and
+  stored in `route.story`, and `answer` holds the title. The call runs at
+  temperature 0.8 with num_predict 1500 and a 180 s timeout. A dry run with
+  gemma4:e4b on the simulated league took 21 s, with no numbers rejected
+  and every result credited to the right team.
 - **Days are decided when the page is viewed.** `recap.news_board()` merges
   the headlines of the last 5 published updates and sorts finished matches
   into Today / Yesterday (or Last matchday) by their local date. Coming up

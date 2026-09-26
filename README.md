@@ -318,9 +318,10 @@ checks back every 2 seconds.
 **Tournament news.** Every dashboard of an active or completed tournament
 has a **Tournament News** board, for everyone who can view its analytics:
 - The `ai_worker` writes the news on its own, in one model call per update:
-  a fun, tabloid-style headline for each new result, a teaser for each of
-  the next fixtures, and a top story about the table and winning or losing
-  streaks. Before the first result it previews the opening fixtures.
+  a main story in the style of a sports back page (a punny title, an intro,
+  the results with wordplay, 🏆 Standings, 🔥 Next Up and a sign-off), a
+  fun headline for each new result, and a teaser for each of the next
+  fixtures. Before the first result it previews the opening fixtures.
 - The board sorts the headlines into **Today**, **Yesterday** (or the
   **Last matchday** when neither had matches) and **Coming up** when the page
   is opened, so "Today" stays right the next day.
@@ -329,7 +330,7 @@ has a **Tournament News** board, for everyone who can view its analytics:
 - A new update is written only when there are new results, and at most once
   every `DJANGO_AI_NEWS_INTERVAL_MINUTES`, so a burst of results becomes
   one update.
-- Each headline goes through the number check on its own. A headline with
+- Each headline and each part of the story goes through the number check on its own. A headline with
   a number that isn't in the results is dropped, and the rest are still
   shown. The match under it is still listed, with its real score.
 - Scores, fixtures, times and courts come straight from the database, so

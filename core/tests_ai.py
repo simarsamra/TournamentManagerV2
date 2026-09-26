@@ -1323,7 +1323,7 @@ class RecapTests(TestCase):
         self.assertEqual((job.status, job.answer_verified), ("done", True))
         body = fake.requests[0]["body"]
         self.assertIn("reporter for one sports tournament's news board", body["messages"][0]["content"])
-        self.assertEqual(body["options"]["num_predict"], 700)
+        self.assertEqual(body["options"]["num_predict"], 1500)
         [row] = job.facts["new_results"]
         self.assertEqual({k: row[k] for k in ("key", "team1", "team2", "score1", "score2", "winner")},
                          {"key": "r1", "team1": "Aces", "team2": "Bolts", "score1": 3, "score2": 1,
@@ -1501,9 +1501,9 @@ class NewsBoardTests(TestCase):
         self.assertContains(page, "The season opens with Aces against Bolts.")
         self.assertNotContains(page, "9-1")
 
-    def _headlines_reply(self, lead, results=(), previews=()):
+    def _headlines_reply(self, story, results=(), previews=()):
         return json.dumps({
-            "lead": lead,
+            "story": story,
             "results": [{"key": k, "headline": h} for k, h in results],
             "previews": [{"key": k, "headline": h} for k, h in previews],
         })
@@ -1513,7 +1513,10 @@ class NewsBoardTests(TestCase):
         second = self._match(self.comets, self.aces, 3, 2)
         fixture = self._match(self.bolts, self.comets)
         fake = self._worker(self._headlines_reply(
-            "Comets crash the party 🎉",
+            {"title": "🏓 Comets Crash the Party!", "intro": "The paddles were flying!",
+             "results": "Comets edged past Aces 3-2, and Aces served up a 3-1 win over Bolts.",
+             "table": "Comets top the table on 9 points.",                 # 9 isn't in the facts
+             "next_up": "Bolts take on Comets next.", "sign_off": "No mercy at the net! 🏓"},
             results=[("r1", "Comets burn bright, edge Aces 3-2"),
                      ("r2", "Aces thump Bolts 7-0"),              # 7 and 0 aren't in the results
                      ("r9", "A match that doesn't exist")],
@@ -1521,14 +1524,22 @@ class NewsBoardTests(TestCase):
         ))
         job = AIQuestion.objects.get()
         self.assertTrue(job.answer_verified)
-        self.assertEqual(job.answer, "Comets crash the party 🎉")
+        self.assertEqual(job.answer, "🏓 Comets Crash the Party!")
+        self.assertEqual(list(job.route["story"]), ["title", "intro", "results", "next_up", "sign_off"])
         self.assertEqual(job.route["headlines"], {str(second.pk): "Comets burn bright, edge Aces 3-2",
                                                   str(fixture.pk): "Bolts out to zap the Comets"})
-        self.assertEqual(job.route["rejected"], ["Aces thump Bolts 7-0"])
+        self.assertEqual(job.route["rejected"], ["Comets top the table on 9 points.", "Aces thump Bolts 7-0"])
         schema = fake.requests[0]["body"]["format"]
+        self.assertEqual(schema["properties"]["story"]["required"], list(recap.STORY_PARTS))
+        self.assertEqual(fake.requests[0]["timeout"], recap.NEWS_TIMEOUT_SECONDS)
         self.assertEqual(schema["properties"]["results"]["items"]["properties"]["key"]["enum"], ["r1", "r2"])
         self.assertEqual(schema["properties"]["previews"]["items"]["properties"]["key"]["enum"], ["u1"])
         page = self._dashboard(self.player)
+        self.assertContains(page, "🏓 Comets Crash the Party!")
+        self.assertContains(page, "Comets edged past Aces 3-2, and Aces served up a 3-1 win over Bolts.")
+        self.assertContains(page, "🔥 Next Up")
+        self.assertNotContains(page, 'news-story-heading">🏆 Standings')  # its paragraph was dropped
+        self.assertContains(page, 'news-story-heading">🔥 Next Up')
         self.assertContains(page, "Comets burn bright, edge Aces 3-2")
         self.assertContains(page, "Bolts out to zap the Comets")
         self.assertNotContains(page, "thump")
