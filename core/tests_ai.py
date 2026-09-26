@@ -1525,7 +1525,9 @@ class NewsBoardTests(TestCase):
         job = AIQuestion.objects.get()
         self.assertTrue(job.answer_verified)
         self.assertEqual(job.answer, "🏓 Comets Crash the Party!")
-        self.assertEqual(list(job.route["story"]), ["title", "intro", "results", "next_up", "sign_off"])
+        # A set: PostgreSQL's jsonb doesn't keep key order (the template shows
+        # the parts in STORY_PARTS order whatever order they're stored in).
+        self.assertEqual(set(job.route["story"]), {"title", "intro", "results", "next_up", "sign_off"})
         self.assertEqual(job.route["headlines"], {str(second.pk): "Comets burn bright, edge Aces 3-2",
                                                   str(fixture.pk): "Bolts out to zap the Comets"})
         self.assertEqual(job.route["rejected"], ["Comets top the table on 9 points.", "Aces thump Bolts 7-0"])
